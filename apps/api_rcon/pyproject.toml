@@ -1,0 +1,31 @@
+[project]
+name = "api-rcon"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "pydantic-settings",
+    "sqlmodel",
+    "asyncpg",
+    "psycopg2-binary",
+    "aiohttp",
+    "python-dotenv",
+    "wardogs-schemas",
+    "alembic>=1.20.0",
+]
+
+[tool.uv.sources]
+wardogs-schemas = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.22.1",
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-mock>=3.15.1",
+]

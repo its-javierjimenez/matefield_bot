@@ -1,0 +1,13 @@
+[project]
+name = "server-rcon-automation"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = []
+
+[tool.uv.workspace]
+members = [
+    "apps/discord_bot",
+    "apps/api_rcon",
+    "apps/rcon_mock",
+    "packages/wardogs_schemas",
+]

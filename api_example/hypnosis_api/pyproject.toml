@@ -1,0 +1,31 @@
+[project]
+name = "hypnosis-api"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "aiocache>=0.12.3",
+    "cachetools>=7.0.0",
+    "fastapi-guard>=4.2.2",
+    "fastapi[standard]>=0.128.1",
+    "faststream[rabbit]>=0.6.6",
+    "hypnosis-config",
+    "hypnosis-connections",
+    "hypnosis-exceptions",
+    "hypnosis-middlewares",
+    "hypnosis-rabbit",
+    "hypnosis-schemas",
+    "hypnosis-utils",
+    "pydantic-mongo>=3.1.0",
+    "uvicorn>=0.40.0",
+]
+
+[tool.uv.sources]
+hypnosis-schemas = { workspace = true }
+hypnosis-config = { workspace = true }
+hypnosis-utils = { workspace = true }
+hypnosis-middlewares = { workspace = true }
+hypnosis-connections = { workspace = true }
+hypnosis-exceptions = { workspace = true }
+hypnosis-rabbit = { workspace = true }

@@ -1,0 +1,30 @@
+services:
+  api_rcon:
+    build:
+      context: .
+      dockerfile: apps/api_rcon/Dockerfile
+    container_name: api_rcon
+    env_file: .env.dev
+    command: sh -c "uv run alembic upgrade head && uv run uvicorn src.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+    networks:
+      - wardogs_net
+    depends_on:
+      rcon-mock:
+        condition: service_healthy
+
+  discord_bot:
+    build:
+      context: .
+      dockerfile: apps/discord_bot/Dockerfile
+    container_name: discord_bot
+    env_file: .env.dev
+    networks:
+      - wardogs_net
+    depends_on:
+      - api_rcon
+
+networks:
+  wardogs_net:
+    driver: bridge

@@ -1,0 +1,857 @@
+{
+  "id": "f9e86adf-cf41-44b3-821a-9616255bc11b",
+  "map": "Bakurani",
+  "start_time": "2026-09-12T02:55:33.835617-03:00",
+  "end_time": "2026-09-12T04:33:45.863895-03:00",
+  "winning_team_id": 2,
+  "team_stats": [
+    {
+      "team_id": 3,
+      "team_name": "Manticore",
+      "team_code": "MAN",
+      "score": 93
+    },
+    {
+      "team_id": 1,
+      "team_name": "Lonestar",
+      "team_code": "LON",
+      "score": 24
+    },
+    {
+      "team_id": 2,
+      "team_name": "Valkyra",
+      "team_code": "VAL",
+      "score": 100
+    }
+  ],
+  "player_stats": [
+    {
+      "steam_id": "76561198084318673",
+      "kills": 0,
+      "deaths": 5,
+      "cash_earned": 144143
+    },
+    {
+      "steam_id": "76561197997125279",
+      "kills": 28,
+      "deaths": 17,
+      "cash_earned": 126658
+    },
+    {
+      "steam_id": "76561198046946517",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561198016301806",
+      "kills": 13,
+      "deaths": 8,
+      "cash_earned": 126740
+    },
+    {
+      "steam_id": "76561199093677065",
+      "kills": 24,
+      "deaths": 13,
+      "cash_earned": 130906
+    },
+    {
+      "steam_id": "76561198043995476",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561198097319273",
+      "kills": 44,
+      "deaths": 5,
+      "cash_earned": 210108
+    },
+    {
+      "steam_id": "76561199157256458",
+      "kills": 46,
+      "deaths": 11,
+      "cash_earned": 113394
+    },
+    {
+      "steam_id": "76561198145471291",
+      "kills": 10,
+      "deaths": 12,
+      "cash_earned": 75921
+    },
+    {
+      "steam_id": "76561198306817753",
+      "kills": 5,
+      "deaths": 13,
+      "cash_earned": 112925
+    },
+    {
+      "steam_id": "76561198283758532",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561198854776138",
+      "kills": 6,
+      "deaths": 7,
+      "cash_earned": 87825
+    },
+    {
+      "steam_id": "76561198085076037",
+      "kills": 23,
+      "deaths": 5,
+      "cash_earned": 176797
+    },
+    {
+      "steam_id": "76561198401077571",
+      "kills": 14,
+      "deaths": 8,
+      "cash_earned": 74277
+    },
+    {
+      "steam_id": "76561198101419918",
+      "kills": 0,
+      "deaths": 3,
+      "cash_earned": 3160
+    },
+    {
+      "steam_id": "76561198883097845",
+      "kills": 3,
+      "deaths": 11,
+      "cash_earned": 88136
+    },
+    {
+      "steam_id": "76561198151376508",
+      "kills": 0,
+      "deaths": 2,
+      "cash_earned": 6650
+    },
+    {
+      "steam_id": "76561198398767134",
+      "kills": 1,
+      "deaths": 3,
+      "cash_earned": 30187
+    },
+    {
+      "steam_id": "76561198125642706",
+      "kills": 19,
+      "deaths": 10,
+      "cash_earned": 109404
+    },
+    {
+      "steam_id": "76561198000879885",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561198092237500",
+      "kills": 0,
+      "deaths": 1,
+      "cash_earned": 38499
+    },
+    {
+      "steam_id": "76561198244060594",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561198155514449",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561198097176316",
+      "kills": 1,
+      "deaths": 8,
+      "cash_earned": 61063
+    },
+    {
+      "steam_id": "76561198125599512",
+      "kills": 5,
+      "deaths": 6,
+      "cash_earned": 61618
+    },
+    {
+      "steam_id": "76561198863430971",
+      "kills": 6,
+      "deaths": 9,
+      "cash_earned": 108738
+    },
+    {
+      "steam_id": "76561197999917416",
+      "kills": 1,
+      "deaths": 1,
+      "cash_earned": 9314
+    },
+    {
+      "steam_id": "76561198065438307",
+      "kills": 16,
+      "deaths": 16,
+      "cash_earned": 60906
+    },
+    {
+      "steam_id": "76561198418941392",
+      "kills": 11,
+      "deaths": 8,
+      "cash_earned": 112627
+    },
+    {
+      "steam_id": "76561198139297860",
+      "kills": 15,
+      "deaths": 11,
+      "cash_earned": 139276
+    },
+    {
+      "steam_id": "76561198098277603",
+      "kills": 7,
+      "deaths": 9,
+      "cash_earned": 83431
+    },
+    {
+      "steam_id": "76561198175242773",
+      "kills": 5,
+      "deaths": 10,
+      "cash_earned": 130536
+    },
+    {
+      "steam_id": "76561198242528500",
+      "kills": 16,
+      "deaths": 15,
+      "cash_earned": 105333
+    },
+    {
+      "steam_id": "76561198145540215",
+      "kills": 4,
+      "deaths": 15,
+      "cash_earned": 49385
+    },
+    {
+      "steam_id": "76561198279666190",
+      "kills": 5,
+      "deaths": 5,
+      "cash_earned": 59113
+    },
+    {
+      "steam_id": "76561198968476163",
+      "kills": 18,
+      "deaths": 11,
+      "cash_earned": 120193
+    },
+    {
+      "steam_id": "76561198068932702",
+      "kills": 5,
+      "deaths": 5,
+      "cash_earned": 124027
+    },
+    {
+      "steam_id": "76561198968092211",
+      "kills": 2,
+      "deaths": 6,
+      "cash_earned": 44803
+    },
+    {
+      "steam_id": "76561198811687398",
+      "kills": 9,
+      "deaths": 15,
+      "cash_earned": 66607
+    },
+    {
+      "steam_id": "76561198797516652",
+      "kills": 1,
+      "deaths": 2,
+      "cash_earned": 13225
+    },
+    {
+      "steam_id": "76561198208795693",
+      "kills": 23,
+      "deaths": 14,
+      "cash_earned": 90918
+    },
+    {
+      "steam_id": "76561198316164159",
+      "kills": 3,
+      "deaths": 10,
+      "cash_earned": 27142
+    },
+    {
+      "steam_id": "76561198148330500",
+      "kills": 3,
+      "deaths": 17,
+      "cash_earned": 73107
+    },
+    {
+      "steam_id": "76561198202888401",
+      "kills": 4,
+      "deaths": 6,
+      "cash_earned": 107344
+    },
+    {
+      "steam_id": "76561198984341612",
+      "kills": 0,
+      "deaths": 5,
+      "cash_earned": 5172
+    },
+    {
+      "steam_id": "76561198090801984",
+      "kills": 1,
+      "deaths": 0,
+      "cash_earned": 18598
+    },
+    {
+      "steam_id": "76561197991872685",
+      "kills": 1,
+      "deaths": 5,
+      "cash_earned": 47581
+    },
+    {
+      "steam_id": "76561198044023489",
+      "kills": 7,
+      "deaths": 11,
+      "cash_earned": 92237
+    },
+    {
+      "steam_id": "76561198995574596",
+      "kills": 18,
+      "deaths": 10,
+      "cash_earned": 96776
+    },
+    {
+      "steam_id": "76561198351901649",
+      "kills": 3,
+      "deaths": 17,
+      "cash_earned": 76074
+    },
+    {
+      "steam_id": "76561198052571682",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561198152701360",
+      "kills": 7,
+      "deaths": 7,
+      "cash_earned": 70155
+    },
+    {
+      "steam_id": "76561197998317155",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561198052130515",
+      "kills": 6,
+      "deaths": 8,
+      "cash_earned": 83178
+    },
+    {
+      "steam_id": "76561199019004860",
+      "kills": 0,
+      "deaths": 4,
+      "cash_earned": 23641
+    },
+    {
+      "steam_id": "76561198824814933",
+      "kills": 8,
+      "deaths": 6,
+      "cash_earned": 29775
+    },
+    {
+      "steam_id": "76561198228742828",
+      "kills": 6,
+      "deaths": 2,
+      "cash_earned": 62889
+    },
+    {
+      "steam_id": "76561198319085938",
+      "kills": 0,
+      "deaths": 15,
+      "cash_earned": 92394
+    },
+    {
+      "steam_id": "76561199003144309",
+      "kills": 6,
+      "deaths": 16,
+      "cash_earned": 59561
+    },
+    {
+      "steam_id": "76561198845745407",
+      "kills": 9,
+      "deaths": 10,
+      "cash_earned": 103558
+    },
+    {
+      "steam_id": "76561198032118088",
+      "kills": 9,
+      "deaths": 9,
+      "cash_earned": 167840
+    },
+    {
+      "steam_id": "76561198002955572",
+      "kills": 43,
+      "deaths": 15,
+      "cash_earned": 151848
+    },
+    {
+      "steam_id": "76561198070276396",
+      "kills": 5,
+      "deaths": 15,
+      "cash_earned": 103061
+    },
+    {
+      "steam_id": "76561199101867811",
+      "kills": 16,
+      "deaths": 6,
+      "cash_earned": 98091
+    },
+    {
+      "steam_id": "76561198175146834",
+      "kills": 1,
+      "deaths": 5,
+      "cash_earned": 25038
+    },
+    {
+      "steam_id": "76561199514461706",
+      "kills": 10,
+      "deaths": 12,
+      "cash_earned": 71478
+    },
+    {
+      "steam_id": "76561198382944603",
+      "kills": 2,
+      "deaths": 10,
+      "cash_earned": 51863
+    },
+    {
+      "steam_id": "76561199816120411",
+      "kills": 3,
+      "deaths": 4,
+      "cash_earned": 44446
+    },
+    {
+      "steam_id": "76561198187107362",
+      "kills": 7,
+      "deaths": 7,
+      "cash_earned": 142253
+    },
+    {
+      "steam_id": "76561198119751637",
+      "kills": 1,
+      "deaths": 8,
+      "cash_earned": 11430
+    },
+    {
+      "steam_id": "76561198075975911",
+      "kills": 7,
+      "deaths": 5,
+      "cash_earned": 113198
+    },
+    {
+      "steam_id": "76561198072271901",
+      "kills": 9,
+      "deaths": 5,
+      "cash_earned": 43846
+    },
+    {
+      "steam_id": "76561198893379466",
+      "kills": 0,
+      "deaths": 2,
+      "cash_earned": 6677
+    },
+    {
+      "steam_id": "76561198438811955",
+      "kills": 18,
+      "deaths": 14,
+      "cash_earned": 102614
+    },
+    {
+      "steam_id": "76561199179912812",
+      "kills": 7,
+      "deaths": 6,
+      "cash_earned": 104675
+    },
+    {
+      "steam_id": "76561199621145333",
+      "kills": 2,
+      "deaths": 9,
+      "cash_earned": 25896
+    },
+    {
+      "steam_id": "76561199241064244",
+      "kills": 17,
+      "deaths": 16,
+      "cash_earned": 118180
+    },
+    {
+      "steam_id": "76561198402459699",
+      "kills": 27,
+      "deaths": 13,
+      "cash_earned": 143726
+    },
+    {
+      "steam_id": "76561198144361663",
+      "kills": 6,
+      "deaths": 15,
+      "cash_earned": 84321
+    },
+    {
+      "steam_id": "76561197975565484",
+      "kills": 11,
+      "deaths": 7,
+      "cash_earned": 106211
+    },
+    {
+      "steam_id": "76561199169637464",
+      "kills": 8,
+      "deaths": 11,
+      "cash_earned": 54482
+    },
+    {
+      "steam_id": "76561198327680913",
+      "kills": 9,
+      "deaths": 6,
+      "cash_earned": 45635
+    },
+    {
+      "steam_id": "76561198892961440",
+      "kills": 15,
+      "deaths": 11,
+      "cash_earned": 113502
+    },
+    {
+      "steam_id": "76561198048784797",
+      "kills": 1,
+      "deaths": 9,
+      "cash_earned": 63454
+    },
+    {
+      "steam_id": "76561198994324204",
+      "kills": 10,
+      "deaths": 12,
+      "cash_earned": 59008
+    },
+    {
+      "steam_id": "76561198340793166",
+      "kills": 2,
+      "deaths": 2,
+      "cash_earned": 22514
+    },
+    {
+      "steam_id": "76561198167602962",
+      "kills": 43,
+      "deaths": 14,
+      "cash_earned": 231320
+    },
+    {
+      "steam_id": "76561198018983029",
+      "kills": 14,
+      "deaths": 9,
+      "cash_earned": 133689
+    },
+    {
+      "steam_id": "76561198079321105",
+      "kills": 3,
+      "deaths": 3,
+      "cash_earned": 75271
+    },
+    {
+      "steam_id": "76561197998526978",
+      "kills": 7,
+      "deaths": 11,
+      "cash_earned": 83979
+    },
+    {
+      "steam_id": "76561198988580696",
+      "kills": 6,
+      "deaths": 16,
+      "cash_earned": 74780
+    },
+    {
+      "steam_id": "76561198133950224",
+      "kills": 0,
+      "deaths": 9,
+      "cash_earned": 105959
+    },
+    {
+      "steam_id": "76561198425685588",
+      "kills": 11,
+      "deaths": 25,
+      "cash_earned": 161638
+    },
+    {
+      "steam_id": "76561198065049733",
+      "kills": 13,
+      "deaths": 17,
+      "cash_earned": 59574
+    },
+    {
+      "steam_id": "76561198857109694",
+      "kills": 3,
+      "deaths": 8,
+      "cash_earned": 20306
+    },
+    {
+      "steam_id": "76561198979863043",
+      "kills": 0,
+      "deaths": 7,
+      "cash_earned": 10525
+    },
+    {
+      "steam_id": "76561198041099070",
+      "kills": 3,
+      "deaths": 11,
+      "cash_earned": 45802
+    },
+    {
+      "steam_id": "76561198029204914",
+      "kills": 0,
+      "deaths": 9,
+      "cash_earned": 111218
+    },
+    {
+      "steam_id": "76561198135006890",
+      "kills": 2,
+      "deaths": 7,
+      "cash_earned": 18077
+    },
+    {
+      "steam_id": "76561198137124425",
+      "kills": 3,
+      "deaths": 12,
+      "cash_earned": 38314
+    },
+    {
+      "steam_id": "76561198118294455",
+      "kills": 2,
+      "deaths": 8,
+      "cash_earned": 48166
+    },
+    {
+      "steam_id": "76561198089099126",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561198026495173",
+      "kills": 1,
+      "deaths": 1,
+      "cash_earned": 87399
+    },
+    {
+      "steam_id": "76561198173582858",
+      "kills": 5,
+      "deaths": 1,
+      "cash_earned": 35206
+    },
+    {
+      "steam_id": "76561198905917294",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561198413439914",
+      "kills": 15,
+      "deaths": 11,
+      "cash_earned": 86482
+    },
+    {
+      "steam_id": "76561197962282039",
+      "kills": 2,
+      "deaths": 4,
+      "cash_earned": 85442
+    },
+    {
+      "steam_id": "76561198318849590",
+      "kills": 0,
+      "deaths": 3,
+      "cash_earned": 8060
+    },
+    {
+      "steam_id": "76561198300303274",
+      "kills": 12,
+      "deaths": 10,
+      "cash_earned": 73092
+    },
+    {
+      "steam_id": "76561198952294437",
+      "kills": 7,
+      "deaths": 8,
+      "cash_earned": 49204
+    },
+    {
+      "steam_id": "76561198102173933",
+      "kills": 6,
+      "deaths": 15,
+      "cash_earned": 78427
+    },
+    {
+      "steam_id": "76561198104503127",
+      "kills": 2,
+      "deaths": 5,
+      "cash_earned": 19559
+    },
+    {
+      "steam_id": "76561198643348252",
+      "kills": 3,
+      "deaths": 17,
+      "cash_earned": 55296
+    },
+    {
+      "steam_id": "76561198131722208",
+      "kills": 0,
+      "deaths": 2,
+      "cash_earned": 16684
+    },
+    {
+      "steam_id": "76561197994966473",
+      "kills": 0,
+      "deaths": 11,
+      "cash_earned": 35181
+    },
+    {
+      "steam_id": "76561198152843036",
+      "kills": 2,
+      "deaths": 0,
+      "cash_earned": 15244
+    },
+    {
+      "steam_id": "76561198212600299",
+      "kills": 3,
+      "deaths": 6,
+      "cash_earned": 46686
+    },
+    {
+      "steam_id": "76561198216175937",
+      "kills": 1,
+      "deaths": 1,
+      "cash_earned": 5890
+    },
+    {
+      "steam_id": "76561199522675413",
+      "kills": 2,
+      "deaths": 16,
+      "cash_earned": 41959
+    },
+    {
+      "steam_id": "76561198118058124",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561198053124215",
+      "kills": 1,
+      "deaths": 0,
+      "cash_earned": 2070
+    },
+    {
+      "steam_id": "76561198643356002",
+      "kills": 2,
+      "deaths": 0,
+      "cash_earned": 4620
+    },
+    {
+      "steam_id": "76561198108800623",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561199004811803",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561198208144207",
+      "kills": 4,
+      "deaths": 6,
+      "cash_earned": 25157
+    },
+    {
+      "steam_id": "76561199416783673",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561198670050234",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561199109052964",
+      "kills": 1,
+      "deaths": 3,
+      "cash_earned": 8590
+    },
+    {
+      "steam_id": "76561198000981149",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    },
+    {
+      "steam_id": "76561198828540332",
+      "kills": 8,
+      "deaths": 6,
+      "cash_earned": 47960
+    },
+    {
+      "steam_id": "76561198185027105",
+      "kills": 1,
+      "deaths": 4,
+      "cash_earned": 9200
+    },
+    {
+      "steam_id": "76561199520391203",
+      "kills": 0,
+      "deaths": 1,
+      "cash_earned": 3373
+    },
+    {
+      "steam_id": "76561198888017190",
+      "kills": 3,
+      "deaths": 7,
+      "cash_earned": 26828
+    },
+    {
+      "steam_id": "76561198286472977",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 88788
+    },
+    {
+      "steam_id": "76561198215883747",
+      "kills": 1,
+      "deaths": 5,
+      "cash_earned": 73997
+    },
+    {
+      "steam_id": "76561198049817887",
+      "kills": 4,
+      "deaths": 4,
+      "cash_earned": 58511
+    },
+    {
+      "steam_id": "76561198049616950",
+      "kills": 0,
+      "deaths": 7,
+      "cash_earned": 15031
+    },
+    {
+      "steam_id": "76561198879775183",
+      "kills": 0,
+      "deaths": 0,
+      "cash_earned": 0
+    }
+  ]
+}

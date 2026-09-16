@@ -1,0 +1,5 @@
+from .logging_controller import ROUTER as LOGGING_CONTROLLER
+
+ALL_CONTROLLERS = [
+    LOGGING_CONTROLLER,
+]
