@@ -200,3 +200,13 @@ class SettingsPatch(BaseModel):
 
 class SponsorRequest(BaseModel):
     imageUrl: str
+
+class DbBan(BaseModel):
+    id: int
+    steam_id: str
+    reason: str
+    is_active: bool
+    banned_at: str
+
+class DbBansResponse(BaseModel):
+    bans: list[DbBan]

@@ -3,22 +3,41 @@ Use this as context when helping me build tools (status bots, dashboards, modera
 Note: unofficial and may be incomplete or change. Confirm what a server supports via GET /v1/capabilities.
 
 ## Connection
-Base URL: <scheme>://<host>:<port>/v1/...
+Base URL: http://<host>:<port>/v1/...
 Default RCON port is 7776 (settable in config or with -RCONPort=).
-Transport depends on the listener bind: a loopback listener (127.0.0.1) allows
-plaintext over http://; a network listener (0.0.0.0) REQUIRES TLS, so any server
-you reach remotely is https://. Bodies/responses are JSON, except the two
+Transport is PLAIN HTTP. There is no TLS on the RCON listener — do not "fix" the
+scheme to https, it will refuse the connection. The password therefore crosses
+the wire in the clear: bind the listener to loopback and tunnel in, or put a
+TLS-terminating proxy in front. Bodies/responses are JSON, except the two
 config-document endpoints which use text/plain.
 Auth: every request sends the header
   Authorization: Bearer <rcon-password>
 There is no separate login. The one token authorizes every endpoint (read AND
 write) — it is the full-access RCON password, so keep it server-side, never in a
-browser. A browser page can call a TLS (https) server; it cannot call a
-plaintext loopback listener from an https page (mixed content).
+browser. An https page cannot call a plain-http server at all (mixed content is
+blocked), so make the call from a server, not from the page.
 Connection check: GET /v1/status — a success means the token is valid.
 Errors: non-2xx status with body { "error": { "code": string, "message": string } }.
-Feature detection: GET /v1/capabilities -> { routes: string[], config: { writable: boolean } }.
-Not every server enables every route; check here before assuming one exists.
+Feature detection: GET /v1/capabilities ->
+  { apiVersion, build, auth: { scheme, header },
+    limits: { maxBodyBytes, maxRequestsPerMinutePerIp },
+    config: { writable: boolean, document: "/v1/config" },
+    routes: string[] }   // "METHOD /path", {param} placeholders
+Not every server runs the same build; branch on routes rather than catching 404s.
+
+## IMPORTANT: eight write endpoints were removed on 2026-09-14
+Build ++Wardogs+Live-CL-501228 dropped PATCH /v1/settings, POST and DELETE
+/v1/reserved-slots, POST and DELETE /v1/rotation/entries,
+POST /v1/rotation/entries/{i}/move, POST /v1/rotation/save and PUT /v1/sponsor.
+A current server answers 404 and omits them from /v1/capabilities. Older servers
+still serve them, so check capabilities and support both paths.
+What they did now happens by editing the config document:
+  reserved slots -> DefaultReservedPlayerIds in [/Script/WDGame.WDGameSession]
+  rotation       -> RotationEntries in [/Script/WDGame.WDServerMapRotationSettings]
+  rotation on/off, ordered/random -> bEnabled, RotationMode in that same section
+  score period   -> ScorePeriod in [MatchState.Playing.KOTH]
+  sponsor banner -> ServerImageURL in [/Script/WDGame.WDGameSession]
+  rotation save  -> nothing to do; the document IS the file
 
 ## Read endpoints
 GET /v1/status                              live match state (shape below)
@@ -35,6 +54,9 @@ GET /v1/catalog/experiences
 GET /v1/catalog/maps/{id}/experiences
 GET /v1/catalog/maps/{id}/alternators
 GET /v1/sponsor
+GET /v1/server-id                           { serverId } — stable across restarts
+GET /v1/health                              { status, uptimeSeconds, connections: { active },
+                                              gameThreadQueue: { inFlight, depth, rejectedTotal } }
 
 ## Write endpoints (request body shown)
 POST   /v1/players/{steamId}/kick           { reason }
@@ -44,20 +66,20 @@ PATCH  /v1/players/{steamId}                 { faction }           (capability-g
 POST   /v1/broadcast                        { message }
 POST   /v1/bans                             { steamId, reason? }
 DELETE /v1/bans/{steamId}                    (no body)
-POST   /v1/reserved-slots                   { steamId }
-DELETE /v1/reserved-slots/{steamId}          (no body)
+POST   /v1/reserved-slots                   { steamId }              REMOVED 2026-09-14
+DELETE /v1/reserved-slots/{steamId}          (no body)                REMOVED 2026-09-14
 POST   /v1/match/map                        { map, experiences?, lighting?, zoneAlternator? }
 POST   /v1/match/end                        (no body)
 POST   /v1/match/restart                    (no body)
 PUT    /v1/world/lighting                   { lighting }
-POST   /v1/rotation/entries                 { map, experiences?, lighting?, zoneAlternator? }
-DELETE /v1/rotation/entries/{i}              (no body)
-POST   /v1/rotation/entries/{i}/move        { direction: "up" | "down" }
-POST   /v1/rotation/save                     (no body)
-PATCH  /v1/settings                          { scoreTick?, rotationEnabled?, rotationMode? }
+POST   /v1/rotation/entries                 { map, ... }             REMOVED 2026-09-14
+DELETE /v1/rotation/entries/{i}              (no body)                REMOVED 2026-09-14
+POST   /v1/rotation/entries/{i}/move        { direction: "up"|"down" } REMOVED 2026-09-14
+POST   /v1/rotation/save                     (no body)                REMOVED 2026-09-14
+PATCH  /v1/settings                          { scoreTick?, ... }      REMOVED 2026-09-14
 POST   /v1/config/validate                   config text (text/plain)
 PUT    /v1/config                            config text (text/plain); header If-Match: "<revision>"; query force=true, fullApply=true
-PUT    /v1/sponsor                           { imageUrl }
+PUT    /v1/sponsor                           { imageUrl }            REMOVED 2026-09-14
 
 ## Response shapes
 GET /v1/status:
@@ -83,9 +105,18 @@ GET /v1/config:          { revision, writable, text, sections: [], warnings: [] 
 
 PUT /v1/config & POST /v1/config/validate result:
 { ok, revision, error: { code, message },
-  outcomes: [], shadowed: [], stripped: [], errors: [], changed: [],
-  conflict: [],        // present on HTTP 412 (stale revision)
-  warnings: [], timingsMs }
+  errors:  [ { section, key, code, message } ],  // non-empty => NOTHING applied
+  changed: [ { section, added, removed, keys: [] } ],
+  outcomes: [], shadowed: [], stripped: [], warnings: [], timingsMs }
+HTTP 200 applied, 412 stale revision, 422 a value was rejected.
+
+PUT /v1/config REPLACES THE WHOLE DOCUMENT. Sections you omit are removed. Always
+GET it, edit that exact text, PUT it back, and send If-Match: "<revision>".
+Every value is revalidated on every apply, including ones you did not touch, so a
+pre-existing bad value blocks unrelated edits until it is corrected — read
+errors[] and name the offending key to the user.
+Array keys use Unreal operators: !Key=ClearArray empties the array and .Key=value
+appends. The !Key line is a directive, NOT a member — skip it when indexing.
 
 ## Player names
 The API returns steamId only, not display names or avatars. Resolve them with the
@@ -97,7 +128,7 @@ ban/reserve/rotation commands edit this file and persist back to it.
 
 [/Script/WDRCON.WDRCONSettings]   ; the RCON listener
 bEnabled=true            ; OFF by default
-BindAddress=127.0.0.1    ; loopback = plaintext ok; 0.0.0.0 = needs TLS
+BindAddress=127.0.0.1    ; loopback; 0.0.0.0 = every interface, still plain HTTP
 Port=7776                ; default
 Password=                ; plaintext; if empty, auto-written to Saved/RCON/ADMIN-PASSWORD.txt
 PasswordHash=""          ; from `WardogsServer -GenerateRCONHash=<pw>`; wins over Password
@@ -106,8 +137,9 @@ PasswordHash=""          ; from `WardogsServer -GenerateRCONHash=<pw>`; wins ove
 ServerName= ; ServerPassword= (empty=open) ; ServerImageURL= (1024x256)
 ServerMinPlayerCash=0 ; ServerMaxPlayerCash=0 ; ServerMinPlayerLevel=0 ; ServerMaxPlayerLevel=0
 MaxReservedSlots=20
-+DefaultReservedPlayerIds="<steamId64>"   ; one per line
-+DefaultBannedPlayerIds="<steamId64>"     ; one per line
+!DefaultReservedPlayerIds=ClearArray      ; directive: empty the array first
+.DefaultReservedPlayerIds="<steamId64>"   ; one per line
+.DefaultBannedPlayerIds="<steamId64>"     ; one per line
 
 [/Script/Engine.GameSession]
 MaxPlayers=128           ; clamped by a dev-set min/max

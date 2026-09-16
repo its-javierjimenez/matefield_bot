@@ -77,23 +77,41 @@ async def kick_player(steam_id: str, req: schemas.ReasonRequest):
 @router.post("/db/sync_bans", dependencies=[Depends(verify_api_key_guard)])
 async def sync_bans(session: AsyncSession = Depends(get_session)):
     try:
-        # Get all active bans
+        # Fetch bans from RCON directly
+        rcon_bans_resp = await rcon.get_bans()
+        rcon_steam_ids = set([b.steamId for b in rcon_bans_resp.bans if b.steamId]) if rcon_bans_resp.bans else set()
+        
+        # Get all active bans from DB
         stmt = select(Ban).where(Ban.is_active == True)
         active_bans = (await session.exec(stmt)).all()
+        db_steam_ids = set([b.steam_id for b in active_bans])
         
-        active_steam_ids = list(set([b.steam_id for b in active_bans]))
-        
-        # Sync with RCON
+        # 1. RCON to DB (Absorb missing bans)
+        missing_in_db = rcon_steam_ids - db_steam_ids
+        for sid in missing_in_db:
+            player = await session.get(Player, sid)
+            if not player:
+                new_player = Player(steam_id=sid)
+                session.add(new_player)
+                await session.flush()
+                
+            new_ban = Ban(steam_id=sid, reason="Synced from RCON", is_active=True, rcon_sync_status="SUCCESS")
+            session.add(new_ban)
+            db_steam_ids.add(sid)
+            
+        # 2. DB to RCON (Push our full combined list)
+        active_steam_ids = list(db_steam_ids)
         await rcon.sync_banned_slots(active_steam_ids)
         
-        # Mark as SUCCESS
+        # Mark pending DB bans as SUCCESS
         for b in active_bans:
             if b.rcon_sync_status != "SUCCESS":
                 b.rcon_sync_status = "SUCCESS"
                 session.add(b)
+                
         await session.commit()
         
-        return {"ok": True, "message": "Bans synchronized successfully"}
+        return {"ok": True, "message": f"Bans synchronized successfully. Absorbed {len(missing_in_db)} from RCON."}
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -955,3 +973,23 @@ async def get_steam_players_batch(steam_ids: str):
     if not ids_list:
         return {}
     return await get_player_summaries(ids_list)
+
+@router.get("/db/bans", dependencies=[Depends(verify_api_key_guard)], response_model=schemas.DbBansResponse)
+async def get_db_bans(steam_id: Optional[str] = None, session: AsyncSession = Depends(get_session)):
+    stmt = select(Ban).where(Ban.is_active == True)
+    if steam_id:
+        stmt = stmt.where(Ban.steam_id == steam_id)
+        
+    bans = (await session.exec(stmt)).all()
+    
+    result = []
+    for b in bans:
+        result.append(schemas.DbBan(
+            id=b.id,
+            steam_id=b.steam_id,
+            reason=b.reason,
+            is_active=b.is_active,
+            banned_at=b.banned_at.isoformat() if b.banned_at else ""
+        ))
+        
+    return schemas.DbBansResponse(bans=result)
