@@ -272,6 +272,4 @@ class ListBanRoles:
             await ctx.respond("No hay roles de baneos configurados.")
             return
             
-        await ctx.respond("**Roles de Baneos:**
-" + "
-".join(lines))
+        await ctx.respond("**Roles de Baneos:\n" + "\n".join(lines))

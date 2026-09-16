@@ -346,12 +346,31 @@ async def on_button_click(event: hikari.InteractionCreateEvent) -> None:
 class BanPlayer:
     steam_id = crescent.option(str, "Steam ID a banear")
     reason = crescent.option(str, "Razón del ban", default="No especificado")
+    dias = crescent.option(int, "Duración en días (0 = permanente)", default=0)
     
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
         try:
-            await plugin.model.api.ban_player(str(self.steam_id), str(self.reason))
-            await ctx.respond(f"✅ Jugador `{self.steam_id}` ha sido baneado permanentemente en la base de datos y RCON. Razón: {self.reason}")
+            # 1. Ban en DB y RCON
+            await plugin.model.api.ban_player(str(self.steam_id), str(self.reason), self.dias)
+            
+            dur_str = "permanentemente" if self.dias == 0 else f"por {self.dias} días"
+            msg = f"✅ Jugador `{self.steam_id}` baneado {dur_str}. Razón: {self.reason}"
+            
+            # 2. Asignar rol en Discord si está vinculado y mapeado
+            try:
+                db_player = await plugin.model.api.get_player_by_steam(str(self.steam_id))
+                if db_player and db_player.get("discord_id"):
+                    discord_id = int(db_player["discord_id"])
+                    ban_role_id = await plugin.model.api.get_bot_config(f"BAN_ROLE_{self.dias}")
+                    if ban_role_id:
+                        member = ctx.app.cache.get_member(ctx.guild_id, discord_id) or await ctx.app.rest.fetch_member(ctx.guild_id, discord_id)
+                        await member.add_role(int(ban_role_id), reason=f"Baneado {dur_str}")
+                        msg += f"\n🔒 Rol <@&{ban_role_id}> asignado a <@{discord_id}>."
+            except Exception as ex:
+                msg += f"\n⚠️ No se pudo asignar el rol en Discord: {ex}"
+            
+            await ctx.respond(msg)
         except Exception as e:
             await ctx.respond(f"❌ Error al banear: {e}")
 
@@ -366,7 +385,29 @@ class UnbanPlayer:
         await ctx.defer()
         try:
             await plugin.model.api.unban_player(str(self.steam_id))
-            await ctx.respond(f"✅ Jugador `{self.steam_id}` ha sido desbaneado y sincronizado con RCON.")
+            msg = f"✅ Jugador `{self.steam_id}` desbaneado y sincronizado con RCON."
+            
+            # Quitar roles de ban en Discord
+            try:
+                db_player = await plugin.model.api.get_player_by_steam(str(self.steam_id))
+                if db_player and db_player.get("discord_id"):
+                    discord_id = int(db_player["discord_id"])
+                    configs = await plugin.model.api.get_bot_configs()
+                    ban_roles = [int(v) for k, v in configs.items() if k.startswith("BAN_ROLE_") and v.isdigit()]
+                    
+                    if ban_roles:
+                        member = ctx.app.cache.get_member(ctx.guild_id, discord_id) or await ctx.app.rest.fetch_member(ctx.guild_id, discord_id)
+                        removed = 0
+                        for role_id in ban_roles:
+                            if role_id in member.role_ids:
+                                await member.remove_role(role_id, reason="Desbaneado")
+                                removed += 1
+                        if removed > 0:
+                            msg += f"\n🔓 Se quitaron {removed} rol(es) de ban a <@{discord_id}>."
+            except Exception as ex:
+                msg += f"\n⚠️ No se pudieron quitar los roles de Discord: {ex}"
+            
+            await ctx.respond(msg)
         except Exception as e:
             await ctx.respond(f"❌ Error al desbanear: {e}")
 
