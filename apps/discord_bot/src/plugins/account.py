@@ -72,7 +72,7 @@ class UnlinkAccount:
             await ctx.respond(f"❌ Error: {e}")
 
 @plugin.include
-@crescent.hook(vip_or_admin)
+@crescent.hook(admin_only)
 @player_group.child
 @crescent.command(name="set_welcome_message", description="Establece un mensaje de bienvenida personalizado (VIP/ADMIN)")
 class SetWelcomeMessage:
