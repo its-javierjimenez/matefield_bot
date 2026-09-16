@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import Any, Optional
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, text
 from datetime import datetime, timedelta, timezone
 
 from wardogs_schemas import v1 as schemas

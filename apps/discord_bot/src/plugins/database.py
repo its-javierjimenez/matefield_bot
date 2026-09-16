@@ -125,7 +125,7 @@ class DbAddMembership:
 @player_group.child
 @crescent.command(name="list", description="Lista todos los jugadores registrados (Paginado)")
 class DbPlayers:
-    vinculacion: str = crescent.option(str, "Filtrar por vinculación a Discord", choices=(("Todos", "all"), ("Vinculados", "linked"), ("No Vinculados", "unlinked")), default="all")  
+    vinculacion: str = crescent.option(str, "Filtrar por vinculación a Discord", choices=(("Todos", "all"), ("Vinculados", "linked"), ("No Vinculados", "unlinked")), default="all") # type: ignore
     
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
@@ -506,10 +506,10 @@ async def on_membership_button_click(event: hikari.InteractionCreateEvent) -> No
 @membership_group.child
 @crescent.command(name="edit", description="Edita una membresía existente")
 class DbEditMembership:
-    id_membresia: int = crescent.option(int, "ID de la membresía (ver /db memberships)")  
-    dias: int | None = crescent.option(int, "Nuevos días (0 = permanente)", default=None, min_value=0)  
-    tipo: str | None = crescent.option(str, "Nuevo tipo de membresía", autocomplete=autocomplete_tipo, default=None)  
-    activa: bool | None = crescent.option(bool, "¿Está activa?", default=None)  
+    id_membresia: int = crescent.option(int, "ID de la membresía (ver /db memberships)") # type: ignore
+    dias: int | None = crescent.option(int, "Nuevos días (0 = permanente)", default=None, min_value=0) # type: ignore
+    tipo: str | None = crescent.option(str, "Nuevo tipo de membresía", autocomplete=autocomplete_tipo, default=None) # type: ignore
+    activa: bool | None = crescent.option(bool, "¿Está activa?", default=None) # type: ignore
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
