@@ -5,6 +5,7 @@ from src.model import Model
 from src.hooks import admin_only
 
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
+from src.groups import leaderboard_group, membership_group, player_group, server_group, special_role_group
 
 async def autocomplete_tipo(
     ctx: crescent.AutocompleteContext, option: hikari.AutocompleteInteractionOption

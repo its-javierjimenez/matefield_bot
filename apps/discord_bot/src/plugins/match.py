@@ -4,8 +4,8 @@ from src.model import Model
 from src.hooks import admin_only
 
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
+from src.groups import match_group, server_group
 
-match_group = crescent.Group("match", "Comandos de Partida en Vivo", hooks=[admin_only])
 
 @plugin.include
 @match_group.child

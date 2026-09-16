@@ -2,6 +2,7 @@ import crescent
 import hikari
 from src.model import Model
 from src.hooks import admin_only
+from src.groups import config_group, vip_role_group, role_map_group, whitelist_group, ban_role_group
 
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 

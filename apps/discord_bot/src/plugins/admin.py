@@ -13,6 +13,7 @@ from src.hooks import admin_only
 from src.model import Model
 
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
+from src.groups import reserved_group, server_group, quota_group, hacker_group, ban_group
 
 # Grupo Reserved Slots
 
