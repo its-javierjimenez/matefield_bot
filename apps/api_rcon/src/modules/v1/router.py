@@ -95,7 +95,7 @@ async def sync_bans(session: AsyncSession = Depends(get_session)):
                 session.add(new_player)
                 await session.flush()
                 
-            new_ban = Ban(steam_id=sid, reason="Synced from RCON", is_active=True, rcon_sync_status="SUCCESS")
+            new_ban = Ban(steam_id=sid, reason="", is_active=True, rcon_sync_status="SUCCESS")
             session.add(new_ban)
             db_steam_ids.add(sid)
             
