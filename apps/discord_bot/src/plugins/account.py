@@ -15,7 +15,7 @@ from src.groups import player_group
 @crescent.command(name="link", description="Vincula tu cuenta de Discord con tu Steam ID")
 class LinkAccount:
     steam_id = crescent.option(str, "Tu Steam ID de 64 bits")
-    usuario = crescent.option(hikari.User, "Usuario a vincular (Solo admin)", default=None) # type: ignore
+    usuario = crescent.option(hikari.User, "Usuario a vincular (Solo admin)", default=None)
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
@@ -186,13 +186,13 @@ class Profile:
                 return
             target_steam_id = user_data["steam_id"]
             
-        steam_data = await plugin.model.api.get_player_by_steam(target_steam_id)
+        steam_data = await plugin.model.api.get_player_by_steam(str(target_steam_id))
         
         if not steam_data:
             await ctx.respond(f"❌ La cuenta de Steam {target_steam_id} no tiene perfil en nuestra base de datos aún (debe entrar a jugar una vez).")
             return
             
-        stats_data = await plugin.model.api.get_player_historical_stats(target_steam_id)
+        stats_data = await plugin.model.api.get_player_historical_stats(str(target_steam_id))
             
         # Parse data
         memberships = steam_data.get("memberships", [])

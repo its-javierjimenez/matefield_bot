@@ -193,8 +193,8 @@ class APIClient:
     async def kick_player(self, steam_id: str, reason: str) -> None:
         await self._request("POST", f"/api/v1/players/{steam_id}/kick", json={"reason": reason})
 
-    async def ban_player(self, steam_id: str, reason: str) -> None:
-        await self._request("POST", f"/api/v1/players/{steam_id}/ban", json={"reason": reason})
+    async def ban_player(self, steam_id: str, reason: str, duration_days: int = 0) -> None:
+        await self._request("POST", f"/api/v1/players/{steam_id}/ban", json={"reason": reason, "duration_days": duration_days})
         
     async def unban_player(self, steam_id: str) -> None:
         await self._request("POST", f"/api/v1/players/{steam_id}/unban")

@@ -88,6 +88,23 @@ class RCONClient:
             new_text = '\n'.join(new_lines)
             await self.update_config(revision, new_text)
 
+    async def get_bans(self) -> list[str]:
+        config = await self.get_config()
+        text = config.text or ""
+        lines = text.split('\n')
+        bans = []
+        for line in lines:
+            line = line.strip()
+            if line.startswith('.DefaultBannedPlayerIds='):
+                val = line.split('=', 1)[1].strip()
+                if val:
+                    bans.append(val)
+            elif line.startswith('+DefaultBannedPlayerIds='):
+                val = line.split('=', 1)[1].strip()
+                if val:
+                    bans.append(val)
+        return bans
+
     async def sync_banned_slots(self, steam_ids: list[str]) -> None:
         config = await self.get_config()
         text = config.text or ""

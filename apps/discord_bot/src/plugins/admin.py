@@ -3,6 +3,7 @@ import re
 
 import crescent
 import hikari
+import time
 import csv
 import io
 import logging
@@ -43,7 +44,7 @@ class ReservedSlotsList:
                 discord_id = int(db_player_info.get("discord_id"))
                 
                 # Check cache primero (0 costo)
-                cached_user = ctx.app.cache.get_user(discord_id)
+                cached_user = plugin.app.cache.get_user(discord_id)
                 if cached_user:
                     return cached_user.username
                     
@@ -365,7 +366,7 @@ class BanPlayer:
                     discord_id = int(db_player["discord_id"])
                     ban_role_id = await plugin.model.api.get_bot_config(f"BAN_ROLE_{self.dias}")
                     if ban_role_id:
-                        member = ctx.app.cache.get_member(ctx.guild_id, discord_id) or await ctx.app.rest.fetch_member(ctx.guild_id, discord_id)
+                        member = plugin.app.cache.get_member(ctx.guild_id, discord_id) or await ctx.app.rest.fetch_member(ctx.guild_id, discord_id)
                         await member.add_role(int(ban_role_id), reason=f"Baneado {dur_str}")
                         msg += f"\n🔒 Rol <@&{ban_role_id}> asignado a <@{discord_id}>."
             except Exception as ex:
@@ -397,7 +398,7 @@ class UnbanPlayer:
                     ban_roles = [int(v) for k, v in configs.items() if k.startswith("BAN_ROLE_") and v.isdigit()]
                     
                     if ban_roles:
-                        member = ctx.app.cache.get_member(ctx.guild_id, discord_id) or await ctx.app.rest.fetch_member(ctx.guild_id, discord_id)
+                        member = plugin.app.cache.get_member(ctx.guild_id, discord_id) or await ctx.app.rest.fetch_member(ctx.guild_id, discord_id)
                         removed = 0
                         for role_id in ban_roles:
                             if role_id in member.role_ids:
@@ -452,7 +453,7 @@ class BanList:
                 if not db_player_info or not db_player_info.get("discord_id"):
                     return "Desconocido"
                 discord_id = int(db_player_info.get("discord_id"))
-                cached_user = ctx.app.cache.get_user(discord_id)
+                cached_user = plugin.app.cache.get_user(discord_id)
                 if cached_user:
                     return cached_user.username
                 try:

@@ -79,7 +79,7 @@ async def sync_bans(session: AsyncSession = Depends(get_session)):
     try:
         # Fetch bans from RCON directly
         rcon_bans_resp = await rcon.get_bans()
-        rcon_steam_ids = set([b.steamId for b in rcon_bans_resp.bans if b.steamId]) if rcon_bans_resp.bans else set()
+        rcon_steam_ids = set(rcon_bans_resp)
         
         # Get all active bans from DB
         stmt = select(Ban).where(Ban.is_active == True)
@@ -259,7 +259,7 @@ async def get_player_stats_by_steam(steam_id: str, session: AsyncSession = Depen
             func.sum(MatchPlayerStats.kills).label("total_kills"),
             func.sum(MatchPlayerStats.deaths).label("total_deaths"),
             func.sum(MatchPlayerStats.cash_earned).label("total_cash_earned"),
-            func.count(MatchPlayerStats.id).label("matches_played")
+            func.count(MatchPlayerStats.match_id).label("matches_played")
         )
         .where(MatchPlayerStats.steam_id == steam_id)
     )
@@ -985,7 +985,7 @@ async def get_db_bans(steam_id: Optional[str] = None, session: AsyncSession = De
     result = []
     for b in bans:
         result.append(schemas.DbBan(
-            id=b.id,
+            id=b.id or 0,
             steam_id=b.steam_id,
             reason=b.reason,
             is_active=b.is_active,

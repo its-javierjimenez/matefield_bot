@@ -1,6 +1,9 @@
 import asyncio
 import crescent
 import hikari
+import logging
+
+logger = logging.getLogger(__name__)
 from src.model import Model
 from src.hooks import admin_only
 
@@ -122,7 +125,7 @@ class DbAddMembership:
 @player_group.child
 @crescent.command(name="list", description="Lista todos los jugadores registrados (Paginado)")
 class DbPlayers:
-    vinculacion: str = crescent.option(str, "Filtrar por vinculación a Discord", choices=(("Todos", "all"), ("Vinculados", "linked"), ("No Vinculados", "unlinked")), default="all")  # type: ignore
+    vinculacion: str = crescent.option(str, "Filtrar por vinculación a Discord", choices=(("Todos", "all"), ("Vinculados", "linked"), ("No Vinculados", "unlinked")), default="all")  
     
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
@@ -503,10 +506,10 @@ async def on_membership_button_click(event: hikari.InteractionCreateEvent) -> No
 @membership_group.child
 @crescent.command(name="edit", description="Edita una membresía existente")
 class DbEditMembership:
-    id_membresia: int = crescent.option(int, "ID de la membresía (ver /db memberships)")  # type: ignore
-    dias: int | None = crescent.option(int, "Nuevos días (0 = permanente)", default=None, min_value=0)  # type: ignore
-    tipo: str | None = crescent.option(str, "Nuevo tipo de membresía", autocomplete=autocomplete_tipo, default=None)  # type: ignore
-    activa: bool | None = crescent.option(bool, "¿Está activa?", default=None)  # type: ignore
+    id_membresia: int = crescent.option(int, "ID de la membresía (ver /db memberships)")  
+    dias: int | None = crescent.option(int, "Nuevos días (0 = permanente)", default=None, min_value=0)  
+    tipo: str | None = crescent.option(str, "Nuevo tipo de membresía", autocomplete=autocomplete_tipo, default=None)  
+    activa: bool | None = crescent.option(bool, "¿Está activa?", default=None)  
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
@@ -538,8 +541,8 @@ class DbRemoveMembership:
 @special_role_group.child
 @crescent.command(name="add", description="Añade un rol especial permanente a un jugador")
 class DbAddSpecialRole:
-    usuario = crescent.option(hikari.User, "Usuario de Discord") # type: ignore
-    rol_especial = crescent.option(hikari.Role, "Rol especial a asignar") # type: ignore
+    usuario = crescent.option(hikari.User, "Usuario de Discord") 
+    rol_especial = crescent.option(hikari.Role, "Rol especial a asignar") 
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
@@ -549,7 +552,7 @@ class DbAddSpecialRole:
                 await ctx.respond(f"❌ El usuario {self.usuario.mention} no está vinculado.")
                 return
             steam_id = player_info.get("steam_id")
-            await plugin.model.api.add_special_role(steam_id, str(self.rol_especial.id))
+            await plugin.model.api.add_special_role(str(steam_id), str(self.rol_especial.id))
             await ctx.respond(f"✅ Rol especial <@&{self.rol_especial.id}> añadido al jugador {self.usuario.mention} (`{steam_id}`).")
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
@@ -559,8 +562,8 @@ class DbAddSpecialRole:
 @special_role_group.child
 @crescent.command(name="remove", description="Remueve un rol especial permanente de un jugador")
 class DbRemoveSpecialRole:
-    usuario = crescent.option(hikari.User, "Usuario de Discord") # type: ignore
-    rol_especial = crescent.option(hikari.Role, "Rol especial a remover") # type: ignore
+    usuario = crescent.option(hikari.User, "Usuario de Discord") 
+    rol_especial = crescent.option(hikari.Role, "Rol especial a remover") 
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
@@ -570,7 +573,7 @@ class DbRemoveSpecialRole:
                 await ctx.respond(f"❌ El usuario {self.usuario.mention} no está vinculado.")
                 return
             steam_id = player_info.get("steam_id")
-            await plugin.model.api.remove_special_role(steam_id, str(self.rol_especial.id))
+            await plugin.model.api.remove_special_role(str(steam_id), str(self.rol_especial.id))
             await ctx.respond(f"✅ Rol especial <@&{self.rol_especial.id}> removido del jugador {self.usuario.mention} (`{steam_id}`).")
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
@@ -580,9 +583,9 @@ class DbRemoveSpecialRole:
 @player_group.child
 @crescent.command(name="edit", description="Edita información de un jugador (debe estar vinculado)")
 class DbEditPlayer:
-    usuario_discord = crescent.option(hikari.User, "Usuario de Discord (jugador vinculado)") # type: ignore
-    mensaje_bienvenida = crescent.option(str, "Nuevo mensaje de bienvenida personalizado", default=None) # type: ignore
-    observacion = crescent.option(str, "Añadir/editar nota interna sobre pagos, conducta, etc.", default=None) # type: ignore
+    usuario_discord = crescent.option(hikari.User, "Usuario de Discord (jugador vinculado)") 
+    mensaje_bienvenida = crescent.option(str, "Nuevo mensaje de bienvenida personalizado", default=None) 
+    observacion = crescent.option(str, "Añadir/editar nota interna sobre pagos, conducta, etc.", default=None) 
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
@@ -595,9 +598,9 @@ class DbEditPlayer:
             steam_id = player_info.get("steam_id")
             
             await plugin.model.api.edit_player(
-                steam_id, 
-                custom_welcome_message=self.mensaje_bienvenida, 
-                observations=self.observacion
+                str(steam_id), 
+                custom_welcome_message=str(self.mensaje_bienvenida) if self.mensaje_bienvenida else None, 
+                observations=str(self.observacion) if self.observacion else None
             )
             await ctx.respond(f"✅ Jugador `{steam_id}` ({self.usuario_discord.mention}) actualizado exitosamente.")
         except Exception as e:
