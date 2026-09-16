@@ -52,12 +52,12 @@ class ReservedSlotsList:
             current_msg = msg
             for line in lines:
                 if len(current_msg) + len(line) + 1 > 1900:
-                    await ctx.respond(current_msg)
+                    await ctx.respond(current_msg, ephemeral=True)
                     current_msg = ""
                 current_msg += line + "\n"
             
             if current_msg:
-                await ctx.respond(current_msg)
+                await ctx.respond(current_msg, ephemeral=True)
         except Exception as e:
             await ctx.respond(f"Error al consultar RCON o DB: {e}")
 
