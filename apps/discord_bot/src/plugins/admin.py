@@ -366,7 +366,10 @@ class BanPlayer:
                     discord_id = int(db_player["discord_id"])
                     ban_role_id = await plugin.model.api.get_bot_config(f"BAN_ROLE_{self.dias}")
                     if ban_role_id:
-                        member = plugin.app.cache.get_member(ctx.guild_id, discord_id) or await ctx.app.rest.fetch_member(ctx.guild_id, discord_id)
+                        guild_id = ctx.guild_id
+                        if not guild_id:
+                            return
+                        member = plugin.app.cache.get_member(guild_id, discord_id) or await ctx.app.rest.fetch_member(guild_id, discord_id)
                         await member.add_role(int(ban_role_id), reason=f"Baneado {dur_str}")
                         msg += f"\n🔒 Rol <@&{ban_role_id}> asignado a <@{discord_id}>."
             except Exception as ex:
@@ -398,7 +401,10 @@ class UnbanPlayer:
                     ban_roles = [int(v) for k, v in configs.items() if k.startswith("BAN_ROLE_") and v.isdigit()]
                     
                     if ban_roles:
-                        member = plugin.app.cache.get_member(ctx.guild_id, discord_id) or await ctx.app.rest.fetch_member(ctx.guild_id, discord_id)
+                        guild_id = ctx.guild_id
+                        if not guild_id:
+                            return
+                        member = plugin.app.cache.get_member(guild_id, discord_id) or await ctx.app.rest.fetch_member(guild_id, discord_id)
                         removed = 0
                         for role_id in ban_roles:
                             if role_id in member.role_ids:

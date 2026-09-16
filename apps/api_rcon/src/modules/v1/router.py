@@ -259,7 +259,7 @@ async def get_player_stats_by_steam(steam_id: str, session: AsyncSession = Depen
             func.sum(MatchPlayerStats.kills).label("total_kills"),
             func.sum(MatchPlayerStats.deaths).label("total_deaths"),
             func.sum(MatchPlayerStats.cash_earned).label("total_cash_earned"),
-            func.count(MatchPlayerStats.match_id).label("matches_played")
+            func.count(text('1')).label("matches_played")
         )
         .where(MatchPlayerStats.steam_id == steam_id)
     )
