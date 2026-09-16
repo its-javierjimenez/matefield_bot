@@ -73,90 +73,47 @@ class UnlinkAccount:
 
 @plugin.include
 @crescent.hook(admin_only)
-@player_group.child
+@plugin.include
+@crescent.hook(admin_only)
 @player_group.child
 @crescent.command(name="welcome_message_set", description="Establece un mensaje de bienvenida personalizado (VIP/ADMIN)")
 class SetWelcomeMessage:
     message = crescent.option(str, "El mensaje que se mostrará cuando entres al servidor")
+    steam_id: str | None = crescent.option(str, "Steam ID del jugador a editar (opcional)", default=None)
+    usuario: hikari.User | None = crescent.option(hikari.User, "Usuario de Discord a editar (opcional)", default=None)
 
     async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
+        await ctx.defer(ephemeral=False)
         
         if len(self.message) > 60:
             await ctx.respond("❌ El mensaje no puede tener más de 60 caracteres.")
             return
             
-        discord_id = str(ctx.user.id)
-        user_data = await plugin.model.api.get_player_by_discord(discord_id)
-        
-        if not user_data or not user_data.get("steam_id"):
-            await ctx.respond("❌ Debes vincular tu cuenta de Steam primero usando `/player link`")
-            return
+        target_steam = self.steam_id
+        if self.usuario:
+            db_player = await plugin.model.api.get_player_by_discord(str(self.usuario.id))
+            if not db_player:
+                await ctx.respond(f"❌ El usuario {self.usuario.mention} no tiene una cuenta vinculada.")
+                return
+            target_steam = db_player.get("steam_id")
             
-        steam_data = await plugin.model.api.get_player_by_steam(user_data["steam_id"])
+        if not target_steam:
+            discord_id = str(ctx.user.id)
+            user_data = await plugin.model.api.get_player_by_discord(discord_id)
+            if not user_data or not user_data.get("steam_id"):
+                await ctx.respond("❌ Debes vincular tu cuenta de Steam primero usando `/player link` o especificar a quién editar.")
+                return
+            target_steam = user_data["steam_id"]
+            
+        steam_data = await plugin.model.api.get_player_by_steam(target_steam)
         active_role = steam_data.get("active_role") if steam_data else None
         
         if not active_role:
-            await ctx.respond("❌ Debes tener una membresía VIP o ADMIN activa para usar este comando.")
+            await ctx.respond(f"❌ El jugador no tiene una membresía VIP o ADMIN activa. No se puede establecer el mensaje.")
             return
             
-        preview_msg = f"El {active_role} [Tu Nombre en Juego] se conectó: \"{self.message}\""
-        
-        row = hikari.impl.MessageActionRowBuilder().add_interactive_button(
-            hikari.ButtonStyle.SUCCESS, f"confirm_welcome:{discord_id}:{self.message}", label="✅ Confirmar"
-        ).add_interactive_button(
-            hikari.ButtonStyle.DANGER, f"cancel_welcome:{discord_id}", label="❌ Cancelar"
-        )
-        
-        await ctx.respond(
-            f"👀 **Vista Previa de tu mensaje:**\n> {preview_msg}\n\n¿Deseas guardar este mensaje?",
-            component=row
-        )
+        await plugin.model.api.set_welcome_message(target_steam, self.message)
 
-@plugin.include
-@crescent.event
-async def on_button_click(event: hikari.InteractionCreateEvent):
-    if not isinstance(event.interaction, hikari.ComponentInteraction):
-        return
-
-    custom_id = event.interaction.custom_id
-    
-    if custom_id.startswith("confirm_welcome:"):
-        _, owner_id, message = custom_id.split(":", 2)
-        
-        if str(event.interaction.user.id) != owner_id:
-            await event.interaction.create_initial_response(hikari.ResponseType.MESSAGE_CREATE, content="❌ Ese botón no es tuyo.", flags=hikari.MessageFlag.EPHEMERAL)
-            return
-
-        discord_id = owner_id
-        
-        await event.interaction.create_initial_response(hikari.ResponseType.DEFERRED_MESSAGE_UPDATE)
-        
-        user_data = await plugin.model.api.get_player_by_discord(discord_id)
-        if user_data and user_data.get("steam_id"):
-            await plugin.model.api.set_welcome_message(user_data["steam_id"], message)
-            await event.interaction.edit_initial_response(
-                content=f"✅ Mensaje guardado exitosamente:\n> {message}",
-                components=[]
-            )
-        else:
-            await event.interaction.edit_initial_response(
-                content="❌ Error: No se encontró tu cuenta vinculada.",
-                components=[]
-            )
-            
-    elif custom_id.startswith("cancel_welcome:"):
-        _, owner_id = custom_id.split(":", 1)
-        
-        if str(event.interaction.user.id) != owner_id:
-            await event.interaction.create_initial_response(hikari.ResponseType.MESSAGE_CREATE, content="❌ Ese botón no es tuyo.", flags=hikari.MessageFlag.EPHEMERAL)
-            return
-            
-        await event.interaction.create_initial_response(
-            hikari.ResponseType.MESSAGE_UPDATE,
-            content="❌ Operación cancelada.",
-            components=[]
-        )
 
 @plugin.include
 @player_group.child
