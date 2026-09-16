@@ -614,22 +614,6 @@ class DbRemoveSpecialRole:
 @plugin.include
 @crescent.hook(admin_only)
 @db_group.child
-@crescent.command(name="link_player", description="Vincula un usuario de Discord a un Steam ID (Admin)")
-class DbLinkPlayer:
-    usuario_discord = crescent.option(hikari.User, "Usuario de Discord a vincular") # type: ignore
-    steam_id = crescent.option(str, "Steam ID del jugador") # type: ignore
-    
-    async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer()
-        try:
-            await plugin.model.api.link_account(str(self.usuario_discord.id), self.steam_id)
-            await ctx.respond(f"✅ Usuario {self.usuario_discord.mention} vinculado al Steam ID `{self.steam_id}` exitosamente.")
-        except Exception as e:
-            await ctx.respond(f"❌ Error al vincular: {e}")
-
-@plugin.include
-@crescent.hook(admin_only)
-@db_group.child
 @crescent.command(name="edit_player", description="Edita información de un jugador (debe estar vinculado)")
 class DbEditPlayer:
     usuario_discord = crescent.option(hikari.User, "Usuario de Discord (jugador vinculado)") # type: ignore
