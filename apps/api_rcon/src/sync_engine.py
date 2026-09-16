@@ -57,7 +57,12 @@ async def poll_rcon():
                         old_match = await session.get(Match, current_match_id)
                         if old_match and old_match.end_time is None:
                             old_match.end_time = datetime.datetime.now(datetime.timezone.utc)
-                            # We don't know winning team without explicit scores, maybe leave null
+                            # Determine winning team from last known MatchTeamStats
+                            from sqlmodel import select
+                            winner_stmt = select(MatchTeamStats).where(MatchTeamStats.match_id == current_match_id).order_by(MatchTeamStats.score.desc())
+                            winner_stat = (await session.exec(winner_stmt)).first()
+                            if winner_stat:
+                                old_match.winning_team_id = winner_stat.team_id
                             session.add(old_match)
                     
                     # Start new match
