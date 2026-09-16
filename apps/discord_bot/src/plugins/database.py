@@ -614,19 +614,44 @@ class DbRemoveSpecialRole:
 @plugin.include
 @crescent.hook(admin_only)
 @db_group.child
-@crescent.command(name="edit_player", description="Edita información de un jugador")
+@crescent.command(name="link_player", description="Vincula un usuario de Discord a un Steam ID (Admin)")
+class DbLinkPlayer:
+    usuario_discord = crescent.option(hikari.User, "Usuario de Discord a vincular") # type: ignore
+    steam_id = crescent.option(str, "Steam ID del jugador") # type: ignore
+    
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer()
+        try:
+            await plugin.model.api.link_account(str(self.usuario_discord.id), self.steam_id)
+            await ctx.respond(f"✅ Usuario {self.usuario_discord.mention} vinculado al Steam ID `{self.steam_id}` exitosamente.")
+        except Exception as e:
+            await ctx.respond(f"❌ Error al vincular: {e}")
+
+@plugin.include
+@crescent.hook(admin_only)
+@db_group.child
+@crescent.command(name="edit_player", description="Edita información de un jugador (debe estar vinculado)")
 class DbEditPlayer:
-    steam_id: str = crescent.option(str, "Steam ID del jugador a editar")  # type: ignore
-    usuario_discord: hikari.User | None = crescent.option(hikari.User, "Nuevo usuario de Discord a enlazar", default=None)  # type: ignore
-    mensaje_bienvenida: str | None = crescent.option(str, "Nuevo mensaje de bienvenida personalizado", default=None)  # type: ignore
-    observacion: str | None = crescent.option(str, "Añadir/editar nota interna sobre pagos, conducta, etc.", default=None)  # type: ignore
+    usuario_discord = crescent.option(hikari.User, "Usuario de Discord (jugador vinculado)") # type: ignore
+    mensaje_bienvenida = crescent.option(str, "Nuevo mensaje de bienvenida personalizado", default=None) # type: ignore
+    observacion = crescent.option(str, "Añadir/editar nota interna sobre pagos, conducta, etc.", default=None) # type: ignore
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
         try:
-            discord_id = str(self.usuario_discord.id) if self.usuario_discord else None
-            await plugin.model.api.edit_player(self.steam_id, discord_id=discord_id, custom_welcome_message=self.mensaje_bienvenida, observations=self.observacion)
-            await ctx.respond(f"✅ Jugador {self.steam_id} actualizado exitosamente.")
+            player_info = await plugin.model.api.get_player_by_discord(str(self.usuario_discord.id))
+            if not player_info:
+                await ctx.respond(f"❌ El usuario {self.usuario_discord.mention} no está vinculado a ningún Steam ID. Usa `/db link_player` primero.")
+                return
+                
+            steam_id = player_info.get("steam_id")
+            
+            await plugin.model.api.edit_player(
+                steam_id, 
+                custom_welcome_message=self.mensaje_bienvenida, 
+                observations=self.observacion
+            )
+            await ctx.respond(f"✅ Jugador `{steam_id}` ({self.usuario_discord.mention}) actualizado exitosamente.")
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
 
