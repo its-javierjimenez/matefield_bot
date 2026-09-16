@@ -27,7 +27,7 @@ async def autocomplete_tipo(
 @leaderboard_group.child
 @crescent.command(name="list", description="Muestra el Top 15 de jugadores")
 class DbLeaderboard:
-    metric = crescent.option( # type: ignore
+    metric = crescent.option(
         str, 
         "Métrica a usar para el ranking", 
         choices=(
@@ -79,14 +79,14 @@ class DbLeaderboard:
 @membership_group.child
 @crescent.command(name="add", description="Añade una membresía VIP a un jugador vinculado")
 class DbAddMembership:
-    usuario = crescent.option(hikari.User, "Usuario de Discord a añadir membresía") # type: ignore
-    tipo = crescent.option( # type: ignore
+    usuario = crescent.option(hikari.User, "Usuario de Discord a añadir membresía")
+    tipo = crescent.option(
         str,
         "Tipo de membresía a otorgar (autocompletado o escribe uno)",
         autocomplete=autocomplete_tipo
     )
-    dias = crescent.option(int, "Duración en días (opcional, sobreescribe default, 0 = permanente)", default=None) # type: ignore
-    rol_especial = crescent.option( # type: ignore
+    dias = crescent.option(int, "Duración en días (opcional, sobreescribe default, 0 = permanente)", default=None)
+    rol_especial = crescent.option(
         hikari.Role,
         "Rol especial adicional a asignar (opcional)",
         default=None
@@ -125,7 +125,7 @@ class DbAddMembership:
 @player_group.child
 @crescent.command(name="list", description="Lista todos los jugadores registrados (Paginado)")
 class DbPlayers:
-    vinculacion: str = crescent.option(str, "Filtrar por vinculación a Discord", choices=(("Todos", "all"), ("Vinculados", "linked"), ("No Vinculados", "unlinked")), default="all")   # type: ignore
+    vinculacion: str = crescent.option(str, "Filtrar por vinculación a Discord", choices=(("Todos", "all"), ("Vinculados", "linked"), ("No Vinculados", "unlinked")), default="all")  
     
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
@@ -506,10 +506,10 @@ async def on_membership_button_click(event: hikari.InteractionCreateEvent) -> No
 @membership_group.child
 @crescent.command(name="edit", description="Edita una membresía existente")
 class DbEditMembership:
-    id_membresia: int = crescent.option(int, "ID de la membresía (ver /db memberships)")   # type: ignore
-    dias: int | None = crescent.option(int, "Nuevos días (0 = permanente)", default=None, min_value=0)   # type: ignore
-    tipo: str | None = crescent.option(str, "Nuevo tipo de membresía", autocomplete=autocomplete_tipo, default=None)   # type: ignore
-    activa: bool | None = crescent.option(bool, "¿Está activa?", default=None)   # type: ignore
+    id_membresia: int = crescent.option(int, "ID de la membresía (ver /db memberships)")  
+    dias: int | None = crescent.option(int, "Nuevos días (0 = permanente)", default=None, min_value=0)  
+    tipo: str | None = crescent.option(str, "Nuevo tipo de membresía", autocomplete=autocomplete_tipo, default=None)  
+    activa: bool | None = crescent.option(bool, "¿Está activa?", default=None)  
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
@@ -525,7 +525,7 @@ class DbEditMembership:
 @membership_group.child
 @crescent.command(name="remove", description="Elimina una membresía existente permanentemente")
 class DbRemoveMembership:
-    id_membresia = crescent.option(int, "ID de la membresía (ver /db memberships)") # type: ignore
+    id_membresia = crescent.option(int, "ID de la membresía (ver /db memberships)")
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
@@ -541,8 +541,8 @@ class DbRemoveMembership:
 @special_role_group.child
 @crescent.command(name="add", description="Añade un rol especial permanente a un jugador")
 class DbAddSpecialRole:
-    usuario = crescent.option(hikari.User, "Usuario de Discord")  # type: ignore
-    rol_especial = crescent.option(hikari.Role, "Rol especial a asignar")  # type: ignore
+    usuario = crescent.option(hikari.User, "Usuario de Discord") 
+    rol_especial = crescent.option(hikari.Role, "Rol especial a asignar") 
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
@@ -562,8 +562,8 @@ class DbAddSpecialRole:
 @special_role_group.child
 @crescent.command(name="remove", description="Remueve un rol especial permanente de un jugador")
 class DbRemoveSpecialRole:
-    usuario = crescent.option(hikari.User, "Usuario de Discord")  # type: ignore
-    rol_especial = crescent.option(hikari.Role, "Rol especial a remover")  # type: ignore
+    usuario = crescent.option(hikari.User, "Usuario de Discord") 
+    rol_especial = crescent.option(hikari.Role, "Rol especial a remover") 
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
@@ -583,9 +583,9 @@ class DbRemoveSpecialRole:
 @player_group.child
 @crescent.command(name="edit", description="Edita información de un jugador (debe estar vinculado)")
 class DbEditPlayer:
-    usuario_discord = crescent.option(hikari.User, "Usuario de Discord (jugador vinculado)")  # type: ignore
-    mensaje_bienvenida = crescent.option(str, "Nuevo mensaje de bienvenida personalizado", default=None)  # type: ignore
-    observacion = crescent.option(str, "Añadir/editar nota interna sobre pagos, conducta, etc.", default=None)  # type: ignore
+    usuario_discord = crescent.option(hikari.User, "Usuario de Discord (jugador vinculado)") 
+    mensaje_bienvenida = crescent.option(str, "Nuevo mensaje de bienvenida personalizado", default=None) 
+    observacion = crescent.option(str, "Añadir/editar nota interna sobre pagos, conducta, etc.", default=None) 
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
@@ -685,7 +685,7 @@ import time
 @membership_group.child
 @crescent.command(name="compensate_all", description="Extiende todas las membresías activas por la cantidad de días indicados")
 class CompensarTodos:
-    dias = crescent.option(int, "Cantidad de días a extender") # type: ignore
+    dias = crescent.option(int, "Cantidad de días a extender")
     
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
@@ -702,8 +702,8 @@ class CompensarTodos:
 @membership_group.child
 @crescent.command(name="extend", description="Extiende una membresía individual por ID")
 class ExtenderMembresia:
-    membership_id = crescent.option(int, "ID numérico de la membresía") # type: ignore
-    dias = crescent.option(int, "Cantidad de días extra") # type: ignore
+    membership_id = crescent.option(int, "ID numérico de la membresía")
+    dias = crescent.option(int, "Cantidad de días extra")
     
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
