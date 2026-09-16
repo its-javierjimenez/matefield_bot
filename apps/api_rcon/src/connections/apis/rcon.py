@@ -1,4 +1,6 @@
 import aiohttp
+import time
+import asyncio
 from typing import Any
 
 from wardogs_schemas import v1 as schemas
@@ -12,6 +14,22 @@ class RCONClient:
             "Authorization": f"Bearer {self.password}",
             "Content-Type": "application/json"
         }
+        self._cache = {}
+        self._cache_lock = asyncio.Lock()
+        self._cache_ttl = 3.0
+
+    async def _get_cached(self, key: str, fetcher_coro) -> Any:
+        async with self._cache_lock:
+            now = time.time()
+            if key in self._cache:
+                timestamp, data = self._cache[key]
+                if now - timestamp < self._cache_ttl:
+                    return data
+            # Fetch new data
+            data = await fetcher_coro()
+            # Update cache timestamp AFTER fetch succeeds
+            self._cache[key] = (time.time(), data)
+            return data
 
     async def _request(self, method: str, endpoint: str, **kwargs) -> Any:
         url = f"{self.base_url}{endpoint}"
@@ -25,12 +43,17 @@ class RCONClient:
                 return await response.text()
 
     async def get_status(self) -> schemas.Status:
-        data = await self._request("GET", "/v1/status")
-        return schemas.Status.model_validate(data)
+        async def fetch():
+            data = await self._request("GET", "/v1/status")
+            return schemas.Status.model_validate(data)
+        return await self._get_cached("status", fetch)
 
     async def get_players(self) -> schemas.Players1:
-        data = await self._request("GET", "/v1/players")
-        return schemas.Players1.model_validate(data)
+        async def fetch():
+            data = await self._request("GET", "/v1/players")
+            return schemas.Players1.model_validate(data)
+        return await self._get_cached("players", fetch)
+
 
     async def get_audit_logs(self, limit: int = 50) -> schemas.Audit:
         data = await self._request("GET", f"/v1/audit?limit={limit}")
@@ -130,3 +153,4 @@ rcon_client = RCONClient(
     base_url=ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_URL,
     password=ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_PASSWORD
 )
+
