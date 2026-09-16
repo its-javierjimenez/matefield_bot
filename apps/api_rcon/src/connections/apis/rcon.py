@@ -80,6 +80,16 @@ class RCONClient:
                 insert_idx = i
                 break
                 
+        if insert_idx == -1:
+            new_lines.append('')
+            new_lines.append('[/Script/WDGame.WDGameSession]')
+            insert_idx = len(new_lines) - 1
+            
+        if insert_idx == -1:
+            new_lines.append('')
+            new_lines.append('[/Script/WDGame.WDGameSession]')
+            insert_idx = len(new_lines) - 1
+            
         if insert_idx != -1:
             slot_lines = ['!DefaultReservedPlayerIds=ClearArray']
             for sid in steam_ids:
@@ -122,6 +132,16 @@ class RCONClient:
                 insert_idx = i
                 break
                 
+        if insert_idx == -1:
+            new_lines.append('')
+            new_lines.append('[/Script/WDGame.WDGameSession]')
+            insert_idx = len(new_lines) - 1
+            
+        if insert_idx == -1:
+            new_lines.append('')
+            new_lines.append('[/Script/WDGame.WDGameSession]')
+            insert_idx = len(new_lines) - 1
+            
         if insert_idx != -1:
             slot_lines = ['!DefaultBannedPlayerIds=ClearArray']
             for sid in steam_ids:

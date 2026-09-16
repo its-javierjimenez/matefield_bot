@@ -121,6 +121,10 @@ async def sync_bans(session: AsyncSession = Depends(get_session)):
 async def ban_player(steam_id: str, req: schemas.ReasonRequest, session: AsyncSession = Depends(get_session)):
     reason = req.reason or "No reason provided"
     
+    expires_at = None
+    if req.duration_days and req.duration_days > 0:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=req.duration_days)
+
     # Save to historical db
     player = await session.get(Player, steam_id)
     if not player:
@@ -135,9 +139,15 @@ async def ban_player(steam_id: str, req: schemas.ReasonRequest, session: AsyncSe
         session.add(player)
         await session.flush()
         
-    ban_entry = Ban(steam_id=steam_id, reason=reason, is_active=True, rcon_sync_status="PENDING")
+    ban_entry = Ban(steam_id=steam_id, reason=reason, is_active=True, rcon_sync_status="PENDING", expires_at=expires_at)
     session.add(ban_entry)
     await session.commit()
+    
+    # Execute ban in live RCON
+    try:
+        await rcon.ban_player(steam_id, reason)
+    except Exception as e:
+        print(f"Failed to execute real-time ban: {e}")
     
     # Trigger sync
     await sync_bans(session)
