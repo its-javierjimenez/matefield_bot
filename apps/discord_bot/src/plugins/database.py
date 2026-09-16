@@ -127,18 +127,40 @@ class DbReservedSlots:
             res = await plugin.model.api.get_reserved_slots()
             slots = res.reservedSlots if res else []
             if not slots:
-                await ctx.respond("ℹ️ No hay slots reservados actualmente en el RCON.")
+                await ctx.respond("?? No hay slots reservados actualmente en el RCON.")
                 return
                 
-            mentions = "\n".join([f"- `{s}`" for s in slots])
-            embed = hikari.Embed(
-                title=f"🔒 Slots Reservados en RCON ({len(slots)})",
-                description=mentions,
-                color=0x4169E1
-            )
-            await ctx.respond(embed=embed)
+            steam_profiles = await plugin.model.api.get_steam_players_batch(slots)
+            
+            lines = []
+            for s in slots:
+                db_player = await plugin.model.api.get_player_by_steam(s)
+                discord_username = "Desconocido"
+                if db_player and db_player.get("discord_id"):
+                    discord_id = db_player.get("discord_id")
+                    try:
+                        user = await ctx.app.rest.fetch_user(int(discord_id))
+                        discord_username = user.username
+                    except:
+                        discord_username = f"ID: {discord_id}"
+                        
+                steam_name = steam_profiles.get(s, {}).get("personaname", "Desconocido")
+                lines.append(f"- `{s}` | Steam: **{steam_name}** | Discord: **{discord_username}**")
+                
+            # Cut into chunks if necessary
+            desc = "
+".join(lines)
+            if len(desc) <= 4096:
+                embed = hikari.Embed(
+                    title=f"?? Slots Reservados en RCON ({len(slots)})",
+                    description=desc,
+                    color=0x4169E1
+                )
+                await ctx.respond(embed=embed)
+            else:
+                await ctx.respond(f"Hay demasiados jugadores ({len(slots)}) para mostrar en un embed. Usa `/reserved_slots list` en vez.")
         except Exception as e:
-            await ctx.respond(f"❌ Error obteniendo slots reservados: {e}")
+            await ctx.respond(f"? Error obteniendo slots reservados: {e}")
 
 
 
