@@ -21,7 +21,7 @@ reserved_group = crescent.Group("reserved_slots", description="Administración d
 @crescent.command(name="list", description="Muestra la lista de Steam IDs en slots reservados")
 class ReservedSlotsList:
     async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
+        await ctx.defer()
         try:
             data = await plugin.model.api.get_reserved_slots()
             slots = data.reservedSlots or []
@@ -52,12 +52,12 @@ class ReservedSlotsList:
             current_msg = msg
             for line in lines:
                 if len(current_msg) + len(line) + 1 > 1900:
-                    await ctx.respond(current_msg, ephemeral=True)
+                    await ctx.respond(current_msg)
                     current_msg = ""
                 current_msg += line + "\n"
             
             if current_msg:
-                await ctx.respond(current_msg, ephemeral=True)
+                await ctx.respond(current_msg)
         except Exception as e:
             await ctx.respond(f"Error al consultar RCON o DB: {e}")
 
@@ -68,7 +68,7 @@ class ReservedSlotsAdd:
     steam_id = crescent.option(str, "Steam ID a agregar")
     
     async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
+        await ctx.defer()
         try:
             await plugin.model.api.add_reserved_slot(self.steam_id)
             await ctx.respond(f"✅ Steam ID `{self.steam_id}` agregado a slots reservados.")
@@ -82,7 +82,7 @@ class ReservedSlotsRemove:
     steam_id = crescent.option(str, "Steam ID a remover")
     
     async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
+        await ctx.defer()
         try:
             await plugin.model.api.remove_reserved_slot(self.steam_id)
             await ctx.respond(f"✅ Steam ID `{self.steam_id}` removido de slots reservados.")
@@ -94,7 +94,7 @@ class ReservedSlotsRemove:
 @crescent.command(name="sync_status", description="Muestra el estado de sincronización entre BD y RCON")
 class ReservedSlotsSyncStatus:
     async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
+        await ctx.defer()
         try:
             status = await plugin.model.api.get_rcon_sync_status()
             
@@ -129,7 +129,7 @@ class ServerAnnounce:
     message = crescent.option(str, "Mensaje a enviar")
     
     async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
+        await ctx.defer()
         try:
             await plugin.model.api.broadcast(self.message)
             await ctx.respond(f"✅ Anuncio enviado:\n> {self.message}")
@@ -175,7 +175,7 @@ class SetQuota:
     max_quota = crescent.option(int, "Límite máximo (Pon 0 o déjalo vacío para infinito)", default=0)
     
     async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
+        await ctx.defer()
         try:
             limit = self.max_quota if self.max_quota > 0 else None
             await plugin.model.api.update_quota(self.membership_type.upper(), limit)
@@ -192,7 +192,7 @@ class ServerSetMaxReserved:
     cantidad = crescent.option(int, "Cantidad máxima de slots reservados (0-128)")
     
     async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
+        await ctx.defer()
         try:
             # Primero obtenemos la configuración actual
             data = await plugin.model.api.get_config()
@@ -229,7 +229,7 @@ class ServerSetMaxReserved:
 @crescent.command(name="sync_memberships", description="[DEV] Otorga membresías a usuarios vinculados basándose en sus roles de Discord")
 class ForceSyncRolesToMemberships:
     async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
+        await ctx.defer()
         configs = await plugin.model.api.get_bot_configs()
         role_maps = {} # role_id_str -> db_type
         
@@ -394,7 +394,7 @@ class BanPlayer:
     reason = crescent.option(str, "Razón del ban", default="No especificado")
     
     async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
+        await ctx.defer()
         try:
             await plugin.model.api.ban_player(str(self.steam_id), str(self.reason))
             await ctx.respond(f"✅ Jugador `{self.steam_id}` ha sido baneado permanentemente en la base de datos y RCON. Razón: {self.reason}")
@@ -408,7 +408,7 @@ class UnbanPlayer:
     steam_id = crescent.option(str, "Steam ID a desbanear")
     
     async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
+        await ctx.defer()
         try:
             await plugin.model.api.unban_player(str(self.steam_id))
             await ctx.respond(f"✅ Jugador `{self.steam_id}` ha sido desbaneado y sincronizado con RCON.")
@@ -422,7 +422,7 @@ class CompensarTodos:
     dias = crescent.option(int, "Cantidad de días a extender")
     
     async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
+        await ctx.defer()
         try:
             res = await plugin.model.api.compensate_memberships(self.dias)
             msg = res.get("message", "Compensación completada.")
@@ -438,7 +438,7 @@ class ExtenderMembresia:
     dias = crescent.option(int, "Cantidad de días extra")
     
     async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
+        await ctx.defer()
         try:
             await plugin.model.api.edit_membership(membership_id=self.membership_id, add_days=self.dias)
             await ctx.respond(f"✅ Membresía #{self.membership_id} extendida por {self.dias} días exitosamente.")
