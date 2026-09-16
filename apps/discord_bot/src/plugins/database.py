@@ -1,3 +1,4 @@
+import asyncio
 import crescent
 import hikari
 from src.model import Model
