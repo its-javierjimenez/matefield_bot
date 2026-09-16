@@ -48,15 +48,13 @@ class ReservedSlotsList:
                 steam_name = steam_profiles.get(s, {}).get("personaname", "Desconocido")
                 lines.append(f"- `{s}` | Steam: **{steam_name}** | Discord: **{discord_username}**")
                 
-            msg = "**Jugadores en Slots Reservados:**
-"
+            msg = "**Jugadores en Slots Reservados:**\n"
             current_msg = msg
             for line in lines:
                 if len(current_msg) + len(line) + 1 > 1900:
                     await ctx.respond(current_msg)
                     current_msg = ""
-                current_msg += line + "
-"
+                current_msg += line + "\n"
             
             if current_msg:
                 await ctx.respond(current_msg)

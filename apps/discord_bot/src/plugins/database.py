@@ -148,8 +148,7 @@ class DbReservedSlots:
                 lines.append(f"- `{s}` | Steam: **{steam_name}** | Discord: **{discord_username}**")
                 
             # Cut into chunks if necessary
-            desc = "
-".join(lines)
+            desc = "\n".join(lines)
             if len(desc) <= 4096:
                 embed = hikari.Embed(
                     title=f"?? Slots Reservados en RCON ({len(slots)})",
