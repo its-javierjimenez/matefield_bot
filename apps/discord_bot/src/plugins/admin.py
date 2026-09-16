@@ -438,7 +438,7 @@ class BanList:
                     return
                 target_steam = db_player.get("steam_id")
                 
-            data = await plugin.model.api.get_db_bans(str(target_steam))
+            data = await plugin.model.api.get_db_bans(str(target_steam) if target_steam else None)
             bans = data.bans if data else []
             
             if not bans:
