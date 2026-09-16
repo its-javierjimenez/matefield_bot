@@ -72,6 +72,7 @@ class Ban(SQLModel, table=True):
     is_active: bool = Field(default=True)
     rcon_sync_status: str = Field(default="PENDING")
     banned_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True)))
+    expires_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
 
 class Team(SQLModel, table=True):
     __tablename__ = "teams"

@@ -989,7 +989,8 @@ async def get_db_bans(steam_id: Optional[str] = None, session: AsyncSession = De
             steam_id=b.steam_id,
             reason=b.reason,
             is_active=b.is_active,
-            banned_at=b.banned_at.isoformat() if b.banned_at else ""
+            banned_at=b.banned_at.isoformat() if b.banned_at else "",
+            expires_at=b.expires_at.isoformat() if b.expires_at else None
         ))
         
     return schemas.DbBansResponse(bans=result)

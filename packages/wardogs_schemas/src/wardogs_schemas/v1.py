@@ -160,6 +160,7 @@ class MapSelection(BaseModel):
 
 class ReasonRequest(BaseModel):
     reason: str | None = None
+    duration_days: int | None = None
 
 
 class BanRequest(BaseModel):
@@ -207,6 +208,7 @@ class DbBan(BaseModel):
     reason: str
     is_active: bool
     banned_at: str
+    expires_at: str | None = None
 
 class DbBansResponse(BaseModel):
     bans: list[DbBan]

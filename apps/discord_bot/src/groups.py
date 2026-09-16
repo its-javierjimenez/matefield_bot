@@ -15,3 +15,5 @@ hacker_group = crescent.Group("hacker", "Herramientas anti-hacks", hooks=[admin_
 reserved_group = crescent.Group("reserved_slots", "Slots reservados", hooks=[admin_only])
 match_group = crescent.Group("match", "Partida en vivo")
 leaderboard_group = crescent.Group("leaderboard", "Top jugadores")
+
+ban_role_group = crescent.Group("ban_role", "Mapeo de roles a baneos", hooks=[admin_only])
