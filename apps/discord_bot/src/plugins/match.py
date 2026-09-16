@@ -9,6 +9,7 @@ match_group = crescent.Group("match", "Comandos de Partida en Vivo", hooks=[admi
 
 @plugin.include
 @match_group.child
+@match_group.child
 @crescent.command(name="status", description="Muestra el estado de la partida actual")
 class MatchStatus:
     async def callback(self, ctx: crescent.Context) -> None:
@@ -53,6 +54,7 @@ class MatchStatus:
 
 
 @plugin.include
+@match_group.child
 @match_group.child
 @crescent.command(name="players", description="Muestra todos los jugadores en la partida")
 class MatchPlayers:
@@ -152,6 +154,7 @@ class MatchPlayers:
 
 @plugin.include
 @match_group.child
+@match_group.child
 @crescent.command(name="leaderboard", description="Muestra el top 10 de jugadores en la partida")
 class MatchLeaderboard:
     async def callback(self, ctx: crescent.Context) -> None:
@@ -208,7 +211,8 @@ class MatchLeaderboard:
 
 @plugin.include
 @match_group.child
-@crescent.command(name="player", description="[RCON] Muestra información EN VIVO de un jugador en la partida actual")
+@match_group.child
+@crescent.command(name="player_info", description="[RCON] Muestra información EN VIVO de un jugador en la partida actual")
 class MatchPlayer:
     steam_id = crescent.option(str, "Steam ID del jugador")
     
@@ -267,6 +271,7 @@ class MatchPlayer:
 
 @plugin.include
 @crescent.hook(admin_only)
+@server_group.child
 @crescent.command(name="logs", description="Muestra los últimos 10 logs de auditoría (ADMIN)")
 class ServerLogs:
     async def callback(self, ctx: crescent.Context) -> None:

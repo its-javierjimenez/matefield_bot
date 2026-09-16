@@ -7,8 +7,8 @@ from src.hooks import check_is_admin, vip_or_admin, admin_only
 logger = logging.getLogger(__name__)
 
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
+from src.groups import player_group
 
-player_group = crescent.Group("player", "Comandos públicos de jugador")
 
 @plugin.include
 @player_group.child
@@ -74,7 +74,8 @@ class UnlinkAccount:
 @plugin.include
 @crescent.hook(admin_only)
 @player_group.child
-@crescent.command(name="set_welcome_message", description="Establece un mensaje de bienvenida personalizado (VIP/ADMIN)")
+@player_group.child
+@crescent.command(name="welcome_message_set", description="Establece un mensaje de bienvenida personalizado (VIP/ADMIN)")
 class SetWelcomeMessage:
     message = crescent.option(str, "El mensaje que se mostrará cuando entres al servidor")
 

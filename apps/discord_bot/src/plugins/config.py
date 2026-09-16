@@ -7,7 +7,8 @@ plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 
 @plugin.include
 @crescent.hook(admin_only)
-@crescent.command(name="set_announcement_channel", description="Configura el canal de anuncios (Admin)")
+@config_group.child
+@crescent.command(name="announcement_channel", description="Configura el canal de anuncios (Admin)")
 class ConfigChannel:
     channel = crescent.option(hikari.TextableGuildChannel, "El canal donde enviar anuncios de RCON")
 
@@ -18,7 +19,8 @@ class ConfigChannel:
 
 @plugin.include
 @crescent.hook(admin_only)
-@crescent.command(name="set_admin_role", description="Configura el rol de Administrador principal")
+@config_group.child
+@crescent.command(name="admin_role", description="Configura el rol de Administrador principal")
 class ConfigAdminRole:
     admin_role = crescent.option(hikari.Role, "Rol de Administrador")
 
@@ -29,7 +31,8 @@ class ConfigAdminRole:
 
 @plugin.include
 @crescent.hook(admin_only)
-@crescent.command(name="add_vip_role", description="Añade un rol a la lista de roles VIP permitidos")
+@vip_role_group.child
+@crescent.command(name="add", description="Añade un rol a la lista de roles VIP permitidos")
 class AddVipRole:
     vip_role = crescent.option(hikari.Role, "Rol VIP a añadir")
 
@@ -49,7 +52,8 @@ class AddVipRole:
 
 @plugin.include
 @crescent.hook(admin_only)
-@crescent.command(name="remove_vip_role", description="Elimina un rol de la lista de VIPs")
+@vip_role_group.child
+@crescent.command(name="remove", description="Elimina un rol de la lista de VIPs")
 class RemoveVipRole:
     vip_role = crescent.option(hikari.Role, "Rol VIP a remover")
 
@@ -69,7 +73,8 @@ class RemoveVipRole:
 
 @plugin.include
 @crescent.hook(admin_only)
-@crescent.command(name="vip_roles", description="Muestra la lista actual de roles VIP configurados")
+@vip_role_group.child
+@crescent.command(name="list", description="Muestra la lista actual de roles VIP configurados")
 class ListVipRoles:
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
@@ -83,7 +88,8 @@ class ListVipRoles:
         await ctx.respond(f"📋 **Roles VIP Configurados:**\n{mentions}")
 @plugin.include
 @crescent.hook(admin_only)
-@crescent.command(name="map_role", description="Mapea un tipo de membresía de BD a un rol de Discord")
+@role_map_group.child
+@crescent.command(name="add", description="Mapea un tipo de membresía de BD a un rol de Discord")
 class MapMembershipRole:
     db_type = crescent.option(str, "Tipo en Base de Datos (ej. VIP_EXPRESS)")
     discord_role = crescent.option(hikari.Role, "Rol de Discord a asignar automáticamente")
@@ -99,7 +105,8 @@ class MapMembershipRole:
 
 @plugin.include
 @crescent.hook(admin_only)
-@crescent.command(name="unmap_role", description="Elimina el mapeo de un tipo de membresía")
+@role_map_group.child
+@crescent.command(name="remove", description="Elimina el mapeo de un tipo de membresía")
 class UnmapMembershipRole:
     db_type = crescent.option(str, "Tipo en Base de Datos (ej. VIP_EXPRESS)")
 
@@ -113,7 +120,8 @@ class UnmapMembershipRole:
 
 @plugin.include
 @crescent.hook(admin_only)
-@crescent.command(name="view_all", description="Lista todas las configuraciones y mapeos activos")
+@config_group.child
+@crescent.command(name="list", description="Lista todas las configuraciones y mapeos activos")
 class ListConfigs:
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
@@ -144,7 +152,8 @@ class ListConfigs:
 
 @plugin.include
 @crescent.hook(admin_only)
-@crescent.command(name="add_whitelist", description="Añade un usuario a la Whitelist para que el bot no le quite roles")
+@whitelist_group.child
+@crescent.command(name="add", description="Añade un usuario a la Whitelist para que el bot no le quite roles")
 class AddWhitelist:
     usuario = crescent.option(hikari.User, "Usuario de Discord a proteger")
 
@@ -164,7 +173,8 @@ class AddWhitelist:
 
 @plugin.include
 @crescent.hook(admin_only)
-@crescent.command(name="remove_whitelist", description="Remueve un usuario de la Whitelist")
+@whitelist_group.child
+@crescent.command(name="remove", description="Remueve un usuario de la Whitelist")
 class RemoveWhitelist:
     usuario = crescent.option(hikari.User, "Usuario de Discord a desproteger")
 
@@ -187,7 +197,8 @@ class RemoveWhitelist:
 
 @plugin.include
 @crescent.hook(admin_only)
-@crescent.command(name="whitelist", description="Lista los usuarios en la Whitelist de sincronización")
+@whitelist_group.child
+@crescent.command(name="list", description="Lista los usuarios en la Whitelist de sincronización")
 class ListWhitelist:
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
@@ -202,7 +213,8 @@ class ListWhitelist:
 
 @plugin.include
 @crescent.hook(admin_only)
-@crescent.command(name="set_match_channel", description="Configura el canal donde se enviarán los resultados de las partidas")
+@config_group.child
+@crescent.command(name="match_channel", description="Configura el canal donde se enviarán los resultados de las partidas")
 class SetMatchChannel:
     canal = crescent.option(hikari.TextableChannel, "Canal de Discord")
 

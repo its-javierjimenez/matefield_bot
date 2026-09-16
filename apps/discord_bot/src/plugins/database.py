@@ -18,11 +18,10 @@ async def autocomplete_tipo(
 
 
 
-db_group = crescent.Group("db", "Comandos de consultas de Base de Datos", hooks=[admin_only])
 
 @plugin.include
-@db_group.child
-@crescent.command(name="leaderboard", description="Muestra el Top 15 de jugadores")
+@leaderboard_group.child
+@crescent.command(name="list", description="Muestra el Top 15 de jugadores")
 class DbLeaderboard:
     metric = crescent.option(
         str, 
@@ -73,8 +72,8 @@ class DbLeaderboard:
 
 
 @plugin.include
-@db_group.child
-@crescent.command(name="add_membership", description="Añade una membresía VIP a un jugador vinculado")
+@membership_group.child
+@crescent.command(name="add", description="Añade una membresía VIP a un jugador vinculado")
 class DbAddMembership:
     usuario = crescent.option(hikari.User, "Usuario de Discord a añadir membresía")
     tipo = crescent.option(
@@ -119,54 +118,8 @@ class DbAddMembership:
             await ctx.respond(f"❌ Error: {e}")
 
 @plugin.include
-@db_group.child
-@crescent.command(name="reserved_slots", description="Muestra la lista de SteamIDs con slots reservados en el RCON")
-class DbReservedSlots:
-    async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer()
-        try:
-            res = await plugin.model.api.get_reserved_slots()
-            slots = res.reservedSlots if res else []
-            if not slots:
-                await ctx.respond("?? No hay slots reservados actualmente en el RCON.")
-                return
-                
-            steam_profiles = await plugin.model.api.get_steam_players_batch(slots)
-            
-            lines = []
-            for s in slots:
-                db_player = await plugin.model.api.get_player_by_steam(s)
-                discord_username = "Desconocido"
-                if db_player and db_player.get("discord_id"):
-                    discord_id = db_player.get("discord_id")
-                    try:
-                        user = await ctx.app.rest.fetch_user(int(discord_id))
-                        discord_username = user.username
-                    except:
-                        discord_username = f"ID: {discord_id}"
-                        
-                steam_name = steam_profiles.get(s, {}).get("personaname", "Desconocido")
-                lines.append(f"- `{s}` | Steam: **{steam_name}** | Discord: **{discord_username}**")
-                
-            # Cut into chunks if necessary
-            desc = "\n".join(lines)
-            if len(desc) <= 4096:
-                embed = hikari.Embed(
-                    title=f"?? Slots Reservados en RCON ({len(slots)})",
-                    description=desc,
-                    color=0x4169E1
-                )
-                await ctx.respond(embed=embed)
-            else:
-                await ctx.respond(f"Hay demasiados jugadores ({len(slots)}) para mostrar en un embed. Usa `/reserved_slots list` en vez.")
-        except Exception as e:
-            await ctx.respond(f"? Error obteniendo slots reservados: {e}")
-
-
-
-@plugin.include
-@db_group.child
-@crescent.command(name="players", description="Lista todos los jugadores registrados (Paginado)")
+@player_group.child
+@crescent.command(name="list", description="Lista todos los jugadores registrados (Paginado)")
 class DbPlayers:
     vinculacion: str = crescent.option(str, "Filtrar por vinculación a Discord", choices=(("Todos", "all"), ("Vinculados", "linked"), ("No Vinculados", "unlinked")), default="all")  # type: ignore
     
@@ -410,7 +363,7 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
             pass
 
 @plugin.include
-@db_group.child
+@server_group.child
 @crescent.command(name="status", description="Muestra el estado actual del servidor RCON y rotación")
 class DbStatus:
     async def callback(self, ctx: crescent.Context) -> None:
@@ -440,8 +393,8 @@ class DbStatus:
 
 @plugin.include
 @crescent.hook(admin_only)
-@db_group.child
-@crescent.command(name="memberships", description="Listado de membresías (Paginado)")
+@membership_group.child
+@crescent.command(name="list", description="Listado de membresías (Paginado)")
 class DbMemberships:
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
@@ -546,8 +499,8 @@ async def on_membership_button_click(event: hikari.InteractionCreateEvent) -> No
         )
 @plugin.include
 @crescent.hook(admin_only)
-@db_group.child
-@crescent.command(name="edit_membership", description="Edita una membresía existente")
+@membership_group.child
+@crescent.command(name="edit", description="Edita una membresía existente")
 class DbEditMembership:
     id_membresia: int = crescent.option(int, "ID de la membresía (ver /db memberships)")  # type: ignore
     dias: int | None = crescent.option(int, "Nuevos días (0 = permanente)", default=None, min_value=0)  # type: ignore
@@ -565,8 +518,8 @@ class DbEditMembership:
 
 @plugin.include
 @crescent.hook(admin_only)
-@db_group.child
-@crescent.command(name="remove_membership", description="Elimina una membresía existente permanentemente")
+@membership_group.child
+@crescent.command(name="remove", description="Elimina una membresía existente permanentemente")
 class DbRemoveMembership:
     id_membresia = crescent.option(int, "ID de la membresía (ver /db memberships)")
 
@@ -581,8 +534,8 @@ class DbRemoveMembership:
 
 @plugin.include
 @crescent.hook(admin_only)
-@db_group.child
-@crescent.command(name="add_special_role", description="Añade un rol especial permanente a un jugador")
+@special_role_group.child
+@crescent.command(name="add", description="Añade un rol especial permanente a un jugador")
 class DbAddSpecialRole:
     usuario = crescent.option(hikari.User, "Usuario de Discord") # type: ignore
     rol_especial = crescent.option(hikari.Role, "Rol especial a asignar") # type: ignore
@@ -602,8 +555,8 @@ class DbAddSpecialRole:
 
 @plugin.include
 @crescent.hook(admin_only)
-@db_group.child
-@crescent.command(name="remove_special_role", description="Remueve un rol especial permanente de un jugador")
+@special_role_group.child
+@crescent.command(name="remove", description="Remueve un rol especial permanente de un jugador")
 class DbRemoveSpecialRole:
     usuario = crescent.option(hikari.User, "Usuario de Discord") # type: ignore
     rol_especial = crescent.option(hikari.Role, "Rol especial a remover") # type: ignore
@@ -623,8 +576,8 @@ class DbRemoveSpecialRole:
 
 @plugin.include
 @crescent.hook(admin_only)
-@db_group.child
-@crescent.command(name="edit_player", description="Edita información de un jugador (debe estar vinculado)")
+@player_group.child
+@crescent.command(name="edit", description="Edita información de un jugador (debe estar vinculado)")
 class DbEditPlayer:
     usuario_discord = crescent.option(hikari.User, "Usuario de Discord (jugador vinculado)") # type: ignore
     mensaje_bienvenida = crescent.option(str, "Nuevo mensaje de bienvenida personalizado", default=None) # type: ignore
@@ -648,4 +601,112 @@ class DbEditPlayer:
             await ctx.respond(f"✅ Jugador `{steam_id}` ({self.usuario_discord.mention}) actualizado exitosamente.")
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
+
+
+@plugin.include
+@crescent.hook(admin_only)
+@membership_group.child
+@crescent.command(name="sync", description="[DEV] Otorga membresías a usuarios vinculados basándose en sus roles de Discord")
+class ForceSyncRolesToMemberships:
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer()
+        configs = await plugin.model.api.get_bot_configs()
+        role_maps = {} # role_id_str -> db_type
+        
+        for key, value in configs.items():
+            if key.startswith("ROLE_MAP_"):
+                db_type = key.replace("ROLE_MAP_", "")
+                role_maps[value] = db_type
+                
+        if not role_maps:
+            await ctx.respond("ℹ️ No hay mapeos de roles configurados en /config map_membership_role.")
+            return
+            
+        # Get all linked players (up to 1000 for testing)
+        res = await plugin.model.api.get_paginated_players(page=1, limit=1000, linked="all")
+        players = res.get("players", [])
+        
+        if not players:
+            await ctx.respond("ℹ️ No hay jugadores vinculados en la base de datos.")
+            return
+            
+        imported = 0
+        guild_id = ctx.guild_id
+        if not guild_id:
+            await ctx.respond("❌ Este comando debe usarse en un servidor.")
+            return
+            
+        skipped = 0
+        for p in players:
+            discord_id = p.get("discord_id")
+            steam_id = p.get("steam_id")
+            if not discord_id or not steam_id:
+                logger.info(f"[ForceSync] Saltando jugador sin discord_id o steam_id: {p}")
+                continue
+                
+            try:
+                member = await plugin.app.rest.fetch_member(guild_id, int(discord_id))
+            except Exception as e:
+                logger.info(f"[ForceSync] No se pudo obtener member para discord_id {discord_id}: {e}")
+                continue
+                
+            member_role_ids = [str(r) for r in member.role_ids]
+            logger.info(f"[ForceSync] Jugador {discord_id} tiene roles: {member_role_ids}")
+            
+            for role_id_str, db_type in role_maps.items():
+                if role_id_str in member_role_ids:
+                    try:
+                        # Call add_membership without days to use default config
+                        await plugin.model.api.add_membership(steam_id, db_type)
+                        logger.info(f"[ForceSync] Otorgada membresía {db_type} a steam_id {steam_id}")
+                        imported += 1
+                    except Exception as e:
+                        if "Membership already active" in str(e):
+                            skipped += 1
+                            logger.info(f"[ForceSync] Omitido: {steam_id} ya tiene membresía activa.")
+                        else:
+                            logger.error(f"[ForceSync] Falló add_membership para {steam_id}: {e}")
+                        
+        msg = f"✅ Sincronización completada. Se otorgaron {imported} membresías nuevas."
+        if skipped > 0:
+            msg += f"\n⚠️ Se omitieron {skipped} membresías porque los usuarios ya la tenían activa."
+            
+        await ctx.respond(msg)
+
+import time
+
+
+@plugin.include
+@crescent.hook(admin_only)
+@membership_group.child
+@crescent.command(name="compensate_all", description="Extiende todas las membresías activas por la cantidad de días indicados")
+class CompensarTodos:
+    dias = crescent.option(int, "Cantidad de días a extender")
+    
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer()
+        try:
+            res = await plugin.model.api.compensate_memberships(self.dias)
+            msg = res.get("message", "Compensación completada.")
+            await ctx.respond(f"✅ {msg}")
+        except Exception as e:
+            await ctx.respond(f"❌ Error al compensar: {e}")
+
+
+@plugin.include
+@crescent.hook(admin_only)
+@membership_group.child
+@crescent.command(name="extend", description="Extiende una membresía individual por ID")
+class ExtenderMembresia:
+    membership_id = crescent.option(int, "ID numérico de la membresía")
+    dias = crescent.option(int, "Cantidad de días extra")
+    
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer()
+        try:
+            await plugin.model.api.edit_membership(membership_id=self.membership_id, add_days=self.dias)
+            await ctx.respond(f"✅ Membresía #{self.membership_id} extendida por {self.dias} días exitosamente.")
+        except Exception as e:
+            await ctx.respond(f"❌ Error al extender membresía: {e}")
+
 
