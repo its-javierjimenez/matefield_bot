@@ -213,3 +213,17 @@ class APIClient:
             return await self._request("GET", "/api/v1/db/matches/latest")
         except Exception:
             return None
+
+    async def get_all_roles(self) -> List[Dict[str, Any]]:
+        try:
+            return await self._request("GET", "/api/v1/db/roles")
+        except Exception:
+            return []
+
+    async def register_role(self, code: str, name: str, role_type: str, discord_role_id: str) -> None:
+        await self._request("POST", "/api/v1/db/roles", json={
+            "code": code,
+            "name": name,
+            "role_type": role_type,
+            "discord_role_id": discord_role_id
+        })

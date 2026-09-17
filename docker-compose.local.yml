@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: matefield_db_local
+    environment:
+      POSTGRES_USER: matefield_user
+      POSTGRES_PASSWORD: matefield_password
+      POSTGRES_DB: matefield_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata_local:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U matefield_user -d matefield_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - matefield_local_net
+
+  mock_rcon:
+    build:
+      context: .
+      dockerfile: apps/rcon_mock/Dockerfile
+    container_name: mock_rcon
+    ports:
+      - "9001:9001"
+    networks:
+      - matefield_local_net
+
+  api_rcon:
+    build:
+      context: .
+      dockerfile: apps/api_rcon/Dockerfile
+    container_name: api_rcon_local
+    env_file: .env.local
+    command: sh -c "uv run alembic upgrade head && uv run uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload"
+    ports:
+      - "8000:8000"
+    networks:
+      - matefield_local_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./apps/api_rcon:/app
+
+networks:
+  matefield_local_net:
+    driver: bridge
+
+volumes:
+  pgdata_local:

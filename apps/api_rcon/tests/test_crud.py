@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 import src.modules.v1.router as router_module
 from wardogs_schemas import v1 as schemas
 
-sqlite_url = "sqlite+aiosqlite:///test.db"
+sqlite_url = "sqlite+aiosqlite:///test_crud.db"
 engine = create_async_engine(sqlite_url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
 
 
@@ -92,7 +92,7 @@ async def test_delete_membership(client: AsyncClient, session: AsyncSession):
 @pytest.mark.asyncio
 async def test_remove_special_role(client: AsyncClient, session: AsyncSession):
     p = Player(steam_id="123")
-    r = Role(name="111222333")
+    r = Role(code="VIP_EXPRESS", name="VIP Express", role_type="VIP", discord_role_id="VIP_EXPRESS")
     session.add(p)
     session.add(r)
     await session.commit()
@@ -101,7 +101,7 @@ async def test_remove_special_role(client: AsyncClient, session: AsyncSession):
     session.add(pr)
     await session.commit()
     
-    response = await client.delete(f"/api/v1/db/players/123/roles/111222333")
+    response = await client.delete(f"/api/v1/db/players/123/roles/VIP_EXPRESS")
     assert response.status_code == 200
     
     deleted_pr = (await session.exec(select(PlayerRole).where(PlayerRole.steam_id == "123", PlayerRole.role_id == r.id))).first()

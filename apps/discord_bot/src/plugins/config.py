@@ -2,7 +2,7 @@ import crescent
 import hikari
 from src.model import Model
 from src.hooks import admin_only
-from src.groups import config_group, vip_role_group, role_map_group, whitelist_group, ban_role_group
+from src.groups import config_group, roles_group, whitelist_group, ban_role_group
 
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 
@@ -18,125 +18,56 @@ class ConfigChannel:
         await plugin.model.api.set_bot_config("ANNOUNCEMENT_CHANNEL_ID", str(self.channel.id))
         await ctx.respond(f"✅ Canal de anuncios configurado a <#{self.channel.id}>")
 
-@plugin.include
-@crescent.hook(admin_only)
-@config_group.child
-@crescent.command(name="admin_role", description="Configura el rol de Administrador principal")
-class ConfigAdminRole:
-    admin_role = crescent.option(hikari.Role, "Rol de Administrador")
-
-    async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
-        await plugin.model.api.set_bot_config("ADMIN_ROLE_ID", str(self.admin_role.id))
-        await ctx.respond(f"✅ Rol de Administrador configurado a <@&{self.admin_role.id}>")
 
 @plugin.include
 @crescent.hook(admin_only)
-@vip_role_group.child
-@crescent.command(name="add", description="Añade un rol a la lista de roles VIP permitidos")
-class AddVipRole:
-    vip_role = crescent.option(hikari.Role, "Rol VIP a añadir")
+@roles_group.child
+@crescent.command(name="register", description="Registra o actualiza un rol en la Base de Datos (DDD)")
+class RegisterRole:
+    code = crescent.option(str, "Cdigo nico del Rol (ej. VIP_EXPRESS, SUPERADMIN)")
+    name = crescent.option(str, "Nombre descriptivo del Rol")
+    role_type = crescent.option(str, "Tipo de rol", choices=(
+        ("SYSTEM (Admins/Owners)", "SYSTEM"),
+        ("VIP (Membresas)", "VIP"),
+        ("SPECIAL (Staff/Eventos)", "SPECIAL"),
+        ("PUBLIC (Comunes)", "PUBLIC")
+    ))
+    discord_role = crescent.option(hikari.Role, "Rol de Discord a asociar")
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
-        
-        current_vips = await plugin.model.api.get_bot_config("VIP_ROLE_IDS")
-        vip_list = current_vips.split(",") if current_vips else []
-        
-        role_id_str = str(self.vip_role.id)
-        if role_id_str not in vip_list:
-            vip_list.append(role_id_str)
-            await plugin.model.api.set_bot_config("VIP_ROLE_IDS", ",".join(vip_list))
-            await ctx.respond(f"✅ Añadido <@&{self.vip_role.id}> a la lista de roles VIP.")
-        else:
-            await ctx.respond(f"⚠️ El rol <@&{self.vip_role.id}> ya estaba en la lista de VIPs.")
+        try:
+            await plugin.model.api.register_role(
+                code=self.code.upper(),
+                name=self.name,
+                role_type=self.role_type,
+                discord_role_id=str(self.discord_role.id)
+            )
+            await ctx.respond(f"? Rol `{self.code.upper()}` registrado como `{self.role_type}` y asociado a <@&{self.discord_role.id}>.")
+        except Exception as e:
+            await ctx.respond(f"? Error al registrar rol: {e}")
 
 @plugin.include
 @crescent.hook(admin_only)
-@vip_role_group.child
-@crescent.command(name="remove", description="Elimina un rol de la lista de VIPs")
-class RemoveVipRole:
-    vip_role = crescent.option(hikari.Role, "Rol VIP a remover")
-
+@roles_group.child
+@crescent.command(name="list", description="Lista todos los roles registrados en la Base de Datos")
+class ListRoles:
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
-        
-        current_vips = await plugin.model.api.get_bot_config("VIP_ROLE_IDS")
-        vip_list = current_vips.split(",") if current_vips else []
-        
-        role_id_str = str(self.vip_role.id)
-        if role_id_str in vip_list:
-            vip_list.remove(role_id_str)
-            await plugin.model.api.set_bot_config("VIP_ROLE_IDS", ",".join(vip_list))
-            await ctx.respond(f"✅ Removido <@&{self.vip_role.id}> de la lista de roles VIP.")
-        else:
-            await ctx.respond(f"⚠️ El rol <@&{self.vip_role.id}> no estaba en la lista de VIPs.")
-
-@plugin.include
-@crescent.hook(admin_only)
-@vip_role_group.child
-@crescent.command(name="list", description="Muestra la lista actual de roles VIP configurados")
-class ListVipRoles:
-    async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
-        current_vips = await plugin.model.api.get_bot_config("VIP_ROLE_IDS")
-        if not current_vips:
-            await ctx.respond("📋 Actualmente no hay roles VIP configurados.")
-            return
+        try:
+            roles = await plugin.model.api.get_all_roles()
+            if not roles:
+                await ctx.respond("No hay roles registrados.")
+                return
             
-        vip_list = current_vips.split(",")
-        
-        # Obtener mapeos
-        configs = await plugin.model.api.get_bot_configs()
-        role_maps = {}
-        for key, value in configs.items():
-            if key.startswith("ROLE_MAP_"):
-                db_type = key.replace("ROLE_MAP_", "")
-                if value not in role_maps:
-                    role_maps[value] = []
-                role_maps[value].append(db_type)
-        
-        mentions = []
-        for r in vip_list:
-            if not r: continue
-            mapped_types = role_maps.get(str(r), [])
-            mapped_str = f" *(Mapeado a: {', '.join(mapped_types)})*" if mapped_types else " *(No mapeado en BD)*"
-            mentions.append(f"- <@&{r}>{mapped_str}")
-            
-        mentions_text = "\n".join(mentions)
-        await ctx.respond(f"📋 **Roles VIP Configurados:**\n{mentions_text}")
-
-@plugin.include
-@crescent.hook(admin_only)
-@role_map_group.child
-@crescent.command(name="add", description="Mapea un tipo de membresía de BD a un rol de Discord")
-class MapMembershipRole:
-    db_type = crescent.option(str, "Tipo en Base de Datos (ej. VIP_EXPRESS)")
-    discord_role = crescent.option(hikari.Role, "Rol de Discord a asignar automáticamente")
-    default_days = crescent.option(int, "Dias por defecto al otorgar (0 = permanente)", default=30)
-
-    async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
-        key_map = f"ROLE_MAP_{self.db_type.upper()}"
-        key_days = f"ROLE_DAYS_{self.db_type.upper()}"
-        await plugin.model.api.set_bot_config(key_map, str(self.discord_role.id))
-        await plugin.model.api.set_bot_config(key_days, str(self.default_days))
-        await ctx.respond(f"✅ Mapeo configurado: La membresía {self.db_type.upper()} otorgará el rol <@&{self.discord_role.id}> con una duración base de {self.default_days} días.")
-
-@plugin.include
-@crescent.hook(admin_only)
-@role_map_group.child
-@crescent.command(name="remove", description="Elimina el mapeo de un tipo de membresía")
-class UnmapMembershipRole:
-    db_type = crescent.option(str, "Tipo en Base de Datos (ej. VIP_EXPRESS)")
-
-    async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
-        key_map = f"ROLE_MAP_{self.db_type.upper()}"
-        key_days = f"ROLE_DAYS_{self.db_type.upper()}"
-        await plugin.model.api.delete_bot_config(key_map)
-        await plugin.model.api.delete_bot_config(key_days)
-        await ctx.respond(f"✅ Mapeo eliminado para la membresía {self.db_type.upper()}.")
+            msg = "**Roles Registrados (DDD):**
+"
+            for r in roles:
+                msg += f"- `{r.get('code')}` ({r.get('role_type')}): {r.get('name')} -> <@&{r.get('discord_role_id')}>
+"
+            await ctx.respond(msg)
+        except Exception as e:
+            await ctx.respond(f"? Error al listar roles: {e}")
 
 @plugin.include
 @crescent.hook(admin_only)

@@ -224,8 +224,8 @@ async def get_player_by_steam(steam_id: str, session: AsyncSession = Depends(get
     )
     memberships = (await session.exec(stmt)).all()
     
-    # Also fetch special roles
-    stmt_roles = select(Role.name).join(PlayerRole).where(PlayerRole.steam_id == steam_id)
+    # Fetch special roles (DDD)
+    stmt_roles = select(Role).join(PlayerRole).where(PlayerRole.steam_id == steam_id)
     special_roles = (await session.exec(stmt_roles)).all()
     
     active_roles = []
@@ -239,19 +239,17 @@ async def get_player_by_steam(steam_id: str, session: AsyncSession = Depends(get
                 "rcon_sync_status": m.rcon_sync_status
             })
             
-    # Fetch configs to resolve special role names
-    configs_stmt = select(BotConfig).where(BotConfig.config_key.in_(["ADMIN_ROLE_ID", "OWNER_ROLE_ID"]))
-    configs = (await session.exec(configs_stmt)).all()
-    config_dict = {c.config_key: c.config_value for c in configs}
-    
-    # Add special roles to the active_roles list for primary role calculation
+    # Add semantic special roles
     for sr in special_roles:
-        if config_dict.get("ADMIN_ROLE_ID") == sr:
-            active_roles.append("ADMIN")
-        elif config_dict.get("OWNER_ROLE_ID") == sr:
-            active_roles.append("OWNER")
+        if sr.role_type == "SYSTEM":
+            if "OWNER" in sr.code:
+                active_roles.append("OWNER")
+            else:
+                active_roles.append("ADMIN")
+        elif sr.role_type == "VIP":
+            active_roles.append("VIP")
         else:
-            active_roles.append(sr.upper())
+            active_roles.append(sr.code)
             
     primary_role = None
     if any("OWNER" in r for r in active_roles):
@@ -261,15 +259,15 @@ async def get_player_by_steam(steam_id: str, session: AsyncSession = Depends(get
     elif any("VIP" in r for r in active_roles):
         primary_role = "VIP"
     elif active_roles:
-        # Prevent numbers from being displayed as role names
-        primary_role = active_roles[0] if not active_roles[0].isdigit() else "VIP" 
+        primary_role = active_roles[0]
         
     return {
         "discord_id": player.discord_id, 
         "custom_welcome_message": player.custom_welcome_message,
+        "observations": player.observations,
         "active_role": primary_role,
-        "memberships": active_memberships,
-        "special_roles": special_roles
+        "active_memberships": active_memberships,
+        "special_roles": [r.code for r in special_roles] # Devolvemos listado de codigos
     }
 
 @router.get("/db/players/steam/{steam_id}/stats", dependencies=[Depends(verify_api_key_guard)])
@@ -501,12 +499,9 @@ async def add_special_role(steam_id: str, role_id: str, session: AsyncSession = 
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
         
-    role = (await session.exec(select(Role).where(Role.name == role_id))).first()
+    role = (await session.exec(select(Role).where(Role.code == role_id))).first()
     if not role:
-        role = Role(name=role_id)
-        session.add(role)
-        await session.commit()
-        await session.refresh(role)
+        raise HTTPException(status_code=404, detail=f"Role code {role_id} not registered")
         
     player_role = (await session.exec(select(PlayerRole).where(PlayerRole.steam_id == steam_id, PlayerRole.role_id == role.id))).first()
     if player_role:
@@ -520,7 +515,7 @@ async def add_special_role(steam_id: str, role_id: str, session: AsyncSession = 
 
 @router.delete("/db/players/{steam_id}/roles/{role_id}", dependencies=[Depends(verify_api_key_guard)], response_model=schemas.Ok)
 async def remove_special_role(steam_id: str, role_id: str, session: AsyncSession = Depends(get_session)):
-    role = (await session.exec(select(Role).where(Role.name == role_id))).first()
+    role = (await session.exec(select(Role).where(Role.code == role_id))).first()
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
         
@@ -697,8 +692,8 @@ async def sync_memberships(session: AsyncSession = Depends(get_session)):
         special_roles = []
         for r_id in p_roles:
             r = await session.get(Role, r_id)
-            if r and r.name and r.name.isdigit(): # If it's a discord role ID
-                special_roles.append(int(r.name))
+            if r and r.discord_role_id:
+                special_roles.append(int(r.discord_role_id))
         
         discord_sync_data.append({
             "discord_id": p.discord_id,
@@ -706,14 +701,9 @@ async def sync_memberships(session: AsyncSession = Depends(get_session)):
             "special_roles": special_roles
         })
         
-    configs = (await session.exec(select(BotConfig).where(BotConfig.config_key.startswith("ROLE_MAP_")))).all()
-    role_maps = {c.config_key.replace("ROLE_MAP_", ""): int(c.config_value) for c in configs}
-    
     all_roles = (await session.exec(select(Role))).all()
-    managed_special_roles = []
-    for r in all_roles:
-        if r.name and r.name.isdigit():
-            managed_special_roles.append(int(r.name))
+    role_maps = {r.code: int(r.discord_role_id) for r in all_roles if r.discord_role_id and str(r.discord_role_id).isdigit()}
+    managed_special_roles = [] # Kept for backward compatibility, but role_maps contains everything
         
     return {
         "sync_data": discord_sync_data, 
@@ -1015,3 +1005,36 @@ async def get_db_bans(steam_id: Optional[str] = None, session: AsyncSession = De
         ))
         
     return schemas.DbBansResponse(bans=result)
+
+class RoleRegisterRequest(BaseModel):
+    code: str
+    name: str
+    role_type: str
+    discord_role_id: Optional[str] = None
+
+@router.post("/db/roles", dependencies=[Depends(verify_api_key_guard)])
+async def register_role(req: RoleRegisterRequest, session: AsyncSession = Depends(get_session)):
+    from src.connections.databases.db import RoleType
+    existing = (await session.exec(select(Role).where(Role.code == req.code))).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Role code already exists")
+    
+    try:
+        r_type = RoleType(req.role_type)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid role_type")
+        
+    role = Role(
+        code=req.code,
+        name=req.name,
+        role_type=r_type,
+        discord_role_id=req.discord_role_id
+    )
+    session.add(role)
+    await session.commit()
+    return {"ok": True, "message": "Role registered"}
+
+@router.get("/db/roles", dependencies=[Depends(verify_api_key_guard)])
+async def get_all_roles(session: AsyncSession = Depends(get_session)):
+    roles = (await session.exec(select(Role))).all()
+    return [{"code": r.code, "name": r.name, "type": r.role_type, "discord_role_id": r.discord_role_id} for r in roles]

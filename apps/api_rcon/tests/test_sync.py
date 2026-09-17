@@ -7,13 +7,13 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from datetime import datetime, timezone, timedelta
 
 from src.main import app
-from src.connections.databases.db import get_session, Player, Membership, BotConfig
+from src.connections.databases.db import get_session, Player, Membership, BotConfig, Role
 from src.security.guard import verify_api_key_guard
 from sqlalchemy.pool import StaticPool
 import src.modules.v1.router as router_module
 from wardogs_schemas import v1 as schemas
 
-sqlite_url = "sqlite+aiosqlite:///test.db"
+sqlite_url = "sqlite+aiosqlite:///test_sync.db"
 engine = create_async_engine(sqlite_url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
 
 async def get_session_override():
@@ -44,8 +44,7 @@ async def client_fixture(session: AsyncSession):
 def mock_rcon(mocker):
     # Mock the RCON client functions used in the endpoint
     mocker.patch.object(router_module.rcon, 'get_reserved_slots', return_value=schemas.ReservedSlots(reservedSlots=[]))
-    mocker.patch.object(router_module.rcon, 'add_reserved_slot', return_value=None)
-    mocker.patch.object(router_module.rcon, 'remove_reserved_slot', return_value=None)
+    mocker.patch.object(router_module.rcon, 'sync_reserved_slots', return_value=None)
 
 @pytest.mark.asyncio
 async def test_sync_expires_old_memberships(client: AsyncClient, session: AsyncSession):
@@ -73,7 +72,7 @@ async def test_sync_expires_old_memberships(client: AsyncClient, session: AsyncS
 
 @pytest.mark.asyncio
 async def test_sync_adds_authorized_slots(client: AsyncClient, session: AsyncSession, mocker):
-    mock_add = mocker.patch.object(router_module.rcon, 'add_reserved_slot')
+    mock_add = mocker.patch.object(router_module.rcon, 'sync_reserved_slots')
     
     now = datetime.now(timezone.utc)
     p = Player(steam_id="VALID_STEAM_ID", discord_id="456")
@@ -92,24 +91,24 @@ async def test_sync_adds_authorized_slots(client: AsyncClient, session: AsyncSes
     assert response.status_code == 200
     
     # RCON add/remove are currently paused (pass), so mock should NOT be called
-    mock_add.assert_not_called()
+    mock_add.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_sync_removes_unauthorized_slots(client: AsyncClient, session: AsyncSession, mocker):
     mocker.patch.object(router_module.rcon, 'get_reserved_slots', 
                         return_value=schemas.ReservedSlots(reservedSlots=["UNAUTHORIZED_STEAM"]))
-    mock_remove = mocker.patch.object(router_module.rcon, 'remove_reserved_slot')
+    mock_remove = mocker.patch.object(router_module.rcon, 'sync_reserved_slots')
     
     response = await client.post("/api/v1/db/sync_memberships")
     assert response.status_code == 200
     
     # RCON add/remove are currently paused (pass), so mock should NOT be called
-    mock_remove.assert_not_called()
+    mock_remove.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_sync_returns_discord_mappings(client: AsyncClient, session: AsyncSession):
-    config = BotConfig(config_key="ROLE_MAP_VIP_EXPRESS", config_value="999888777")
-    session.add(config)
+    role = Role(code="VIP_EXPRESS", name="VIP Express", role_type="VIP", discord_role_id="999888777")
+    session.add(role)
     await session.commit()
     
     response = await client.post("/api/v1/db/sync_memberships")
@@ -121,7 +120,7 @@ async def test_sync_returns_discord_mappings(client: AsyncClient, session: Async
 
 @pytest.mark.asyncio
 async def test_sync_permanent_memberships(client: AsyncClient, session: AsyncSession, mocker):
-    mock_add = mocker.patch.object(router_module.rcon, 'add_reserved_slot')
+    mock_add = mocker.patch.object(router_module.rcon, 'sync_reserved_slots')
     
     now = datetime.now(timezone.utc)
     p = Player(steam_id="PERM_STEAM_ID", discord_id="456")
@@ -142,7 +141,7 @@ async def test_sync_permanent_memberships(client: AsyncClient, session: AsyncSes
     await session.refresh(m)
     assert m.is_active is True  # Permanent memberships do not expire
     # RCON add/remove are currently paused (pass), so mock should NOT be called
-    mock_add.assert_not_called()
+    mock_add.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -161,10 +160,10 @@ async def test_sync_keeps_active_membership_in_sync_data(client: AsyncClient, se
         start_time=now - timedelta(days=5),
         end_time=now + timedelta(days=25)  # Aún vigente
     )
-    config = BotConfig(config_key="ROLE_MAP_VIP_EXPRESS", config_value="999888777")
+    role = Role(code="VIP_EXPRESS", name="VIP Express", role_type="VIP", discord_role_id="999888777")
     session.add(p)
     session.add(m)
-    session.add(config)
+    session.add(role)
     await session.commit()
 
     response = await client.post("/api/v1/db/sync_memberships")

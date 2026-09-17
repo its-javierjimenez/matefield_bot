@@ -11,10 +11,10 @@ async def admin_only(ctx: crescent.Context) -> crescent.HookResult:
     if isinstance(ctx.member, hikari.InteractionMember) and (ctx.member.permissions & hikari.Permissions.ADMINISTRATOR) == hikari.Permissions.ADMINISTRATOR:
         return crescent.HookResult()
         
-    admin_role_str = await ctx.client.model.api.get_bot_config("ADMIN_ROLE_ID")
-    admin_role_id = int(admin_role_str) if admin_role_str else 0
+    roles = await ctx.client.model.api.get_all_roles()
+    admin_role_ids = [int(r["discord_role_id"]) for r in roles if r.get("role_type") == "SYSTEM" and r.get("discord_role_id") and str(r["discord_role_id"]).isdigit()]
     
-    if admin_role_id in ctx.member.role_ids:
+    if any(r in ctx.member.role_ids for r in admin_role_ids):
         return crescent.HookResult()
         
     await ctx.respond("No tienes permisos de Administrador para usar este comando.", flags=hikari.MessageFlag.EPHEMERAL)
@@ -29,13 +29,11 @@ async def vip_or_admin(ctx: crescent.Context) -> crescent.HookResult:
     if isinstance(ctx.member, hikari.InteractionMember) and (ctx.member.permissions & hikari.Permissions.ADMINISTRATOR) == hikari.Permissions.ADMINISTRATOR:
         return crescent.HookResult()
         
-    admin_role_str = await ctx.client.model.api.get_bot_config("ADMIN_ROLE_ID")
-    vip_roles_str = await ctx.client.model.api.get_bot_config("VIP_ROLE_IDS")
+    roles = await ctx.client.model.api.get_all_roles()
+    admin_role_ids = [int(r["discord_role_id"]) for r in roles if r.get("role_type") == "SYSTEM" and r.get("discord_role_id") and str(r["discord_role_id"]).isdigit()]
+    vip_role_ids = [int(r["discord_role_id"]) for r in roles if r.get("role_type") == "VIP" and r.get("discord_role_id") and str(r["discord_role_id"]).isdigit()]
     
-    admin_role_id = int(admin_role_str) if admin_role_str else 0
-    vip_role_ids = [int(r) for r in vip_roles_str.split(",")] if vip_roles_str else []
-    
-    if admin_role_id in ctx.member.role_ids or any(r in ctx.member.role_ids for r in vip_role_ids):
+    if any(r in ctx.member.role_ids for r in admin_role_ids) or any(r in ctx.member.role_ids for r in vip_role_ids):
         return crescent.HookResult()
         
     await ctx.respond("No tienes permisos VIP/Admin para usar este comando.", flags=hikari.MessageFlag.EPHEMERAL)
@@ -48,6 +46,6 @@ async def check_is_admin(ctx: crescent.Context) -> bool:
     if isinstance(ctx.member, hikari.InteractionMember) and (ctx.member.permissions & hikari.Permissions.ADMINISTRATOR) == hikari.Permissions.ADMINISTRATOR:
         return True
         
-    admin_role_str = await ctx.client.model.api.get_bot_config("ADMIN_ROLE_ID")
-    admin_role_id = int(admin_role_str) if admin_role_str else 0
-    return admin_role_id in ctx.member.role_ids
+    roles = await ctx.client.model.api.get_all_roles()
+    admin_role_ids = [int(r["discord_role_id"]) for r in roles if r.get("role_type") == "SYSTEM" and r.get("discord_role_id") and str(r["discord_role_id"]).isdigit()]
+    return any(r in ctx.member.role_ids for r in admin_role_ids)

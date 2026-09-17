@@ -6,6 +6,14 @@ import uuid
 
 from src.config import ENVIRONMENT_SETTINGS
 
+from enum import Enum
+
+class RoleType(str, Enum):
+    SYSTEM = "SYSTEM"
+    VIP = "VIP"
+    PUNISHMENT = "PUNISHMENT"
+    PUBLIC = "PUBLIC"
+
 # --- Intermediary Tables ---
 
 class PlayerRole(SQLModel, table=True):
@@ -17,8 +25,11 @@ class PlayerRole(SQLModel, table=True):
 
 class Role(SQLModel, table=True):
     __tablename__ = "roles"
-    id: Optional[int] = Field(default=None, sa_column=Column(BigInteger(), primary_key=True, autoincrement=True))
-    name: str = Field(unique=True, index=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    code: str = Field(unique=True, index=True)
+    name: str
+    discord_role_id: Optional[str] = Field(default=None, index=True)
+    role_type: RoleType = Field(index=True)
     
     # Relationships
     players: List["Player"] = Relationship(back_populates="roles", link_model=PlayerRole)
