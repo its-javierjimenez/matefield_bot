@@ -113,7 +113,8 @@ class SetWelcomeMessage:
             return
             
         await plugin.model.api.set_welcome_message(target_steam, self.message)
-        await ctx.respond(f"✅ Mensaje de bienvenida establecido.")
+        preview_msg = f"El {active_role} [Nombre en Juego] se conectó: \"{self.message}\""
+        await ctx.respond(f"✅ **Mensaje de bienvenida establecido.**\n👀 **Vista Previa:**\n> {preview_msg}")
 
 @plugin.include
 @player_group.child
