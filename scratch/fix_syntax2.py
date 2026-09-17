@@ -3,10 +3,9 @@ with open("d:/proyectos_dev/matefield_bot/apps/discord_bot/src/plugins/account.p
 
 new_lines = []
 for line in lines:
-    if "✅ Mensaje de bienvenida establecido exitosamente" in line:
-        new_lines.append('        await ctx.respond(f"✅ Mensaje de bienvenida establecido exitosamente para `{target_steam}`:\\n> {self.message}")\n')
-    else:
-        new_lines.append(line)
+    if "> {self.message}\")" in line:
+        continue # delete this line
+    new_lines.append(line)
 
 with open("d:/proyectos_dev/matefield_bot/apps/discord_bot/src/plugins/account.py", "w", encoding="utf-8") as f:
     f.writelines(new_lines)
