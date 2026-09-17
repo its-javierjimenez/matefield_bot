@@ -246,7 +246,11 @@ async def get_player_by_steam(steam_id: str, session: AsyncSession = Depends(get
     
     # Add special roles to the active_roles list for primary role calculation
     for sr in special_roles:
-        if config_dict.get("ADMIN_ROLE_ID") == sr:
+        if sr == "1546690312762564648":
+            active_roles.append("FUNDADOR")
+        elif sr == "1433128734826692811":
+            active_roles.append("OWNER")
+        elif config_dict.get("ADMIN_ROLE_ID") == sr:
             active_roles.append("ADMIN")
         elif config_dict.get("OWNER_ROLE_ID") == sr:
             active_roles.append("OWNER")
@@ -256,6 +260,8 @@ async def get_player_by_steam(steam_id: str, session: AsyncSession = Depends(get
     primary_role = None
     if any("OWNER" in r for r in active_roles):
         primary_role = "OWNER"
+    elif any("FUNDADOR" in r for r in active_roles):
+        primary_role = "FUNDADOR"
     elif any("ADMIN" in r for r in active_roles):
         primary_role = "ADMIN"
     elif any("VIP" in r for r in active_roles):
