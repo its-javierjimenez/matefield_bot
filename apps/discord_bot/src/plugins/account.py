@@ -113,7 +113,7 @@ class SetWelcomeMessage:
             return
             
         await plugin.model.api.set_welcome_message(target_steam, self.message)
-
+        await ctx.respond(f"✅ Mensaje de bienvenida establecido.")
 
 @plugin.include
 @player_group.child
