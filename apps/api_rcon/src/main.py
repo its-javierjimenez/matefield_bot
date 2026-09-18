@@ -8,13 +8,14 @@ from src.connections.apis.rcon import rcon_client
 
 load_dotenv()
 
-from src.sync_engine import poll_rcon
+from src.sync_engine import poll_rcon, mode_50v50_loop
 from src.modules.v1.router import sync_memberships
 from src.connections.databases.db import engine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 polling_task = None
 maintenance_task = None
+mode_50v50_task = None
 
 async def db_maintenance_loop():
     while True:
@@ -27,14 +28,17 @@ async def db_maintenance_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global polling_task, maintenance_task
+    global polling_task, maintenance_task, mode_50v50_task
     polling_task = asyncio.create_task(poll_rcon())
     maintenance_task = asyncio.create_task(db_maintenance_loop())
+    mode_50v50_task = asyncio.create_task(mode_50v50_loop())
     yield
     if polling_task:
         polling_task.cancel()
     if maintenance_task:
         maintenance_task.cancel()
+    if mode_50v50_task:
+        mode_50v50_task.cancel()
 
 app = FastAPI(title="Wardogs RCON API", version="1.0.0", lifespan=lifespan)
 

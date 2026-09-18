@@ -1021,3 +1021,38 @@ async def get_db_bans(steam_id: Optional[str] = None, session: AsyncSession = De
         ))
         
     return schemas.DbBansResponse(bans=result)
+
+
+@router.get("/mode50v50", dependencies=[Depends(verify_api_key_guard)])
+async def get_mode_50v50(session: AsyncSession = Depends(get_session)):
+    stmt = select(BotConfig).where(BotConfig.config_key == "MODE_50V50_ENABLED")
+    config = (await session.exec(stmt)).first()
+    is_enabled = False
+    if config and config.config_value:
+        is_enabled = config.config_value.strip().lower() in ("true", "1", "enabled", "yes", "on")
+    return {"enabled": is_enabled}
+
+
+@router.post("/mode50v50/enable", dependencies=[Depends(verify_api_key_guard)])
+async def enable_mode_50v50(session: AsyncSession = Depends(get_session)):
+    config = await session.get(BotConfig, "MODE_50V50_ENABLED")
+    if not config:
+        config = BotConfig(config_key="MODE_50V50_ENABLED", config_value="true")
+        session.add(config)
+    else:
+        config.config_value = "true"
+    await session.commit()
+    return {"ok": True, "enabled": True, "message": "Modo 50v50 activado exitosamente."}
+
+
+@router.post("/mode50v50/disable", dependencies=[Depends(verify_api_key_guard)])
+async def disable_mode_50v50(session: AsyncSession = Depends(get_session)):
+    config = await session.get(BotConfig, "MODE_50V50_ENABLED")
+    if not config:
+        config = BotConfig(config_key="MODE_50V50_ENABLED", config_value="false")
+        session.add(config)
+    else:
+        config.config_value = "false"
+    await session.commit()
+    return {"ok": True, "enabled": False, "message": "Modo 50v50 desactivado exitosamente."}
+

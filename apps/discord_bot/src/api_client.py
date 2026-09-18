@@ -213,3 +213,15 @@ class APIClient:
             return await self._request("GET", "/api/v1/db/matches/latest")
         except Exception:
             return None
+
+    async def get_mode_50v50(self) -> bool:
+        try:
+            res = await self._request("GET", "/api/v1/mode50v50")
+            return bool(res.get("enabled", False))
+        except Exception:
+            return False
+
+    async def set_mode_50v50(self, enabled: bool) -> Dict[str, Any]:
+        endpoint = "/api/v1/mode50v50/enable" if enabled else "/api/v1/mode50v50/disable"
+        return await self._request("POST", endpoint)
+

@@ -1,8 +1,8 @@
 import asyncio
-from sqlmodel import select
+from sqlmodel import select, col
 from typing import Optional
 
-from src.connections.databases.db import engine, Player, Match, MatchPlayerStats, PlayerSession, Team, MatchTeamStats
+from src.connections.databases.db import engine, Player, Match, MatchPlayerStats, PlayerSession, Team, MatchTeamStats, BotConfig
 from sqlmodel.ext.asyncio.session import AsyncSession
 from src.connections.apis.rcon import rcon_client
 import datetime
@@ -58,7 +58,7 @@ async def poll_rcon():
                         if old_match and old_match.end_time is None:
                             old_match.end_time = datetime.datetime.now(datetime.timezone.utc)
                             # Determine winning team from last known MatchTeamStats
-                            winner_stmt = select(MatchTeamStats).where(MatchTeamStats.match_id == current_match_id).order_by(MatchTeamStats.score.desc())
+                            winner_stmt = select(MatchTeamStats).where(MatchTeamStats.match_id == current_match_id).order_by(col(MatchTeamStats.score).desc())
                             winner_stat = (await session.exec(winner_stmt)).first()
                             if winner_stat:
                                 old_match.winning_team_id = winner_stat.team_id
@@ -221,3 +221,57 @@ async def poll_rcon():
         except Exception as e:
             logger.error(f"[Match Engine] Error polling RCON in sync_engine: {e}")
             await asyncio.sleep(10)
+
+
+async def mode_50v50_loop():
+    logger.info("Starting 50v50 Mode Engine (Checks every 5 seconds)...")
+    while True:
+        try:
+            is_enabled = False
+            async with AsyncSession(engine) as session:
+                stmt = select(BotConfig).where(BotConfig.config_key == "MODE_50V50_ENABLED")
+                config = (await session.exec(stmt)).first()
+                if config and config.config_value:
+                    val = config.config_value.strip().lower()
+                    is_enabled = val in ("true", "1", "enabled", "yes", "on")
+
+            if is_enabled:
+                players_resp = await rcon_client.get_players()
+                all_players = players_resp.players or []
+                
+                blue_players = []
+                valkyre_count = 0
+                manticore_count = 0
+                
+                for p in all_players:
+                    f = (p.faction or "").strip().lower()
+                    if f == "lonestar":
+                        blue_players.append(p)
+                    elif f in ("valkyre", "valkyria", "valkyrie"):
+                        valkyre_count += 1
+                    elif f == "manticore":
+                        manticore_count += 1
+                
+                if blue_players:
+                    logger.info(f"[50v50 Mode] Found {len(blue_players)} players in Lonestar (Blue). Auto-balancing to Red vs Green... (Current: Valkyre={valkyre_count}, Manticore={manticore_count})")
+                    for p in blue_players:
+                        if not p.steamId:
+                            continue
+                        if valkyre_count <= manticore_count:
+                            target_faction = "Valkyre"
+                            valkyre_count += 1
+                        else:
+                            target_faction = "Manticore"
+                            manticore_count += 1
+                            
+                        try:
+                            await rcon_client.switch_faction(p.steamId, target_faction)
+                            logger.info(f"[50v50 Mode] Moved {p.name} ({p.steamId}) from Lonestar -> {target_faction}")
+                        except Exception as err:
+                            logger.error(f"[50v50 Mode] Failed to move {p.steamId} to {target_faction}: {err}")
+
+        except Exception as e:
+            logger.error(f"[50v50 Mode] Error in 50v50 loop: {e}")
+
+        await asyncio.sleep(5)
+

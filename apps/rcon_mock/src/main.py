@@ -188,9 +188,76 @@ async def get_config(auth: str = Depends(verify_auth)):
     }
 
 @app.put("/v1/config", response_model=schemas.ConfigResult)
-async def update_config(req: dict, auth: str = Depends(verify_auth)):
-    add_audit_log("ConfigUpdate", "Configuration was updated")
+async def update_config(req: Request, auth: str = Depends(verify_auth)):
+    body = await req.body()
+    add_audit_log("ConfigUpdate", f"Configuration was updated: {len(body)} bytes")
     return {
         "success": True,
         "newRevision": "rev124"
     }
+
+@app.post("/mock/seed_full_server")
+async def seed_full_server(total: int = 100):
+    global mock_players
+    new_players = []
+    # Generate 100 players: 34 Lonestar, 33 Valkyre, 33 Manticore
+    for i in range(1, total + 1):
+        if i <= 34:
+            faction = "Lonestar"
+        elif i <= 67:
+            faction = "Valkyre"
+        else:
+            faction = "Manticore"
+            
+        new_players.append({
+            "name": f"MockPlayer_{i}",
+            "steamId": f"7656119800000{i:04d}",
+            "faction": faction,
+            "kills": random.randint(0, 20),
+            "deaths": random.randint(0, 15),
+            "cash": random.randint(100, 2000),
+            "pingMs": random.randint(20, 80)
+        })
+    mock_players = new_players
+    return {
+        "ok": True, 
+        "total": len(mock_players), 
+        "lonestar": sum(1 for p in mock_players if p["faction"] == "Lonestar"),
+        "valkyre": sum(1 for p in mock_players if p["faction"] == "Valkyre"),
+        "manticore": sum(1 for p in mock_players if p["faction"] == "Manticore")
+    }
+
+@app.post("/mock/reset_players")
+async def reset_players():
+    global mock_players
+    mock_players = [
+        {
+            "name": "PlayerOne",
+            "steamId": "76561198000000001",
+            "faction": "Lonestar",
+            "kills": 15,
+            "deaths": 2,
+            "cash": 1500,
+            "pingMs": 45
+        },
+        {
+            "name": "PlayerTwo",
+            "steamId": "76561198000000002",
+            "faction": "Manticore",
+            "kills": 3,
+            "deaths": 5,
+            "cash": 300,
+            "pingMs": 60
+        },
+        {
+            "name": "PlayerThree",
+            "steamId": "76561198000000003",
+            "faction": "Valkyre",
+            "kills": 8,
+            "deaths": 1,
+            "cash": 800,
+            "pingMs": 30
+        }
+    ]
+    return {"ok": True, "total": len(mock_players)}
+
