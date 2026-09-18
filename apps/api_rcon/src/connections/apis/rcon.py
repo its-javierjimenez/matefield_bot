@@ -183,7 +183,7 @@ class RCONClient:
 
     async def switch_faction(self, steam_id: str, faction: str) -> None:
         payload = {"faction": faction}
-        await self._request("POST", f"/v1/players/{steam_id}/faction", json=payload)
+        await self._request("PATCH", f"/v1/players/{steam_id}", json=payload)
 
 # Instance to be imported by the router
 rcon_client = RCONClient(

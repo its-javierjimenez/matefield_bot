@@ -172,13 +172,17 @@ async def ban_player(req: schemas.BanRequest, auth: str = Depends(verify_auth)):
     mock_players = [p for p in mock_players if p["steamId"] != req.steamId]
     return {"ok": True}
 
-@app.post("/v1/players/{steam_id}/faction")
-async def switch_faction(steam_id: str, req: schemas.FactionRequest, auth: str = Depends(verify_auth)):
+@app.patch("/v1/players/{steam_id}")
+async def switch_faction_patch(steam_id: str, req: schemas.FactionRequest, auth: str = Depends(verify_auth)):
     add_audit_log("SwitchFaction", f"Switched {steam_id} to faction {req.faction}")
     for p in mock_players:
         if p["steamId"] == steam_id:
             p["faction"] = req.faction
     return {"ok": True}
+
+@app.post("/v1/players/{steam_id}/faction")
+async def switch_faction_post(steam_id: str, req: schemas.FactionRequest, auth: str = Depends(verify_auth)):
+    return await switch_faction_patch(steam_id, req, auth)
 
 @app.get("/v1/config", response_model=schemas.Config1)
 async def get_config(auth: str = Depends(verify_auth)):
