@@ -1,185 +1,120 @@
-# 🛡️ Manual de Operación: Modo 50v50 & Team Balancing
-> **Documento Oficial de Referencia para el Equipo de Staff y Moderación**  
-> *Versión 2.1 — Modelo Global de Portero (Gatekeeper), Calentamiento de 1 Minuto, Whispers y Sellado ARMA*
+# 🛡️ Guía del Staff: Modo 50v50 (A Prueba de Bobos)
+> **Manual Ultra Simple para Administradores y Moderadores**  
+> *Versión 2.2 — Compatible con Discord (Copiar y pegar directo sin que se rompa nada)*
 
 ---
 
-## 1. ¿Qué es el Modo 50v50?
+## 1. El Modo 50v50 explicado como si tuvieras 5 años 👶
 
-El juego *Wardogs* está diseñado nativamente con una estructura tripartita de **33 vs 33 vs 33** entre tres facciones:
-* 🔴 **Valkyra (Rojo)**
-* 🟢 **Manticore (Verde)**
-* 🔵 **Lonestar (Azul)**
-
-El **Modo 50v50** transforma la partida en una guerra campal de **50 vs 50 (Valkyra vs Manticore)**, neutralizando por completo la facción **Lonestar (Azul)** y garantizando un equilibrio justo sin alterar la partida de los veteranos, sin separar a grupos de amigos y sin arriesgar el dinero o vehículos comprados en base.
+Normalmente el juego tiene 3 equipos: **Rojo**, **Verde** y **Azul** (33 vs 33 vs 33).  
+El **Modo 50v50** elimina por completo al equipo **Azul** y convierte la partida en una guerra campal de **50 Rojos vs 50 Verdes**.
 
 ```text
-[Jugadores conectando al servidor]
- ├── Entran a Lonestar (Azul)
- │    └──► Drenado Inmediato ──► Asignación al equipo menor (Rojo/Verde) + Whisper
- └── Entran a Valkyra (Rojo) o Manticore (Verde)
-      ├── ¿Intentan cambiarse manualmente de equipo en el menú?
-      │    └──► SÍ ──► Sellado ARMA: Reversión inmediata a su equipo + Whisper
-      │
-      ├── ¿La partida lleva menos de 1 minuto (< 60s)?
-      │    └──► SÍ ──► Calentamiento: Selección libre con amigos + Anuncio global
-      │
-      └──► ¿La partida lleva 1 minuto o más (>= 60s)?
-           ├── ¿Ya estaban jugando en su equipo?
-           │    └──► INMUNIDAD TOTAL: Jamás son movidos (helicópteros y tanques 100% a salvo)
-           └── ¿Es un jugador nuevo entrando al equipo LLENO / MAYOR?
-                └──► PORTERO ACTIVO: Redirección inmediata al equipo menor + Whisper + Bloqueo
+[JUGADORES ENTRANDO AL SERVIDOR]
+ ├── ¿Eligen Azul? ──► El bot los manda directo al equipo con menos gente.
+ └── ¿Eligen Rojo o Verde?
+      ├── Minuto 0:00 a 1:00 ──► Entran LIBRES con sus amigos (nadie los separa).
+      └── Pasado el Minuto 1:00:
+           ├── ¿Ya estás jugando adentro? ──► NADIE te toca. Sos intocable.
+           └── ¿Sos NUEVO y elegís el equipo lleno? ──► El bot te manda al otro equipo.
 ```
 
 ---
 
-## 2. Fundamentos Técnicos: ¿Por qué el Bot y no el Servidor Nativo?
+## 2. ¿Cómo funciona el Auto-Balance? (Explicación Tonta del Portero) 🚪🕺
 
-El archivo `ServerSettings.ini` del servidor de juego cuenta con una opción interna:
-```ini
-[/Script/WDGame.WDGameStateSession]
-bLockOverpopulatedTeamsConfig=true
-OverpopulatedTeamThresholdConfig=1
-```
+Imaginate que el servidor es un **boliche (discoteca)** con dos salas: **Sala Roja (Valkyra)** y **Sala Verde (Manticore)**:
 
-### ¿Por qué NO usamos el balanceador nativo del juego para 50v50?
-1. **Conflicto de 3 facciones**: El servidor de juego evalúa constantemente las **3 facciones**.
-2. **Bloqueo involuntario**: Como mantenemos a Lonestar (Azul) en 0 jugadores, en cuanto Valkyra y Manticore tienen 3 o 4 jugadores, el motor del juego detecta que ambos superan a Azul por más de 1 jugador.
-3. **El bug de selección**: El servidor nativo **bloquea a Valkyra y Manticore** en la pantalla de carga y **fuerza a todos los jugadores nuevos a meterse a Lonestar (Azul)**.
-4. **La Solución**: Al activar 50v50, el bot apaga remotamente `bLockOverpopulatedTeamsConfig=false` en el RCON del servidor, tomando el **control inteligente absoluto** del balanceo mediante su propio motor cada 6 segundos.
+1. **La Puerta Libre (Primer minuto):**
+   * Durante el primer minuto de la partida, la puerta está abierta de par en par.
+   * Vos y tus 4 amigos entran juntos a la Sala Roja sin que nadie les rompa las bolas.
+   * En el chat de todo el servidor sale un cartel:  
+     > 📢 `Modo 50v50: 1m antes de autobalance`
 
----
+2. **Nadie que esté adentro se mueve (Regla de Oro):**
+   * Si ya entraste a una sala, **el bot NUNCA te va a sacar**.
+   * ¿Compraste un tanque? **Tu tanque está a salvo.**
+   * ¿Estás esperando 2 minutos en la base a que llegue tu helicóptero? **Tu helicóptero está a salvo.**
+   * ¿El otro equipo se quedó sin gente porque son malos y se fueron (ragequit)? **A vos NO te pasa nadie.** Seguís jugando en tu equipo.
 
-## 3. Ciclo de Vida del Modo: Activación Limpia ([NEXT MATCH])
+3. **El Portero en la Entrada (Pasado el primer minuto):**
+   * Al cumplirse el minuto 1 sale el aviso:  
+     > 📢 `Modo 50v50: Autobalance ACTIVO`
+   * A partir de ahí, el bot se para de **patovica/portero** en la entrada:
+     * Si la Sala Roja tiene 30 personas y la Verde tiene 20, y cae un **jugador nuevo** que intenta meterse a la Roja...
+     * El portero lo frena en la puerta y le dice: *"No flaco, Roja está llena, vas a Verde"*.
+     * El jugador entra a Verde y recibe un mensaje privado en su pantalla:  
+       > 💬 *"Se te ha asignado al equipo Manticore para balancear la partida."*
+   * Así de simple: los equipos se emparejan solos con la gente nueva que va entrando, **sin tocarle el pelo a los que ya están jugando**.
 
-Los cambios en la configuración del servidor de juego (`ServerSettings.ini`) solo surten efecto cuando una nueva partida comienza o se reinicia el mapa. Por ello, el bot implementa un ciclo de vida diferido de 4 estados para no romper partidas en curso:
-
-* 🟡 **`pending_enable`** *(Pendiente de activación)*
-  > El staff ejecutó `/mode50v50 enable`. El RCON ya queda configurado con el candado nativo en `false`. La automatización espera pacientemente a que termine la partida actual para no romperla.
-* 🟢 **`active`** *(Modo 50v50 100% activo)*
-  > La nueva partida inició tras la rotación. Se resetea el conteo y arranca el ciclo de 50v50 con los anuncios globales.
-* 🟠 **`pending_disable`** *(Pendiente de apagado)*
-  > El staff ejecutó `/mode50v50 disable`. El RCON se restaura a `true`. Para no estropear la partida en juego, el bot sigue operando en 50v50 hasta que concluya el mapa.
-* ⚪ **`inactive`** *(Modo apagado)*
-  > Estado por defecto (partida estándar 33v33v33).
-
-> ℹ️ **Nota para el Staff:** Si activas `enable` por error y luego ejecutas `disable` antes de que cambie el mapa, el bot cancela la activación de inmediato sin esperar al cambio de ronda.
-
----
-
-## 4. Sellado de Equipos Estilo ARMA (Prohibición de Cambio Voluntario)
-
-Inspirado en los servidores tácticos de **ARMA King of the Hill**, los equipos quedan **sellados durante toda la partida**:
-
-1. **Sin Cambios de Conveniencia**: Los jugadores **no pueden** cambiarse voluntariamente de equipo a mitad de partida (por ejemplo, pasarse al bando que va ganando).
-2. **Detección Instantánea**: Cada 6 segundos, el bot compara la facción en vivo del jugador con su facción oficialmente asignada (`assigned_faction`).
-3. **Reversión Inmediata**: Si detecta que un jugador se cambió de equipo por su cuenta:
-   * Ejecuta inmediatamente `switch_faction` regresándolo a su bando asignado.
-   * Le aplica un cooldown de 15 segundos para evitar bucles.
-   * Le envía un **whisper privado**:
+4. **El Candado Antitraidores (Estilo ARMA):**
+   * Si un vivo aprieta Escape a mitad de partida e intenta cambiarse al equipo que va ganando...
+   * El bot lo detecta en 5 segundos, lo devuelve de una patada a su equipo original y le susurra:  
      > 💬 *"Cambio de equipo no permitido durante la partida."*
 
 ---
 
-## 5. Anuncios Globales (Broadcast) y Whispers Privados
+## 3. ¿Qué pasa si mando el comando? (Preguntas Frecuentes del Staff) ❓
 
-El bot informa tanto a todo el servidor como de forma privada a cada jugador:
+Aquí tenés exactamente lo que pasa en cada situación para que no tengas miedo de meter la pata:
 
-### 📢 Anuncios Globales por Chat (Broadcast):
-* Al inicio de la partida (durante el primer minuto):
-  > 📢 `Modo 50v50: 1m antes de autobalance`
-* Al cumplirse el primer minuto de juego (minuto 1:00):
-  > 📢 `Modo 50v50: Autobalance ACTIVO`
+### 🔹 "¿Qué pasa si tiro `/mode50v50 enable` en mitad de una partida?"
+> **Respuesta:** **NO PASA NADA MALO. No se corta la partida.**  
+> El bot es inteligente: deja la configuración lista en el servidor y espera pacientemente a que termine la partida actual. En cuanto termine la ronda y cambie el mapa... **¡PUM!** La nueva partida arranca automáticamente en 50v50.
 
-### 💬 Whispers Privados por RCON:
-* 💬 **Intento de cambio manual no permitido:**
-  > `"Cambio de equipo no permitido durante la partida."`  
-  *Explicación:* Informa al jugador que el cambio manual está prohibido y que fue devuelto a su facción.
+### 🔹 "¿Qué pasa si me equivoqué y tiré `/mode50v50 enable` por error?"
+> **Respuesta:** No te preocupes. Antes de que termine el mapa tirás `/mode50v50 disable`.  
+> El bot cancela la orden de inmediato y la próxima partida arrancará normal en 33v33v33.
 
-* 💬 **Asignación automática desde Lonestar (Azul):**
-  > `"Se te ha asignado al equipo {Valkyra/Manticore}."`  
-  *Explicación:* Explica al jugador recién conectado a qué equipo oficial fue destinado.
+### 🔹 "¿Qué pasa si ya estamos jugando en 50v50 y tiro `/mode50v50 disable`?"
+> **Respuesta:** **Tampoco rompe nada.**  
+> El bot deja que la partida en curso termine en paz en 50v50 hasta el final. Cuando termine el mapa y cambie de ronda, el servidor vuelve solo al modo normal de 3 facciones.
 
-* 💬 **Nuevo jugador redirigido por sobrepoblación:**
-  > `"Se te ha asignado al equipo {Valkyra/Manticore} para balancear la partida."`  
-  *Explicación:* Notifica al nuevo jugador que intentó entrar al equipo mayor que fue reubicado en el equipo con menos jugadores para mantener la partida equilibrada.
-
-* 🛡️ **Espectadores y Árbitros (`White` / `None`):**
-  > *Silencio absoluto.* Nunca reciben mensajes ni son transferidos.
-
----
-
-## 6. Algoritmo de Team Balancing: "Portero Global" (Simple y Seguro)
-
-El bot ejecuta un ciclo cada 6 segundos (`mode_50v50_loop`). El sistema funciona bajo un principio simple: **nadie que ya esté jugando es movido jamás, el balance se gestiona en la puerta de entrada**:
-
-### Paso 1: Drenado Continuo de Lonestar (Azul)
-* Cualquier jugador que aparezca en Lonestar (Azul) es transferido al equipo con menor población entre Valkyra y Manticore (o a su equipo original si ya tenía uno asignado).
-* Recibe el whisper: *"Se te ha asignado al equipo {target}."*
-
-### Paso 2: Fase 1 — Calentamiento Inicial (Primeros 60 Segundos)
-* Durante el primer minuto (`matchSeconds < 60`), se emite el anuncio `Modo 50v50: 1m antes de autobalance`.
-* Los jugadores pueden conectarse y elegir Valkyra o Manticore con total libertad.
-* **Propósito:** Permite que grupos de amigos, clanes o escuadras carguen el mapa (sin importar si uno tiene SSD y otro HDD) y elijan el mismo equipo sin que el bot los separe en el arranque.
-
-### Paso 3: Fase 2 — Portero Activo (A partir del Minuto 1 / matchSeconds >= 60)
-* Al minuto 1:00, se emite el anuncio `Modo 50v50: Autobalance ACTIVO`.
-* **Inmunidad Total para Jugadores Existentes:** Todo jugador que ya esté en Valkyra o Manticore queda **100% protegido para siempre**.
-  * ¿Compró un tanque en base? **Protegido.**
-  * ¿Está esperando 2 minutos a que llegue un helicóptero? **Protegido.**
-  * ¿Gastó su billetera en equipamiento? **Protegido.**
-  * Jamás se le moverá de equipo por abandonos ajenos.
-* **El Portero en la Entrada:** Cuando un **NUEVO jugador** conecta al servidor:
-  * Si elige el equipo con **MÁS jugadores** que el rival (sobrepopulador): El bot lo intercepta de inmediato en la pantalla de bienvenida, lo transfiere al equipo con menos jugadores, lo bloquea allí y le envía el whisper: *"Se te ha asignado al equipo {target} para balancear la partida."*
-  * Si elige el equipo con **MENOS o IGUAL número de jugadores**: Es aceptado de forma inmediata en su equipo elegido.
+### 🔹 "¿Cómo sé en qué estado está el servidor ahora mismo?"
+> **Respuesta:** Tirás el comando:
+> ```text
+> /mode50v50 status
+> ```
+> El bot te va a responder clarito:
+> * ⚪ `inactive`: El modo está apagado (partida normal 33v33v33).
+> * 🟡 `pending_enable`: Esperando a que termine el mapa actual para activar 50v50.
+> * 🟢 `active`: ¡El modo 50v50 está jugando y balanceando ahora mismo!
+> * 🟠 `pending_disable`: El 50v50 actual terminará y el próximo mapa será normal.
 
 ---
 
-## 7. Matriz Rápida de Decisiones del Bot
+## 4. Resumen de Mensajes que ven los Jugadores 💬
+
+Para que sepas qué le aparece en pantalla a la gente:
+
+* 📢 **Anuncio para todos (Minuto 0):**  
+  `Modo 50v50: 1m antes de autobalance`
+* 📢 **Anuncio para todos (Minuto 1):**  
+  `Modo 50v50: Autobalance ACTIVO`
+* 💬 **Susurro al que intentó cambiarse de equipo de vivo:**  
+  `Cambio de equipo no permitido durante la partida.`
+* 💬 **Susurro al que entró en Azul:**  
+  `Se te ha asignado al equipo Valkyra/Manticore.`
+* 💬 **Susurro al nuevo que intentó entrar al equipo lleno:**  
+  `Se te ha asignado al equipo Valkyra/Manticore para balancear la partida.`
+* 🛡️ **A los Moderadores / Espectadores (White):**  
+  *Silencio total.* El bot no los toca, no los mueve y no les manda mensajes.
+
+---
+
+## 5. Tabla Rápida: ¿A quién puede mover el Bot? 📋
 
 ```text
-PERFIL DEL JUGADOR       ESTADO EN EL JUEGO    TIEMPO / ACTIVIDAD    ACCIÓN DEL BOT
-─────────────────────────────────────────────────────────────────────────────────────────────
-Jugador existente        Ya en Valkyra/Manticore Cualquiera (0 a 100m) ❌ INMUNE (Jamás se mueve)
-Comprando en base        Esperando heli/tanque  $0 cash ganado        ❌ PROTEGIDO (100% seguro)
-Amigos en calentamiento  Minuto 0:00 a 1:00     matchSeconds < 60s    ✅ LIBRE (Eligen juntos)
-Nuevo sobrepopulador     Entra tras minuto 1:00 Intenta bando mayor   ⛔ REDIRIGIDO al menor + whisper
-Nuevo balanceador        Entra tras minuto 1:00 Elige bando menor     ✅ ACEPTADO en su equipo
-Espectador / Árbitro     Facción White / None   Cualquiera            ❌ INTOCABLE (Ignorado)
-Cambio voluntario menú   Intento en el menú     Cualquiera            ⛔ REVERTIDO al suyo + whisper
+SITUACIÓN DEL JUGADOR                          ¿EL BOT PUEDE MOVERLO?
+─────────────────────────────────────────────────────────────────────────────
+Jugador que ya está jugando (cualquier tiempo) ❌ NUNCA (100% Inmune)
+Comprando en base o esperando helicóptero      ❌ NUNCA (Vehículos a salvo)
+Amigos entrando en el primer minuto (< 60s)    ✅ LIBRES (Eligen bando juntos)
+Nuevo jugador entrando al equipo lleno         ⛔ REDIRIGIDO al equipo menor
+Nuevo jugador entrando al equipo con menos     ✅ ENTRA directo a su equipo
+Jugador que intenta cambiarse en el menú       ⛔ REVERTIDO a su equipo
+Moderador / Admin en Espectador (White)        ❌ INTOCABLE (Ignorado)
 ```
 
 ---
-
-## 8. Guía de Casos de Uso Reales para el Staff (FAQ)
-
-### ❓ Caso 1: *"Entré con 4 amigos a Valkyra y Manticore está vacío (5v0) al empezar la ronda. ¿Nos va a separar el bot?"*
-> **Respuesta:** **No.** Durante el primer minuto de partida (`matchSeconds < 60`), el auto-balanceo está pausado. Los 5 amigos pueden elegir Valkyra sin problema mientras ven en pantalla el anuncio `Modo 50v50: 1m antes de autobalance`.
-
-### ❓ Caso 2: *"Compré un helicóptero o un tanque y estoy esperando 2 minutos en base a que llegue. ¿El bot me puede cambiar de equipo y hacerme perder la plata?"*
-> **Respuesta:** **No.** Los jugadores que ya están dentro del equipo tienen inmunidad total. El bot **nunca** mueve a nadie que ya esté en el roster de un equipo. Tu dinero, tus vehículos y tu escuadra están 100% a salvo.
-
-### ❓ Caso 3: *"Manticore va perdiendo y 7 jugadores se desconectaron por frustración (quedó 50 vs 43). ¿El bot va a pasar a los veteranos de Valkyra?"*
-> **Respuesta:** **No.** El bot jamás castiga ni frustra a los jugadores que ya están jugando en Valkyra. La partida se equilibra naturalmente a través del **portero**: cada jugador nuevo que ingrese al servidor intentando meterse a Valkyra será automáticamente transferido a Manticore hasta que los equipos vuelvan a estar 50 vs 50.
-
-### ❓ Caso 4: *"Un jugador nuevo conecta al servidor y el juego lo asigna a Lonestar (Azul). ¿Qué sucede?"*
-> **Respuesta:** En menos de 6 segundos, el bot lo transfiere automáticamente al equipo con menor cantidad de jugadores (Rojo o Verde) y le manda el whisper privado: *"Se te ha asignado al equipo Valkyra/Manticore"*. A partir de ahí, queda sellado en ese bando.
-
-### ❓ Caso 5: *"Un jugador intenta cambiarse desde el menú in-game al equipo que va ganando."*
-> **Respuesta:** El bot detecta que su facción cambió sin orden del sistema, lo regresa inmediatamente a su facción original y le envía un whisper: *"Cambio de equipo no permitido durante la partida."*
-
-### ❓ Caso 6: *"Hay moderadores o árbitros en modo espectador (facción White)."*
-> **Respuesta:** El bot los filtra inmediatamente antes de procesar cualquier lógica. Nunca se les mueve de facción, nunca se les envían whispers y nunca interfieren en el conteo de 50v50.
-
----
-
-## 9. Comandos de Administración del Modo
-
-Los administradores pueden gestionar el modo mediante los comandos de Discord o la API RCON:
-
-* **`/mode50v50 status`**: Muestra el estado actual (`inactive`, `pending_enable`, `active`, `pending_disable`), conteo de jugadores por equipo y configuración de RCON.
-* **`/mode50v50 enable`**: Programa el modo 50v50 para activarse en el siguiente mapa (`pending_enable`).
-* **`/mode50v50 disable`**: Programa el apagado ordenado del modo al terminar la partida actual (`pending_disable`).
-
----
-*Manual verificado y probado al 100% contra el Mock RCON oficial con 21 pruebas unitarias y de integración.*
+*Manual redactado para todo el staff. Diseñado para ser infalible y no requerir conocimientos técnicos.*
