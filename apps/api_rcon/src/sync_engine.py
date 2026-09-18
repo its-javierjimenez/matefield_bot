@@ -356,39 +356,53 @@ async def mode_50v50_loop():
                         blue_players.append(p)
                         f_canonical = "lonestar"
                     elif f.startswith("valk"):
-                        red_players.append(p)
                         f_canonical = "valkyra"
                     elif f.startswith("mant"):
-                        green_players.append(p)
                         f_canonical = "manticore"
                     else:
                         # NOTE: Players with "white" or spectator/none factions are strictly ignored
                         continue
 
-                    # Update player team tenure and voluntary switch detection
-                    if p.steamId:
+                    # Update player team tenure and prevent unpermitted voluntary team switches
+                    if p.steamId and f_canonical in ("valkyra", "manticore"):
                         hist = player_team_history.get(p.steamId)
                         if not hist:
-                            # First time seen on a team in this match -> Original team choice!
+                            # First time seen on a team in this match -> Register initial assigned team!
                             player_team_history[p.steamId] = {
                                 "current_faction": f_canonical,
+                                "assigned_faction": f_canonical,
                                 "joined_team_at": now_ts,
-                                "switched_voluntarily": False,
-                                "switched_to_overpopulated": False,
                             }
                         else:
                             if hist["current_faction"] != f_canonical:
                                 old_f = hist["current_faction"]
                                 bot_swapped = (now_ts - recently_swapped_players.get(p.steamId, 0)) < 15
+
+                                # ARMA-STYLE STRICT LOCK: If player manually switched between Red and Green, block & revert!
+                                if not bot_swapped:
+                                    assigned = hist.get("assigned_faction", old_f)
+                                    if assigned in ("valkyra", "manticore") and assigned != f_canonical:
+                                        revert_target = red_name if assigned == "valkyra" else green_name
+                                        logger.warning(f"[50v50 Mode] Player {p.name} ({p.steamId}) attempted manual team switch from {assigned} -> {f_canonical}! Blocking and reverting back to {revert_target}...")
+                                        try:
+                                            await rcon_client.switch_faction(p.steamId, revert_target)
+                                            recently_swapped_players[p.steamId] = now_ts
+                                            await rcon_client.send_player_message(p.steamId, "Cambio de equipo no permitido durante la partida.")
+                                        except Exception as err_revert:
+                                            logger.error(f"[50v50 Mode] Failed to revert unpermitted team switch for {p.steamId}: {err_revert}")
+                                        if assigned == "valkyra":
+                                            red_players.append(p)
+                                        else:
+                                            green_players.append(p)
+                                        continue
+
                                 hist["current_faction"] = f_canonical
                                 hist["joined_team_at"] = now_ts
-                                if not bot_swapped:
-                                    # Player voluntarily switched teams in-game!
-                                    hist["switched_voluntarily"] = True
-                                    hist["switched_to_overpopulated"] = True
-                                    logger.info(f"[50v50 Mode] Player {p.name} ({p.steamId}) voluntarily switched from {old_f} to {f_canonical}!")
-                                else:
-                                    hist["switched_to_overpopulated"] = False
+
+                        if f_canonical == "valkyra":
+                            red_players.append(p)
+                        else:
+                            green_players.append(p)
                 
                 # Step 1: Transfer any players in Lonestar (Blue) to whichever team is smaller
                 if blue_players:
@@ -410,16 +424,19 @@ async def mode_50v50_loop():
                             recently_swapped_players[p.steamId] = now_ts
                             player_team_history[p.steamId] = {
                                 "current_faction": target_key,
+                                "assigned_faction": target_key,
                                 "joined_team_at": now_ts,
-                                "switched_voluntarily": False,
-                                "switched_to_overpopulated": False,
                             }
                             logger.info(f"[50v50 Mode] Moved {p.name} ({p.steamId}) from Lonestar -> {target_faction}")
+                            try:
+                                await rcon_client.send_player_message(p.steamId, f"Se te ha asignado al equipo {target_faction}.")
+                            except Exception:
+                                pass
                         except Exception as err:
                             logger.error(f"[50v50 Mode] Failed to move {p.steamId} to {target_faction}: {err}")
 
                 # Step 2: Auto-teambalancing between Red and Green (since in-game balancing is unlocked)
-                # If difference is >= 2, move voluntary overpopulators or newest players from larger to smaller
+                # If difference is >= 2, move fresh non-combatant arrivals from larger to smaller
                 diff = len(red_players) - len(green_players)
                 if abs(diff) >= 2:
                     count_to_move = abs(diff) // 2
@@ -437,11 +454,7 @@ async def mode_50v50_loop():
                     # STRICT FAIRNESS RULE:
                     # Original veterans who chose their team (or were assigned from Blue) and have combated
                     # (cash > 0 or K/D > 0) are 100% IMMUNE from being forced to the other team when players ragequit.
-                    #
-                    # ONLY two groups are eligible to be moved:
-                    # 1. Voluntary overpopulators: players who manually switched into this team mid-match.
-                    # 2. Fresh arrivals without combat footprint: ($0 cash and 0 kills and 0 deaths).
-                    #
+                    # ONLY fresh arrivals without combat footprint ($0 cash and 0 kills and 0 deaths) are eligible.
                     # Exclude any player currently in the 60s swap cooldown.
                     eligible_candidates = []
                     for p in donor_team:
@@ -450,39 +463,23 @@ async def mode_50v50_loop():
                         if (now_ts - recently_swapped_players.get(p.steamId, 0)) <= 60:
                             continue
 
-                        hist = player_team_history.get(p.steamId, {})
-                        is_overpop = hist.get("switched_to_overpopulated", False)
                         has_combat_footprint = ((p.cash or 0) > 0) or ((p.kills or 0) > 0) or ((p.deaths or 0) > 0)
-
-                        if is_overpop or (not has_combat_footprint):
+                        if not has_combat_footprint:
                             eligible_candidates.append(p)
 
                     if not eligible_candidates:
                         logger.info(f"[50v50 Mode] Teambalance: {donor_name} has {len(donor_team)} vs {target_faction} ({len(donor_team) - abs(diff)}), but all players on {donor_name} are protected original veterans. Keeping teams as-is until new players connect.")
                     else:
-                        # Sort eligible candidates:
-                        # 1. Voluntary overpopulators (switched into donor team): 0 comes first!
-                        # 2. Fresh arrivals: newest join time (-joined_team_at)
-                        # 3. Cash ($0 first)
-                        # 4. Activity
+                        # Sort eligible fresh candidates by newest join time (-joined_team_at)
                         def candidate_sort_key(p):
                             hist = player_team_history.get(p.steamId, {})
-                            is_overpop = 0 if hist.get("switched_to_overpopulated", False) else 1
                             joined_at = hist.get("joined_team_at", now_ts)
-                            cash_val = p.cash if p.cash is not None else 0
-                            activity_val = (p.kills or 0) + (p.deaths or 0)
-                            return (
-                                is_overpop,
-                                -joined_at,
-                                cash_val,
-                                activity_val,
-                                p.kills or 0
-                            )
+                            return -joined_at
 
                         eligible_candidates.sort(key=candidate_sort_key)
                         actual_move = min(count_to_move, len(eligible_candidates))
 
-                        logger.info(f"[50v50 Mode] Teambalance triggered! {donor_name} has {len(donor_team)} vs {target_faction} ({len(donor_team) - abs(diff)}). Moving {actual_move} eligible non-veteran candidate(s)...")
+                        logger.info(f"[50v50 Mode] Teambalance triggered! {donor_name} has {len(donor_team)} vs {target_faction} ({len(donor_team) - abs(diff)}). Moving {actual_move} eligible fresh candidate(s)...")
 
                         for p in eligible_candidates[:actual_move]:
                             try:
@@ -490,11 +487,14 @@ async def mode_50v50_loop():
                                 recently_swapped_players[p.steamId] = now_ts
                                 player_team_history[p.steamId] = {
                                     "current_faction": target_key,
+                                    "assigned_faction": target_key,
                                     "joined_team_at": now_ts,
-                                    "switched_voluntarily": False,
-                                    "switched_to_overpopulated": False,
                                 }
                                 logger.info(f"[50v50 Mode] Rebalanced {p.name} ({p.steamId}, cash=${p.cash or 0}, K/D={p.kills or 0}/{p.deaths or 0}) {donor_name} -> {target_faction}")
+                                try:
+                                    await rcon_client.send_player_message(p.steamId, f"Se te ha asignado al equipo {target_faction} para balancear la partida.")
+                                except Exception:
+                                    pass
                             except Exception as err:
                                 logger.error(f"[50v50 Mode] Failed to rebalance {p.steamId} to {target_faction}: {err}")
 

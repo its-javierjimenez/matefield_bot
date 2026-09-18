@@ -181,6 +181,14 @@ class RCONClient:
                 data = await response.json()
                 return schemas.ConfigResult.model_validate(data)
         
+    async def broadcast(self, message: str) -> None:
+        payload = {"message": message}
+        await self._request("POST", "/v1/broadcast", json=payload)
+
+    async def send_player_message(self, steam_id: str, message: str) -> None:
+        payload = {"message": message}
+        await self._request("POST", f"/v1/players/{steam_id}/message", json=payload)
+
     async def kick_player(self, steam_id: str, reason: str) -> None:
         payload = {"reason": reason}
         await self._request("POST", f"/v1/players/{steam_id}/kick", json=payload)

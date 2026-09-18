@@ -62,21 +62,29 @@ Los cambios en `ServerSettings.ini` solo son procesados por el servidor de juego
 3. `pending_disable`: El admin desactiva el modo mientras hay una partida 50v50 en curso. RCON se restaura a `true`. Para no romper la partida a mitad de juego, la automatización del bot sigue activa hasta que concluya el round.
 4. `inactive`: Modo completamente apagado. Se entra aquí automáticamente al iniciar el siguiente match tras `pending_disable`, o de forma inmediata si se cancela mientras estaba en `pending_enable`.
 
-### C. Algoritmo de Balanceo y Prioridad Justa (cada 6 segundos)
+### C. Algoritmo de Balanceo y Sellado Estilo ARMA (cada 6 segundos)
 1. **Detección Dinámica de Facción**: Inspecciona `status.factionScores` en cada ciclo para identificar los nombres exactos en vivo (`Valkyra`, `Manticore`, `Lonestar`).
-2. **Paso 1 - Eliminación y Asimilación de Lonestar (Azul)**:
+2. **Sellado de Equipos Estilo ARMA (Prohibición de Cambio Voluntario)**:
+   - Los equipos quedan sellados durante toda la partida. Ningún jugador tiene permitido cambiarse de bando a voluntad.
+   - Si un jugador intenta cambiarse manualmente mediante el menú del juego, el bot detecta de inmediato la discrepancia entre su equipo asignado (`assigned_faction`) y su nueva facción.
+   - **Reversión Inmediata**: El bot ejecuta `switch_faction` revirtiendo al jugador a su equipo asignado y le envía un whisper directo:
+     > *"Cambio de equipo no permitido durante la partida."*
+3. **Paso 1 - Eliminación y Asimilación de Lonestar (Azul)**:
    - Todos los jugadores en Azul son transferidos inmediatamente al equipo con menor población entre Rojo y Verde.
-   - **Tratamiento como Originales**: Una vez asignados por el bot a Rojo o Verde, son registrados como **miembros originales legítimos** de esa facción. Al entrar en combate y ganar dinero/bajas, adquieren exactamente la misma inmunidad que un veterano que eligió ese equipo al minuto 0.
-3. **Paso 2 - Auto-Teambalancing Rojo vs Verde**: Como el balanceo interno del juego está desactivado, si la diferencia poblacional entre Rojo y Verde es $\ge 2$:
+   - **Whisper de Asignación**: Se le envía un mensaje privado por RCON informándole:
+     > *"Se te ha asignado al equipo {target_faction}."*
+   - **Tratamiento como Originales**: Quedan registrados como miembros oficiales de esa facción. Al entrar en combate y ganar dinero/bajas, adquieren exactamente la misma inmunidad que un veterano original. Si intentan cambiarse al otro equipo, el sellado ARMA los bloquea y revierte.
+4. **Paso 2 - Auto-Teambalancing Rojo vs Verde**: Como el balanceo interno del juego está desactivado, si la diferencia poblacional entre Rojo y Verde es $\ge 2$:
    - Se calculan $\lfloor\text{diferencia}/2\rfloor$ jugadores a transferir del equipo mayoritario al minoritario.
-   - **Regla de Inmunidad Estricta para Veteranos Originales**:
-     - Si un jugador eligió su facción legalmente (o fue asignado desde Azul) y ya combatió (`cash > 0` o `kills + deaths > 0`), es **100% INMUNE** a ser forzado al equipo rival por abandono de otros jugadores.
-     - Si el equipo mayoritario tiene 50 jugadores y todos son veteranos originales en combate, **NO SE MUEVE A NADIE**. El desbalance (ej: 50 vs 45) se resuelve de forma orgánica conforme se conecten nuevos jugadores al servidor o salgan de Lonestar Azul.
+   - **Regla de Inmunidad Absoluta para Combatientes y Veteranos**:
+     - Todo jugador que ya haya combatido (`cash > 0` o `kills + deaths > 0`) es **100% INMUNE** a ser forzado al equipo rival si otros abandonan la partida.
+     - Si el equipo mayoritario tiene 50 jugadores y todos son veteranos con combate activo, **NO SE MUEVE A NADIE**. El desbalance se resuelve pacíficamente conforme ingresen nuevos jugadores al servidor.
    - **Únicos Candidatos Elegibles para Balancear**:
-     1. **Sobrepobladores Voluntarios**: Jugadores que se cambiaron manualmente de equipo en el menú durante la partida hacia el bando mayoritario (rompiendo su condición de original). Son seleccionados de primeros para ser devueltos.
-     2. **Recién Ingresados**: Quienes acaban de conectar/spawnear en base y tienen **\$0 cash y 0 K/D** (aún no han pisado la zona de combate, por lo que no pierden progreso ni sufren frustración).
+     - **Recién Ingresados**: Quienes acaban de conectar/spawnear en base y tienen **\$0 cash y 0 K/D** (aún no han pisado la zona de combate, por lo que no pierden progreso alguno). Se ordenan por tiempo de llegada más reciente.
+   - **Whisper de Balanceo**: Al mover a un recién ingresado por desbalance, el bot le notifica:
+     > *"Se te ha asignado al equipo {target_faction} para balancear la partida."*
    - **Protecciones Incondicionales**:
-     - Nunca se tocan jugadores en facción `White` o `None` (espectadores o en pantalla de selección).
+     - Nunca se tocan ni se envían mensajes a jugadores en facción `White` o `None` (espectadores o en pantalla de carga).
      - Cooldown estricto de 60 segundos por jugador tras una transferencia para evitar oscilaciones (*ping-pong*).
      - Umbral $\Delta < 2$: No se mueve a nadie en diferencias de 1 jugador (ej: 50 vs 49).
 
