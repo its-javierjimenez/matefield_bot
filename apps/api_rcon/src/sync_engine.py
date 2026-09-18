@@ -236,6 +236,21 @@ async def mode_50v50_loop():
                     is_enabled = val in ("true", "1", "enabled", "yes", "on")
 
             if is_enabled:
+                # Dynamically resolve exact faction names from live server status (e.g. "Valkyra" vs "Valkyre")
+                red_name = "Valkyra"
+                green_name = "Manticore"
+                try:
+                    status_resp = await rcon_client.get_status()
+                    if status_resp and status_resp.factionScores:
+                        for fs in status_resp.factionScores:
+                            fn = (fs.name or "").strip()
+                            if fn.lower().startswith("valk"):
+                                red_name = fn
+                            elif fn.lower().startswith("mant"):
+                                green_name = fn
+                except Exception as err_status:
+                    logger.warning(f"[50v50 Mode] Could not get live faction names from status: {err_status}")
+
                 players_resp = await rcon_client.get_players()
                 all_players = players_resp.players or []
                 
@@ -245,23 +260,23 @@ async def mode_50v50_loop():
                 
                 for p in all_players:
                     f = (p.faction or "").strip().lower()
-                    if f == "lonestar":
+                    if f.startswith("lone"):
                         blue_players.append(p)
-                    elif f in ("valkyre", "valkyria", "valkyrie"):
+                    elif f.startswith("valk"):
                         valkyre_count += 1
-                    elif f == "manticore":
+                    elif f.startswith("mant"):
                         manticore_count += 1
                 
                 if blue_players:
-                    logger.info(f"[50v50 Mode] Found {len(blue_players)} players in Lonestar (Blue). Auto-balancing to Red vs Green... (Current: Valkyre={valkyre_count}, Manticore={manticore_count})")
+                    logger.info(f"[50v50 Mode] Found {len(blue_players)} players in Lonestar (Blue). Auto-balancing to Red vs Green... (Current: {red_name}={valkyre_count}, {green_name}={manticore_count})")
                     for p in blue_players:
                         if not p.steamId:
                             continue
                         if valkyre_count <= manticore_count:
-                            target_faction = "Valkyre"
+                            target_faction = red_name
                             valkyre_count += 1
                         else:
-                            target_faction = "Manticore"
+                            target_faction = green_name
                             manticore_count += 1
                             
                         try:

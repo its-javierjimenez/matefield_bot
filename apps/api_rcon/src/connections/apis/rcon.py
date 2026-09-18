@@ -37,7 +37,15 @@ class RCONClient:
         connector = aiohttp.TCPConnector(ssl=False)
         async with aiohttp.ClientSession(headers=self.headers, connector=connector) as session:
             async with session.request(method, url, **kwargs) as response:
-                response.raise_for_status()
+                if response.status >= 400:
+                    err_body = await response.text()
+                    raise aiohttp.ClientResponseError(
+                        response.request_info,
+                        response.history,
+                        status=response.status,
+                        message=f"{response.reason}: {err_body}",
+                        headers=response.headers
+                    )
                 if "application/json" in response.headers.get("Content-Type", ""):
                     return await response.json()
                 return await response.text()
