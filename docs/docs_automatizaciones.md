@@ -64,14 +64,17 @@ Los cambios en `ServerSettings.ini` solo son procesados por el servidor de juego
 
 ### C. Algoritmo de Balanceo y Prioridad Justa (cada 6 segundos)
 1. **Detección Dinámica de Facción**: Inspecciona `status.factionScores` en cada ciclo para identificar los nombres exactos en vivo (`Valkyra`, `Manticore`, `Lonestar`).
-2. **Paso 1 - Eliminación de Lonestar**: Todos los jugadores en Azul son transferidos inmediatamente al equipo con menor población entre Rojo y Verde.
+2. **Paso 1 - Eliminación y Asimilación de Lonestar (Azul)**:
+   - Todos los jugadores en Azul son transferidos inmediatamente al equipo con menor población entre Rojo y Verde.
+   - **Tratamiento como Originales**: Una vez asignados por el bot a Rojo o Verde, son registrados como **miembros originales legítimos** de esa facción. Al entrar en combate y ganar dinero/bajas, adquieren exactamente la misma inmunidad que un veterano que eligió ese equipo al minuto 0.
 3. **Paso 2 - Auto-Teambalancing Rojo vs Verde**: Como el balanceo interno del juego está desactivado, si la diferencia poblacional entre Rojo y Verde es $\ge 2$:
-   - Se transfieren $\lfloor\text{diferencia}/2\rfloor$ jugadores del equipo mayoritario al minoritario.
-   - **Regla de Prioridad Justa (Fairness / Protección de Originales)**:
-     1. **Sobrepobladores Voluntarios**: Jugadores que cambiaron voluntariamente de equipo durante la partida hacia el bando más numeroso son seleccionados de primeros para ser devueltos.
-     2. **Antigüedad en el Equipo (`joined_team_at`)**: Quienes recién se unieron al equipo son candidatos antes que quienes llevan más tiempo. Los jugadores originales que eligieron el equipo al principio de la partida quedan protegidos al final de la cola y nunca se mueven innecesariamente.
-     3. **Dinero (`cash`)**: Candidatos con $0 cash (recién spawneados, sin vehículos ni compras) antes que jugadores veteranos con dinero acumulado.
-     4. **Actividad de Combate (`kills + deaths`)**: Jugadores con menor combate antes que quienes están en rachas o activos.
+   - Se calculan $\lfloor\text{diferencia}/2\rfloor$ jugadores a transferir del equipo mayoritario al minoritario.
+   - **Regla de Inmunidad Estricta para Veteranos Originales**:
+     - Si un jugador eligió su facción legalmente (o fue asignado desde Azul) y ya combatió (`cash > 0` o `kills + deaths > 0`), es **100% INMUNE** a ser forzado al equipo rival por abandono de otros jugadores.
+     - Si el equipo mayoritario tiene 50 jugadores y todos son veteranos originales en combate, **NO SE MUEVE A NADIE**. El desbalance (ej: 50 vs 45) se resuelve de forma orgánica conforme se conecten nuevos jugadores al servidor o salgan de Lonestar Azul.
+   - **Únicos Candidatos Elegibles para Balancear**:
+     1. **Sobrepobladores Voluntarios**: Jugadores que se cambiaron manualmente de equipo en el menú durante la partida hacia el bando mayoritario (rompiendo su condición de original). Son seleccionados de primeros para ser devueltos.
+     2. **Recién Ingresados**: Quienes acaban de conectar/spawnear en base y tienen **\$0 cash y 0 K/D** (aún no han pisado la zona de combate, por lo que no pierden progreso ni sufren frustración).
    - **Protecciones Incondicionales**:
      - Nunca se tocan jugadores en facción `White` o `None` (espectadores o en pantalla de selección).
      - Cooldown estricto de 60 segundos por jugador tras una transferencia para evitar oscilaciones (*ping-pong*).

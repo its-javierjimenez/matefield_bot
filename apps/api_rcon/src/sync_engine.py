@@ -434,49 +434,69 @@ async def mode_50v50_loop():
                         target_key = "valkyra"
                         donor_name = green_name
 
-                    # Exclude players who were recently swapped within last 60 seconds to prevent ping-pong
-                    candidates = [p for p in donor_team if p.steamId and (now_ts - recently_swapped_players.get(p.steamId, 0) > 60)]
-                    # Fallback if everyone on team has active cooldown
-                    if not candidates:
-                        candidates = [p for p in donor_team if p.steamId]
+                    # STRICT FAIRNESS RULE:
+                    # Original veterans who chose their team (or were assigned from Blue) and have combated
+                    # (cash > 0 or K/D > 0) are 100% IMMUNE from being forced to the other team when players ragequit.
+                    #
+                    # ONLY two groups are eligible to be moved:
+                    # 1. Voluntary overpopulators: players who manually switched into this team mid-match.
+                    # 2. Fresh arrivals without combat footprint: ($0 cash and 0 kills and 0 deaths).
+                    #
+                    # Exclude any player currently in the 60s swap cooldown.
+                    eligible_candidates = []
+                    for p in donor_team:
+                        if not p.steamId:
+                            continue
+                        if (now_ts - recently_swapped_players.get(p.steamId, 0)) <= 60:
+                            continue
 
-                    # Sort key prioritization (Fairness Rule):
-                    # 1. Voluntary overpopulators (switched into donor team): 0 comes first!
-                    # 2. Team tenure: -joined_team_at (newest arrivals on team have lowest negative numbers -> moved first).
-                    #    Original team players who chose first at match start are placed last (PROTECTED).
-                    # 3. Cash: lower cash moved first (fresh spawns with $0 before players who saved money/bought vehicles).
-                    # 4. Activity: lower combat activity (kills + deaths) moved first.
-                    def candidate_sort_key(p):
                         hist = player_team_history.get(p.steamId, {})
-                        is_overpop = 0 if hist.get("switched_to_overpopulated", False) else 1
-                        joined_at = hist.get("joined_team_at", now_ts)
-                        cash_val = p.cash if p.cash is not None else 0
-                        activity_val = (p.kills or 0) + (p.deaths or 0)
-                        return (
-                            is_overpop,
-                            -joined_at,
-                            cash_val,
-                            activity_val,
-                            p.kills or 0
-                        )
+                        is_overpop = hist.get("switched_to_overpopulated", False)
+                        has_combat_footprint = ((p.cash or 0) > 0) or ((p.kills or 0) > 0) or ((p.deaths or 0) > 0)
 
-                    candidates.sort(key=candidate_sort_key)
+                        if is_overpop or (not has_combat_footprint):
+                            eligible_candidates.append(p)
 
-                    logger.info(f"[50v50 Mode] Teambalance triggered! {donor_name} has {len(donor_team)} vs {target_faction} ({len(donor_team) - abs(diff)}). Moving {count_to_move} candidate(s)...")
+                    if not eligible_candidates:
+                        logger.info(f"[50v50 Mode] Teambalance: {donor_name} has {len(donor_team)} vs {target_faction} ({len(donor_team) - abs(diff)}), but all players on {donor_name} are protected original veterans. Keeping teams as-is until new players connect.")
+                    else:
+                        # Sort eligible candidates:
+                        # 1. Voluntary overpopulators (switched into donor team): 0 comes first!
+                        # 2. Fresh arrivals: newest join time (-joined_team_at)
+                        # 3. Cash ($0 first)
+                        # 4. Activity
+                        def candidate_sort_key(p):
+                            hist = player_team_history.get(p.steamId, {})
+                            is_overpop = 0 if hist.get("switched_to_overpopulated", False) else 1
+                            joined_at = hist.get("joined_team_at", now_ts)
+                            cash_val = p.cash if p.cash is not None else 0
+                            activity_val = (p.kills or 0) + (p.deaths or 0)
+                            return (
+                                is_overpop,
+                                -joined_at,
+                                cash_val,
+                                activity_val,
+                                p.kills or 0
+                            )
 
-                    for p in candidates[:count_to_move]:
-                        try:
-                            await rcon_client.switch_faction(p.steamId, target_faction)
-                            recently_swapped_players[p.steamId] = now_ts
-                            player_team_history[p.steamId] = {
-                                "current_faction": target_key,
-                                "joined_team_at": now_ts,
-                                "switched_voluntarily": False,
-                                "switched_to_overpopulated": False,
-                            }
-                            logger.info(f"[50v50 Mode] Rebalanced {p.name} ({p.steamId}, cash=${p.cash or 0}, K/D={p.kills or 0}/{p.deaths or 0}) {donor_name} -> {target_faction}")
-                        except Exception as err:
-                            logger.error(f"[50v50 Mode] Failed to rebalance {p.steamId} to {target_faction}: {err}")
+                        eligible_candidates.sort(key=candidate_sort_key)
+                        actual_move = min(count_to_move, len(eligible_candidates))
+
+                        logger.info(f"[50v50 Mode] Teambalance triggered! {donor_name} has {len(donor_team)} vs {target_faction} ({len(donor_team) - abs(diff)}). Moving {actual_move} eligible non-veteran candidate(s)...")
+
+                        for p in eligible_candidates[:actual_move]:
+                            try:
+                                await rcon_client.switch_faction(p.steamId, target_faction)
+                                recently_swapped_players[p.steamId] = now_ts
+                                player_team_history[p.steamId] = {
+                                    "current_faction": target_key,
+                                    "joined_team_at": now_ts,
+                                    "switched_voluntarily": False,
+                                    "switched_to_overpopulated": False,
+                                }
+                                logger.info(f"[50v50 Mode] Rebalanced {p.name} ({p.steamId}, cash=${p.cash or 0}, K/D={p.kills or 0}/{p.deaths or 0}) {donor_name} -> {target_faction}")
+                            except Exception as err:
+                                logger.error(f"[50v50 Mode] Failed to rebalance {p.steamId} to {target_faction}: {err}")
 
         except Exception as e:
             logger.error(f"[50v50 Mode] Error in 50v50 loop: {e}")

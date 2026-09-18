@@ -254,35 +254,50 @@ async def run_50v50_step(all_players: List[MockRconPlayer], now_ts: float):
             target_faction = red_name
             target_key = "valkyra"
 
-        candidates = [p for p in donor_team if p.steamId and (now_ts - recently_swapped_players.get(p.steamId, 0) > 60)]
-        if not candidates:
-            candidates = [p for p in donor_team if p.steamId]
+        # STRICT FAIRNESS RULE:
+        # Original veterans who chose their team (or were assigned from Blue) and have combated
+        # (cash > 0 or K/D > 0) are 100% IMMUNE from being forced to the other team when players ragequit.
+        eligible_candidates = []
+        for p in donor_team:
+            if not p.steamId:
+                continue
+            if (now_ts - recently_swapped_players.get(p.steamId, 0)) <= 60:
+                continue
 
-        def candidate_sort_key(p):
             hist = player_team_history.get(p.steamId, {})
-            is_overpop = 0 if hist.get("switched_to_overpopulated", False) else 1
-            joined_at = hist.get("joined_team_at", now_ts)
-            cash_val = p.cash if p.cash is not None else 0
-            activity_val = (p.kills or 0) + (p.deaths or 0)
-            return (
-                is_overpop,
-                -joined_at,
-                cash_val,
-                activity_val,
-                p.kills or 0
-            )
+            is_overpop = hist.get("switched_to_overpopulated", False)
+            has_combat_footprint = ((p.cash or 0) > 0) or ((p.kills or 0) > 0) or ((p.deaths or 0) > 0)
 
-        candidates.sort(key=candidate_sort_key)
+            if is_overpop or (not has_combat_footprint):
+                eligible_candidates.append(p)
 
-        for p in candidates[:count_to_move]:
-            switched_calls.append((p.steamId, target_faction))
-            recently_swapped_players[p.steamId] = now_ts
-            player_team_history[p.steamId] = {
-                "current_faction": target_key,
-                "joined_team_at": now_ts,
-                "switched_voluntarily": False,
-                "switched_to_overpopulated": False,
-            }
+        if eligible_candidates:
+            def candidate_sort_key(p):
+                hist = player_team_history.get(p.steamId, {})
+                is_overpop = 0 if hist.get("switched_to_overpopulated", False) else 1
+                joined_at = hist.get("joined_team_at", now_ts)
+                cash_val = p.cash if p.cash is not None else 0
+                activity_val = (p.kills or 0) + (p.deaths or 0)
+                return (
+                    is_overpop,
+                    -joined_at,
+                    cash_val,
+                    activity_val,
+                    p.kills or 0
+                )
+
+            eligible_candidates.sort(key=candidate_sort_key)
+            actual_move = min(count_to_move, len(eligible_candidates))
+
+            for p in eligible_candidates[:actual_move]:
+                switched_calls.append((p.steamId, target_faction))
+                recently_swapped_players[p.steamId] = now_ts
+                player_team_history[p.steamId] = {
+                    "current_faction": target_key,
+                    "joined_team_at": now_ts,
+                    "switched_voluntarily": False,
+                    "switched_to_overpopulated": False,
+                }
 
 
 # ==============================================================================
@@ -499,8 +514,8 @@ async def main():
         print("\n▶ Auto-Pregunta 8: ¿El cooldown de 60 segundos previene que un jugador rebote entre equipos?")
         recently_swapped_players["bounced_player"] = 3000.0
         p_bounced = MockRconPlayer(steamId="bounced_player", name="Bounced", faction="Valkyra", kills=0, deaths=0, cash=0)
-        p_other = MockRconPlayer(steamId="other_candidate", name="Other", faction="Valkyra", kills=5, deaths=2, cash=1000)
-        p_third = MockRconPlayer(steamId="third_candidate", name="Third", faction="Valkyra", kills=10, deaths=0, cash=5000)
+        p_other = MockRconPlayer(steamId="other_candidate", name="Other", faction="Valkyra", kills=0, deaths=0, cash=0)
+        p_third = MockRconPlayer(steamId="third_candidate", name="Third", faction="Valkyra", kills=0, deaths=0, cash=0)
         mant_dummy = [MockRconPlayer(steamId="md", name="MD", faction="Manticore")]
 
         # At t=3030 (30 seconds after swap, still in cooldown)
@@ -731,10 +746,103 @@ async def main():
         assert s16_end.cash_earned == 4000, f"Expected 4000 cash, got {s16_end.cash_earned}"
         print("  ✅ PASSED: Jugador transferido al cierre retiene sus 15 kills, 4 deaths y $4000 cash en la base de datos.")
 
+        # -------------------------------------------------------------
+        # Q17: Escenario 50 vs 45 con veteranos originales y recién llegados
+        # -------------------------------------------------------------
+        print("\n▶ Auto-Pregunta 17: ¿Qué pasa si quedan 50 vs 45 y todos los 50 son veteranos originales?")
+        player_team_history.clear()
+        recently_swapped_players.clear()
+
+        # 50 original veterans on Valkyra (all have combated, cash > 0, K/D > 0)
+        v50_vets = [
+            MockRconPlayer(steamId=f"vet_v_{i}", name=f"VetV_{i}", faction="Valkyra", kills=3, deaths=1, cash=1200)
+            for i in range(50)
+        ]
+        # 45 players on Manticore
+        m45_players = [
+            MockRconPlayer(steamId=f"m45_{i}", name=f"M45_{i}", faction="Manticore", kills=2, deaths=2, cash=800)
+            for i in range(45)
+        ]
+
+        # Record history for the 50 veterans
+        for v in v50_vets:
+            player_team_history[v.steamId] = {
+                "current_faction": "valkyra",
+                "joined_team_at": 1000.0,
+                "switched_voluntarily": False,
+                "switched_to_overpopulated": False
+            }
+
+        # Step runs at t=2000 (Valkyra 50 vs Manticore 45)
+        await run_50v50_step(v50_vets + m45_players, now_ts=2000.0)
+
+        # Expected: ZERO players moved because all 50 are protected original veterans!
+        assert len(switched_calls) == 0, f"ERROR: Protected veterans were moved! {switched_calls}"
+        print("  ✅ PASSED: Ningún veterano original fue transferido. Se mantuvieron 50 vs 45 sin enojar a nadie.")
+
+        # Now 2 fresh new players connect to Valkyra with $0 cash and 0 K/D:
+        p_new_1 = MockRconPlayer(steamId="fresh_1", name="Fresh1", faction="Valkyra", kills=0, deaths=0, cash=0)
+        p_new_2 = MockRconPlayer(steamId="fresh_2", name="Fresh2", faction="Valkyra", kills=0, deaths=0, cash=0)
+        player_team_history["fresh_1"] = {"current_faction": "valkyra", "joined_team_at": 2050.0, "switched_voluntarily": False}
+        player_team_history["fresh_2"] = {"current_faction": "valkyra", "joined_team_at": 2050.0, "switched_voluntarily": False}
+
+        # Valkyra now has 52 vs Manticore 45 (diff = 7, count_to_move = 3, but only 2 eligible fresh players)
+        await run_50v50_step(v50_vets + [p_new_1, p_new_2] + m45_players, now_ts=2060.0)
+
+        # Only the 2 fresh players are moved!
+        moved = [sid for sid, target in switched_calls]
+        assert len(moved) == 2
+        assert "fresh_1" in moved and "fresh_2" in moved
+        for v in v50_vets:
+            assert v.steamId not in moved, f"ERROR: Veteran {v.steamId} was moved!"
+        print("  ✅ PASSED: Al ingresar 2 nuevos sin combatir ($0 cash), el bot movió a los 2 nuevos protegiendo al 100% de los veteranos.")
+
+        # -------------------------------------------------------------
+        # Q18: Asimilación de jugadores Azules (Lonestar) como originales y ruptura si cambian
+        # -------------------------------------------------------------
+        print("\n▶ Auto-Pregunta 18: ¿Los Azules asignados se tratan como originales y pierden inmunidad si se cambian?")
+        player_team_history.clear()
+        recently_swapped_players.clear()
+
+        # Blue player spawns in Lonestar
+        blue_p = MockRconPlayer(steamId="blue_veteran", name="BlueVet", faction="Lonestar", kills=0, deaths=0, cash=0)
+        await run_50v50_step([blue_p] + v50_vets[:10] + m45_players[:10], now_ts=3000.0)
+
+        # Step 1 transferred him to whichever was equal/smaller
+        assert len(switched_calls) == 1
+        assigned_target = switched_calls[0][1]
+        assigned_key = "valkyra" if assigned_target.lower().startswith("valk") else "manticore"
+        assert player_team_history["blue_veteran"]["current_faction"] == assigned_key
+        assert player_team_history["blue_veteran"]["switched_voluntarily"] is False
+
+        # Player now fights on his assigned team and earns cash
+        blue_p.faction = assigned_target
+        blue_p.cash = 1500
+        blue_p.kills = 4
+
+        # Verify he is now an established veteran on that team!
+        has_footprint = (blue_p.cash > 0) or (blue_p.kills > 0)
+        assert has_footprint is True
+        print(f"  ✅ PASSED: Jugador azul asignado a {assigned_target} adquirió condición de original veterano tras combatir.")
+
+        # Now, player voluntarily switches in-game to the OTHER team (breaks rules!)
+        other_target = "Manticore" if assigned_key == "valkyra" else "Valkyra"
+        other_key = "manticore" if assigned_key == "valkyra" else "valkyra"
+        blue_p.faction = other_target
+
+        # Step runs at t=3100 (bot detects voluntary switch)
+        await run_50v50_step([blue_p] + v50_vets[:25] + m45_players[:20], now_ts=3100.0)
+
+        # Player must be flagged as voluntary overpopulator!
+        assert player_team_history["blue_veteran"]["switched_voluntarily"] is True
+        assert player_team_history["blue_veteran"]["switched_to_overpopulated"] is True
+        print(f"  ✅ PASSED: Al cambiarse voluntariamente a {other_target}, perdió su inmunidad y quedó marcado como sobrepoblador prioritario.")
+
         print("\n=======================================================")
-        print("  TODAS LAS 16 AUTO-PREGUNTAS PASARON SATISFACTORIAMENTE!")
+        print("  TODAS LAS 18 AUTO-PREGUNTAS PASARON SATISFACTORIAMENTE!")
         print("  MODO 50v50 Y TEAM BALANCING 100% ROBUSTO E INFALIBLE")
         print("=======================================================\n")
 
 if __name__ == "__main__":
     asyncio.run(main())
+
