@@ -363,6 +363,25 @@ async def mode_50v50_loop():
 
             if is_enabled:
                 now_ts = time.time()
+
+                # Dynamically resolve exact faction names and matchSeconds from live server status
+                red_name = "Valkyra"
+                green_name = "Manticore"
+                match_seconds = None
+                try:
+                    status_resp = await rcon_client.get_status()
+                    if status_resp:
+                        match_seconds = getattr(status_resp, "matchSeconds", None)
+                        if status_resp.factionScores:
+                            for fs in status_resp.factionScores:
+                                fn = (fs.name or "").strip()
+                                if fn.lower().startswith("valk"):
+                                    red_name = fn
+                                elif fn.lower().startswith("mant"):
+                                    green_name = fn
+                except Exception as err_status:
+                    logger.warning(f"[50v50 Mode] Could not get live faction names from status: {err_status}")
+
                 # Reset tracking on new match transition
                 if current_match_id != last_50v50_match_id:
                     logger.info(f"[50v50 Mode] New match detected ({current_match_id}). Resetting team tracking & broadcasts.")
@@ -384,23 +403,6 @@ async def mode_50v50_loop():
                 for sid in expired:
                     del recently_swapped_players[sid]
 
-                # Dynamically resolve exact faction names from live server status (e.g. "Valkyra" vs "Valkyre")
-                red_name = "Valkyra"
-                green_name = "Manticore"
-                match_seconds = None
-                try:
-                    status_resp = await rcon_client.get_status()
-                    if status_resp:
-                        match_seconds = getattr(status_resp, "matchSeconds", None)
-                        if status_resp.factionScores:
-                            for fs in status_resp.factionScores:
-                                fn = (fs.name or "").strip()
-                                if fn.lower().startswith("valk"):
-                                    red_name = fn
-                                elif fn.lower().startswith("mant"):
-                                    green_name = fn
-                except Exception as err_status:
-                    logger.warning(f"[50v50 Mode] Could not get live faction names from status: {err_status}")
 
                 # Broadcast announcements for warmup (10s) and active autobalance
                 if match_seconds is not None:
@@ -604,20 +606,22 @@ async def mode_50v50_loop():
 
                 # Step 3: Active Rebalancing (Hard cap of 50 per team & Max 6 difference)
                 def get_rebalance_candidates(player_list):
-                    candidates = []
-                    for pl in player_list:
-                        if not pl.steamId:
-                            continue
-                        # Protect players swapped in the last 20s
-                        if (now_ts - recently_swapped_players.get(pl.steamId, 0)) < 20:
-                            continue
-                        candidates.append(pl)
-                    # If all players had recent cooldown, don't stall: allow any player with steamId
-                    if not candidates and player_list:
-                        candidates = [pl for pl in player_list if pl.steamId]
-                    # Least disruptive: sort by cash ascending, kills ascending
-                    candidates.sort(key=lambda x: (x.cash or 0, x.kills or 0))
-                    return candidates
+                    valid = [pl for pl in player_list if pl.steamId]
+                    # Hierarchical candidate selection:
+                    # 1. Protect veterans (cash >= 2000 or kills >= 2) - they are playing/have vehicles
+                    # 2. Prefer players not swapped in last 20s (anti-ping-pong)
+                    # 3. Lowest cash first
+                    # 4. Lowest kills first
+                    def candidate_score(pl):
+                        cash = pl.cash or 0
+                        kills = pl.kills or 0
+                        is_veteran = 1 if (cash >= 2000 or kills >= 2) else 0
+                        is_recent = 1 if (now_ts - recently_swapped_players.get(pl.steamId, 0)) < 20 else 0
+                        return (is_veteran, is_recent, cash, kills)
+
+                    valid.sort(key=candidate_score)
+                    return valid
+
 
                 # 3A. Hard-cap enforcement: strictly enforce max 50 players per team (e.g. 70 vs 30)
                 if len(green_players) > 50 and len(red_players) < 50:

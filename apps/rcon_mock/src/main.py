@@ -24,33 +24,31 @@ def verify_auth(authorization: Optional[str] = Header(None)):
 from typing import Any, Dict
 
 mock_state: Dict[str, Any] = {
-    "score": 50,
+    "score": 10,
     "rotation": 0,
     "maps": ["Bakurani", "Desert Strike", "Urban Combat", "Jungle Ops"],
     "match_seconds": 600,
     "lonestar_score": 100,
     "manticore_score": 150,
-    "valkyre_score": 200
+    "valkyre_score": 200,
+    "auto_rotate": False
 }
 
 @app.get("/v1/status", response_model=schemas.Status)
 async def get_status(auth: str = Depends(verify_auth)):
-    # Simulate time passing/points
-    mock_state["score"] += 15
-    mock_state["match_seconds"] += 10
-    mock_state["lonestar_score"] += random.randint(1, 5)
-    mock_state["manticore_score"] += random.randint(1, 5)
-    mock_state["valkyre_score"] += random.randint(1, 5)
-    
-    if mock_state["score"] >= 100:
-        mock_state["score"] = 0
-        mock_state["rotation"] = (mock_state["rotation"] + 1) % len(mock_state["maps"])
-        mock_state["match_seconds"] = 0
-        mock_state["lonestar_score"] = 0
-        mock_state["manticore_score"] = 0
-        mock_state["valkyre_score"] = 0
+    if mock_state.get("auto_rotate", False):
+        mock_state["score"] += 1
+        mock_state["match_seconds"] += 1
+        if mock_state["score"] >= 1000:
+            mock_state["score"] = 0
+            mock_state["rotation"] = (mock_state["rotation"] + 1) % len(mock_state["maps"])
+            mock_state["match_seconds"] = 0
+            mock_state["lonestar_score"] = 0
+            mock_state["manticore_score"] = 0
+            mock_state["valkyre_score"] = 0
         
     current_map = mock_state["maps"][mock_state["rotation"]]
+
     
     return {
         "serverName": "Wardogs Mock Server",
@@ -307,4 +305,10 @@ async def set_players(players: list[dict]):
     global mock_players
     mock_players = players
     return {"ok": True, "total": len(mock_players)}
+
+@app.post("/mock/set_match_seconds")
+async def set_match_seconds(seconds: int = 0):
+    mock_state["match_seconds"] = seconds
+    return {"ok": True, "match_seconds": mock_state["match_seconds"]}
+
 
