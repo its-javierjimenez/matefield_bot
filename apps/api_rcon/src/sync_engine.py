@@ -12,6 +12,8 @@ import logging
 current_rotation_index: Optional[int] = None
 current_match_id: Optional[str] = None
 current_map: Optional[str] = None
+last_match_seconds: Optional[int] = None
+server_was_reconnected: bool = False
 
 logger = logging.getLogger("sync_engine")
 logger.setLevel(logging.INFO)
@@ -28,7 +30,7 @@ player_team_history: dict[str, dict] = {}
 recently_swapped_players: dict[str, float] = {}
 
 async def poll_rcon():
-    global current_rotation_index, current_match_id, current_map
+    global current_rotation_index, current_match_id, current_map, last_match_seconds, server_was_reconnected
 
     
     logger.info("Starting RCON Polling Engine...")
@@ -49,13 +51,30 @@ async def poll_rcon():
             status = await rcon_client.get_status()
             players = await rcon_client.get_players()
             
-            # Determine if we have a match rotation
+            # Determine if we have a match rotation or server reboot
             rotation_index = status.rotation.nowIndex if status.rotation else None
             map_name = status.map or "Unknown"
+            match_seconds = status.matchSeconds if status.matchSeconds is not None else 0
+
+            # Detect new match / rotation / server reboot:
+            # 1. First poll ever (current_match_id is None)
+            # 2. Rotation index changed (rotation_index != current_rotation_index)
+            # 3. Map changed directly (current_map is not None and map_name != current_map)
+            # 4. Match clock dropped significantly (server reboot or match restart on same map)
+            # 5. Server was offline and reconnected (server_was_reconnected)
+            is_new_match = (
+                current_match_id is None
+                or (rotation_index is not None and rotation_index != current_rotation_index)
+                or (current_map is not None and map_name != current_map)
+                or (last_match_seconds is not None and match_seconds < (last_match_seconds - 30))
+                or server_was_reconnected
+            )
+            server_was_reconnected = False
+            last_match_seconds = match_seconds
             
             async with AsyncSession(engine) as session:
                 # Check for match start/change
-                if current_match_id is None or rotation_index != current_rotation_index:
+                if is_new_match:
                     logger.info(f"[Match Engine] Match transition! Old map: {current_map}, New map: {map_name} (Rotation {rotation_index})")
                     
                     # Close old match if it exists
@@ -71,7 +90,6 @@ async def poll_rcon():
                             session.add(old_match)
                     
                     # Start new match
-                    match_seconds = status.matchSeconds or 0
                     real_start_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=match_seconds)
                     
                     new_match = Match(
@@ -301,6 +319,7 @@ async def poll_rcon():
 
         except Exception as e:
             logger.error(f"[Match Engine] Error polling RCON in sync_engine: {e}")
+            server_was_reconnected = True
             await asyncio.sleep(10)
 
 

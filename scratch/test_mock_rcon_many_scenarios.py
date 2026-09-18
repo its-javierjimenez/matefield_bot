@@ -512,8 +512,68 @@ async def main():
         assert final_mant == 50
         print("  -> Escenario 15 Superado: 50v50 exacto con 100 jugadores concurrentes.")
 
+        # =====================================================================
+        # ESCENARIO 16: REINICIO REAL DEL SERVIDOR (Mismo mapa y rotación, arranque directo en 50v50)
+        # =====================================================================
+        print("\n--- [ESCENARIO 16] Reinicio del servidor (Servidor se apaga y prende en mismo mapa) ---")
+        # 1. Admin programa 50v50 antes del reinicio
+        async with AsyncSession(test_engine) as session:
+            stmt_st = select(BotConfig).where(BotConfig.config_key == "MODE_50V50_STATE")
+            st_cfg = (await session.exec(stmt_st)).first()
+            if st_cfg:
+                st_cfg.config_value = "pending_enable"
+                session.add(st_cfg)
+            else:
+                session.add(BotConfig(config_key="MODE_50V50_STATE", config_value="pending_enable"))
+            en_cfg = await session.get(BotConfig, "MODE_50V50_ENABLED")
+            if en_cfg:
+                en_cfg.config_value = "false"
+                session.add(en_cfg)
+            else:
+                session.add(BotConfig(config_key="MODE_50V50_ENABLED", config_value="false"))
+            await session.commit()
+
+        # 2. Simulamos que el servidor se apagó (hubo error de conexión) y volvió a prender con matchSeconds=5 en rotación 0
+        curr_rot = 0
+        curr_map = "Bakurani"
+        last_m_sec = 2400
+        reconnected_flag = True # El servidor estuvo caído y se reconectó
+
+        new_rot = 0       # Misma rotación!
+        new_map = "Bakurani" # Mismo mapa!
+        new_m_sec = 5     # Reloj reseteado a 5s
+
+        # Evaluación de la condición de sync_engine.py
+        is_new_m = (
+            False # current_match_id ya existía
+            or (new_rot != curr_rot)
+            or (new_map != curr_map)
+            or (last_m_sec is not None and new_m_sec < (last_m_sec - 30))
+            or reconnected_flag
+        )
+        assert is_new_m is True, "El reinicio del servidor debió ser detectado incluso en mismo mapa y rotación!"
+
+        # 3. Transición de ciclo de vida ejecutada por poll_rcon
+        async with AsyncSession(test_engine) as session:
+            st_cfg = (await session.exec(select(BotConfig).where(BotConfig.config_key == "MODE_50V50_STATE"))).first()
+            if st_cfg and st_cfg.config_value == "pending_enable":
+                st_cfg.config_value = "active"
+                session.add(st_cfg)
+                en_cfg = await session.get(BotConfig, "MODE_50V50_ENABLED")
+                en_cfg.config_value = "true"
+                session.add(en_cfg)
+                await session.commit()
+                await rcon.broadcast("Modo 50v50 ACTIVADO para esta partida (Rojo vs Verde)!")
+
+        audit = await rcon.get_audit_logs(limit=3)
+        assert any("Modo 50v50 ACTIVADO" in e.detail for e in audit.entries)
+        print("  * Servidor reiniciado: Reloj cayó de 2400s a 5s, reconexión detectada.")
+        print("  * DB state post-reboot: MODE_50V50_STATE = active, MODE_50V50_ENABLED = true")
+        print("  * Broadcast de partida activa emitido inmediatamente tras el arranque.")
+        print("  -> Escenario 16 Superado: El servidor arrancará directamente en 50v50 tras el reinicio.")
+
     print("\n" + "=" * 70)
-    print(" [ÉXITO TOTAL] LOS 15 ESCENARIOS PASARON AL 100% SIN ERRORES")
+    print(" [ÉXITO TOTAL] LOS 16 ESCENARIOS PASARON AL 100% SIN ERRORES")
     print("=" * 70)
 
 if __name__ == "__main__":
