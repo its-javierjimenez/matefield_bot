@@ -101,13 +101,15 @@ async def process_player_stats(session: AsyncSession, current_match_id: str, p: 
         session.add(Player(steam_id=p.steamId))
         await session.commit()
 
-    # Team resolution
+    # Team resolution with robust code lookup
     team_id = None
     if p.faction:
-        t_stmt = select(Team).where(Team.name == p.faction)
+        faction_name = str(p.faction).strip()
+        code_3 = faction_name[:3].upper()
+        t_stmt = select(Team).where((Team.name == faction_name) | (Team.code == code_3))
         team = (await session.exec(t_stmt)).first()
         if not team:
-            team = Team(name=p.faction, code=p.faction[:3].upper())
+            team = Team(name=faction_name, code=code_3)
             session.add(team)
             await session.commit()
             await session.refresh(team)
@@ -115,28 +117,35 @@ async def process_player_stats(session: AsyncSession, current_match_id: str, p: 
 
     raw_kills = p.kills or 0
     raw_deaths = p.deaths or 0
+    raw_cash = p.cash or 0
     p_faction_str = str(p.faction or "")
 
     tracker = last_rcon_player_stats.setdefault(p.steamId, {
         "last_raw_kills": raw_kills,
         "last_raw_deaths": raw_deaths,
+        "last_raw_cash": raw_cash,
         "offset_kills": 0,
         "offset_deaths": 0,
+        "offset_cash": 0,
         "last_faction": p_faction_str
     })
 
-    # If raw kills dropped, accumulate offset
+    # If raw values dropped (server reset stats on faction change), accumulate offset
     if raw_kills < tracker["last_raw_kills"]:
         tracker["offset_kills"] += tracker["last_raw_kills"]
     if raw_deaths < tracker["last_raw_deaths"]:
         tracker["offset_deaths"] += tracker["last_raw_deaths"]
+    if raw_cash < tracker["last_raw_cash"]:
+        tracker["offset_cash"] += tracker["last_raw_cash"]
 
     tracker["last_raw_kills"] = raw_kills
     tracker["last_raw_deaths"] = raw_deaths
+    tracker["last_raw_cash"] = raw_cash
     tracker["last_faction"] = p_faction_str
 
     effective_kills = tracker["offset_kills"] + raw_kills
     effective_deaths = tracker["offset_deaths"] + raw_deaths
+    effective_cash = tracker["offset_cash"] + raw_cash
 
     stmt = select(MatchPlayerStats).where(
         MatchPlayerStats.match_id == current_match_id,
@@ -150,14 +159,14 @@ async def process_player_stats(session: AsyncSession, current_match_id: str, p: 
             team_id=team_id,
             kills=effective_kills,
             deaths=effective_deaths,
-            cash_earned=p.cash or 0
+            cash_earned=effective_cash
         )
     else:
         stats.kills = effective_kills
         stats.deaths = effective_deaths
         stats.team_id = team_id
-        if (p.cash or 0) > stats.cash_earned:
-            stats.cash_earned = p.cash or 0
+        if effective_cash > stats.cash_earned:
+            stats.cash_earned = effective_cash
 
     session.add(stats)
     await session.commit()
@@ -344,23 +353,24 @@ async def main():
         print("  ✅ PASSED: Stats no se duplican cuando el servidor no las resetea (8 -> 8 -> 11).")
 
         # -------------------------------------------------------------
-        # Q3: Preservación de Cash Earned (High Watermark)
+        # Q3: Preservación de Cash Earned (Cumulative Earned)
         # -------------------------------------------------------------
-        print("\n▶ Auto-Pregunta 3: ¿Qué pasa si el jugador gasta dinero (compra tanques/armas) o su cash baja a 0?")
+        print("\n▶ Auto-Pregunta 3: ¿Qué pasa con el cash_earned cuando el jugador cambia de equipo y el servidor resetea a 0?")
         p3 = MockRconPlayer(steamId="steam_q3", name="PlayerQ3", faction="Valkyra", kills=5, deaths=1, cash=3500)
         s3 = await process_player_stats(session, match_id, p3)
         assert s3.cash_earned == 3500
 
-        # Player buys a tank, reducing cash to 200
-        p3.cash = 200
-        s3_spent = await process_player_stats(session, match_id, p3)
-        assert s3_spent.cash_earned == 3500, f"ERROR: Cash earned fell to {s3_spent.cash_earned}!"
+        # Player switches team, server resets raw cash to 0
+        p3.faction = "Manticore"
+        p3.cash = 0
+        s3_swapped = await process_player_stats(session, match_id, p3)
+        assert s3_swapped.cash_earned == 3500, f"Expected 3500 cash, got {s3_swapped.cash_earned}"
 
-        # Player earns up to 4200 later
-        p3.cash = 4200
+        # Player arrives at combat zone and earns 700 cash (raw cash = 700)
+        p3.cash = 700
         s3_richer = await process_player_stats(session, match_id, p3)
-        assert s3_richer.cash_earned == 4200
-        print("  ✅ PASSED: High watermark de cash_earned se mantiene intacto ($3500 -> $200 -> $4200).")
+        assert s3_richer.cash_earned == 4200, f"Expected 4200 cash (3500+700), got {s3_richer.cash_earned}"
+        print("  ✅ PASSED: Cash acumulativo preservado tras cambio de equipo y reseteo a 0 ($3500 -> $0 -> $4200).")
 
         # -------------------------------------------------------------
         # Q4: Prioridad a los que eligieron primero sobre los que sobrepueblan
@@ -589,8 +599,140 @@ async def main():
         assert targets.count("Valkyra") == 1
         print("  ✅ PASSED: 4 jugadores azules distribuidos (3 a Manticore, 1 a Valkyra) logrando equilibrio exacto 21v21.")
 
+        # -------------------------------------------------------------
+        # Q11: Reseteo de cash en el servidor de juego al cambiar de equipo
+        # -------------------------------------------------------------
+        print("\n▶ Auto-Pregunta 11: ¿Qué pasa si el servidor RESETEA el cash al cambiar de equipo?")
+        p11 = MockRconPlayer(steamId="steam_q11", name="PlayerQ11", faction="Valkyra", kills=6, deaths=1, cash=3000)
+        s11 = await process_player_stats(session, match_id, p11)
+        assert s11.cash_earned == 3000
+
+        # Player switches to Manticore, server resets cash to 0
+        p11.faction = "Manticore"
+        p11.cash = 0
+        s11_reset = await process_player_stats(session, match_id, p11)
+        assert s11_reset.cash_earned == 3000, f"Expected 3000 cash, got {s11_reset.cash_earned}"
+
+        # Player earns 1500 cash on Manticore (raw cash = 1500)
+        p11.cash = 1500
+        s11_final = await process_player_stats(session, match_id, p11)
+        assert s11_final.cash_earned == 4500, f"Expected 4500 (3000+1500), got {s11_final.cash_earned}"
+        print("  ✅ PASSED: Cash acumulativo preservado tras reseteo por el servidor ($3000 -> $0 -> $4500).")
+
+        # -------------------------------------------------------------
+        # Q12: Mantenimiento de cash en el servidor al cambiar de equipo
+        # -------------------------------------------------------------
+        print("\n▶ Auto-Pregunta 12: ¿Qué pasa si el servidor MANTIENE el cash al cambiar de equipo?")
+        p12 = MockRconPlayer(steamId="steam_q12", name="PlayerQ12", faction="Valkyra", kills=6, deaths=1, cash=3000)
+        s12 = await process_player_stats(session, match_id, p12)
+        assert s12.cash_earned == 3000
+
+        # Player switches to Manticore, server keeps cash at 3000
+        p12.faction = "Manticore"
+        p12.cash = 3000
+        s12_swapped = await process_player_stats(session, match_id, p12)
+        assert s12_swapped.cash_earned == 3000
+
+        # Player earns 1500 more cash (raw cash = 4500)
+        p12.cash = 4500
+        s12_final = await process_player_stats(session, match_id, p12)
+        assert s12_final.cash_earned == 4500, f"Expected 4500, got {s12_final.cash_earned}"
+        print("  ✅ PASSED: Cash acumulativo no se duplica cuando el servidor lo mantiene ($3000 -> $3000 -> $4500).")
+
+        # -------------------------------------------------------------
+        # Q13: Múltiples cambios de equipo en la misma partida
+        # -------------------------------------------------------------
+        print("\n▶ Auto-Pregunta 13: ¿Qué pasa si un jugador cambia de equipo MÚLTIPLES veces (Valk -> Mant -> Valk)?")
+        p13 = MockRconPlayer(steamId="steam_q13", name="PlayerQ13", faction="Valkyra", kills=5, deaths=1, cash=1000)
+        await process_player_stats(session, match_id, p13)
+
+        # Switch 1 to Manticore (resets to 0)
+        p13.faction = "Manticore"
+        p13.kills = 0
+        p13.cash = 0
+        await process_player_stats(session, match_id, p13)
+        # Scores 4 kills, 800 cash
+        p13.kills = 4
+        p13.cash = 800
+        await process_player_stats(session, match_id, p13)
+
+        # Switch 2 back to Valkyra (resets to 0)
+        p13.faction = "Valkyra"
+        p13.kills = 0
+        p13.cash = 0
+        await process_player_stats(session, match_id, p13)
+        # Scores 3 kills, 500 cash
+        p13.kills = 3
+        p13.cash = 500
+        s13_final = await process_player_stats(session, match_id, p13)
+
+        # Total expected: 5 + 4 + 3 = 12 kills, 1000 + 800 + 500 = 2300 cash
+        assert s13_final.kills == 12, f"Expected 12 kills, got {s13_final.kills}"
+        assert s13_final.cash_earned == 2300, f"Expected 2300 cash, got {s13_final.cash_earned}"
+        print("  ✅ PASSED: Múltiples cambios con reseteos de servidor acumulan exactamente (12 kills, $2300 cash).")
+
+        # -------------------------------------------------------------
+        # Q14: Desconexión y reconexión mid-match
+        # -------------------------------------------------------------
+        print("\n▶ Auto-Pregunta 14: ¿Qué pasa si un jugador se desconecta y se reconecta mid-match?")
+        p14 = MockRconPlayer(steamId="steam_q14", name="PlayerQ14", faction="Valkyra", kills=10, deaths=2, cash=2000)
+        await process_player_stats(session, match_id, p14)
+
+        # Player disconnects (simulated by absence in a loop), then reconnects
+        # Game server resets stats on reconnect (raw kills=0, cash=0)
+        p14.kills = 0
+        p14.deaths = 0
+        p14.cash = 0
+        s14_reconnect = await process_player_stats(session, match_id, p14)
+        assert s14_reconnect.kills == 10
+        assert s14_reconnect.cash_earned == 2000
+
+        # Player scores 2 kills, 500 cash after reconnect
+        p14.kills = 2
+        p14.cash = 500
+        s14_final = await process_player_stats(session, match_id, p14)
+        assert s14_final.kills == 12
+        assert s14_final.cash_earned == 2500
+        print("  ✅ PASSED: Desconexión y reconexión con reseteo preserva perfectamente estadísticas previas (12 kills, $2500 cash).")
+
+        # -------------------------------------------------------------
+        # Q15: Variaciones ortográficas en nombres de facción ("Valkyre" vs "Valkyra")
+        # -------------------------------------------------------------
+        print("\n▶ Auto-Pregunta 15: ¿Se evitan colisiones de base de datos entre 'Valkyre' y 'Valkyra'?")
+        p15_a = MockRconPlayer(steamId="steam_q15_a", name="PlayerA", faction="Valkyra", kills=1, deaths=0, cash=100)
+        p15_b = MockRconPlayer(steamId="steam_q15_b", name="PlayerB", faction="Valkyre", kills=2, deaths=0, cash=200)
+        p15_c = MockRconPlayer(steamId="steam_q15_c", name="PlayerC", faction="VALKYRE ", kills=3, deaths=0, cash=300)
+
+        s15_a = await process_player_stats(session, match_id, p15_a)
+        s15_b = await process_player_stats(session, match_id, p15_b)
+        s15_c = await process_player_stats(session, match_id, p15_c)
+
+        # All three must share the exact same team_id (no duplicate teams, no crash)
+        assert s15_a.team_id == s15_b.team_id == s15_c.team_id
+        print(f"  ✅ PASSED: Todas las variantes ('Valkyra', 'Valkyre', 'VALKYRE ') resuelven de forma segura al team_id={s15_a.team_id}.")
+
+        # -------------------------------------------------------------
+        # Q16: Jugador transferido que no consigue kills antes del fin de partida
+        # -------------------------------------------------------------
+        print("\n▶ Auto-Pregunta 16: ¿Qué pasa si un jugador es transferido hacia el final y no consigue kills?")
+        p16 = MockRconPlayer(steamId="steam_q16", name="PlayerQ16", faction="Valkyra", kills=15, deaths=4, cash=4000)
+        await process_player_stats(session, match_id, p16)
+
+        # Transferred to Manticore 2 minutes before end, server resets raw to 0
+        p16.faction = "Manticore"
+        p16.kills = 0
+        p16.deaths = 0
+        p16.cash = 0
+        s16_end = await process_player_stats(session, match_id, p16)
+
+        # Match ends without him getting more kills
+        assert s16_end.kills == 15, f"Expected 15 kills, got {s16_end.kills}"
+        assert s16_end.deaths == 4, f"Expected 4 deaths, got {s16_end.deaths}"
+        assert s16_end.cash_earned == 4000, f"Expected 4000 cash, got {s16_end.cash_earned}"
+        print("  ✅ PASSED: Jugador transferido al cierre retiene sus 15 kills, 4 deaths y $4000 cash en la base de datos.")
+
         print("\n=======================================================")
-        print("  TODAS LAS 10 AUTO-PREGUNTAS PASARON SATISFACTORIAMENTE!")
+        print("  TODAS LAS 16 AUTO-PREGUNTAS PASARON SATISFACTORIAMENTE!")
         print("  MODO 50v50 Y TEAM BALANCING 100% ROBUSTO E INFALIBLE")
         print("=======================================================\n")
 

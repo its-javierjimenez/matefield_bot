@@ -142,43 +142,53 @@ async def poll_rcon():
                         if current_match_id:
                             team_id = None
                             if p.faction:
-                                faction_name = str(p.faction)
-                                t_stmt = select(Team).where(Team.name == faction_name)
+                                faction_name = str(p.faction).strip()
+                                code_3 = faction_name[:3].upper()
+                                t_stmt = select(Team).where((Team.name == faction_name) | (Team.code == code_3))
                                 team = (await session.exec(t_stmt)).first()
                                 if not team:
-                                    team = Team(name=faction_name, code=faction_name[:3].upper())
+                                    team = Team(name=faction_name, code=code_3)
                                     session.add(team)
                                     await session.commit()
                                     await session.refresh(team)
                                 team_id = team.id
 
-                            # Handle server stat resets (if game resets kills/deaths when player switches team)
+                            # Handle server stat resets (if game resets kills/deaths/cash when player switches team)
                             raw_kills = p.kills or 0
                             raw_deaths = p.deaths or 0
+                            raw_cash = p.cash or 0
                             p_faction_str = str(p.faction or "")
                             
                             tracker = last_rcon_player_stats.setdefault(p.steamId, {
                                 "last_raw_kills": raw_kills,
                                 "last_raw_deaths": raw_deaths,
+                                "last_raw_cash": raw_cash,
                                 "offset_kills": 0,
                                 "offset_deaths": 0,
+                                "offset_cash": 0,
                                 "last_faction": p_faction_str
                             })
                             
-                            # If raw kills dropped (e.g. 10 -> 0 after faction change), accumulate offset
+                            # If raw values dropped (e.g. server reset stats on faction change), accumulate offset
                             if raw_kills < tracker["last_raw_kills"]:
                                 tracker["offset_kills"] += tracker["last_raw_kills"]
                                 logger.info(f"[Stats Engine] Server reset kills for {p.steamId} on faction change ({tracker['last_raw_kills']} -> {raw_kills}). Accumulated offset: {tracker['offset_kills']}")
                                 
                             if raw_deaths < tracker["last_raw_deaths"]:
                                 tracker["offset_deaths"] += tracker["last_raw_deaths"]
+
+                            if raw_cash < tracker["last_raw_cash"]:
+                                tracker["offset_cash"] += tracker["last_raw_cash"]
+                                logger.info(f"[Stats Engine] Server reset cash for {p.steamId} on faction change ({tracker['last_raw_cash']} -> {raw_cash}). Accumulated cash offset: {tracker['offset_cash']}")
                                 
                             tracker["last_raw_kills"] = raw_kills
                             tracker["last_raw_deaths"] = raw_deaths
+                            tracker["last_raw_cash"] = raw_cash
                             tracker["last_faction"] = p_faction_str
                             
                             effective_kills = tracker["offset_kills"] + raw_kills
                             effective_deaths = tracker["offset_deaths"] + raw_deaths
+                            effective_cash = tracker["offset_cash"] + raw_cash
 
                             stmt = select(MatchPlayerStats).where(
                                 MatchPlayerStats.match_id == current_match_id,
@@ -192,17 +202,14 @@ async def poll_rcon():
                                     team_id=team_id,
                                     kills=effective_kills,
                                     deaths=effective_deaths,
-                                    cash_earned=p.cash or 0
+                                    cash_earned=effective_cash
                                 )
                             else:
                                 stats.kills = effective_kills
                                 stats.deaths = effective_deaths
                                 stats.team_id = team_id
-                                
-                                # Track highest watermark for cash_earned to avoid resetting when buying vehicles or changing teams
-                                current_cash = p.cash or 0
-                                if current_cash > stats.cash_earned:
-                                    stats.cash_earned = current_cash
+                                if effective_cash > stats.cash_earned:
+                                    stats.cash_earned = effective_cash
                             
                             session.add(stats)
 
@@ -246,10 +253,12 @@ async def poll_rcon():
                                     continue
                                 
                                 # Get or create Team
-                                t_stmt = select(Team).where(Team.name == fs.name)
+                                fs_name = str(fs.name).strip()
+                                code_3 = fs_name[:3].upper()
+                                t_stmt = select(Team).where((Team.name == fs_name) | (Team.code == code_3))
                                 team = (await session.exec(t_stmt)).first()
                                 if not team:
-                                    team = Team(name=fs.name, code=fs.name[:3].upper())
+                                    team = Team(name=fs_name, code=code_3)
                                     session.add(team)
                                     await session.commit()
                                     await session.refresh(team)
