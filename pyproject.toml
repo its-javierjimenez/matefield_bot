@@ -2,7 +2,12 @@
 name = "server-rcon-automation"
 version = "0.1.0"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "api-rcon",
+    "discord-bot",
+    "rcon-mock",
+    "wardogs-schemas",
+]
 
 [tool.uv.workspace]
 members = [
@@ -11,3 +16,20 @@ members = [
     "apps/rcon_mock",
     "packages/wardogs_schemas",
 ]
+
+[tool.uv.sources]
+api-rcon = { workspace = true }
+discord-bot = { workspace = true }
+rcon-mock = { workspace = true }
+wardogs-schemas = { workspace = true }
+
+[tool.ty.environment]
+extra-paths = [
+    "apps/api_rcon",
+    "apps/discord_bot",
+    "packages/wardogs_schemas/src",
+]
+
+[tool.ty.rules]
+unresolved-import = "warn"
+unresolved-attribute = "warn"
