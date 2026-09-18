@@ -214,6 +214,12 @@ class APIClient:
         except Exception:
             return None
 
+    async def get_mode_50v50_status(self) -> Dict[str, Any]:
+        try:
+            return await self._request("GET", "/api/v1/mode50v50")
+        except Exception as e:
+            return {"state": "error", "enabled": False, "pending": False, "message": str(e)}
+
     async def get_mode_50v50(self) -> bool:
         try:
             res = await self._request("GET", "/api/v1/mode50v50")
@@ -224,4 +230,5 @@ class APIClient:
     async def set_mode_50v50(self, enabled: bool) -> Dict[str, Any]:
         endpoint = "/api/v1/mode50v50/enable" if enabled else "/api/v1/mode50v50/disable"
         return await self._request("POST", endpoint)
+
 

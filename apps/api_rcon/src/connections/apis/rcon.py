@@ -193,6 +193,59 @@ class RCONClient:
         payload = {"faction": faction}
         await self._request("PATCH", f"/v1/players/{steam_id}", json=payload)
 
+    async def set_team_balancing(self, enabled: bool, threshold: int = 1) -> None:
+        config = await self.get_config()
+        text = config.text or ""
+        revision = config.revision or ""
+        lines = text.split('\n')
+        
+        target_section = "[/Script/WDGame.WDGameStateSession]"
+        lock_val = "true" if enabled else "false"
+        thresh_val = str(threshold)
+        
+        new_lines = []
+        section_idx = -1
+        in_target_section = False
+        has_lock = False
+        has_thresh = False
+        
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('[') and stripped.endswith(']'):
+                in_target_section = (stripped.lower() == target_section.lower())
+                if in_target_section:
+                    section_idx = len(new_lines)
+                new_lines.append(line)
+                continue
+                
+            if in_target_section:
+                if stripped.startswith('bLockOverpopulatedTeamsConfig'):
+                    new_lines.append(f"bLockOverpopulatedTeamsConfig={lock_val}")
+                    has_lock = True
+                    continue
+                elif stripped.startswith('OverpopulatedTeamThresholdConfig'):
+                    new_lines.append(f"OverpopulatedTeamThresholdConfig={thresh_val}")
+                    has_thresh = True
+                    continue
+            new_lines.append(line)
+            
+        if section_idx == -1:
+            new_lines.append("")
+            new_lines.append(target_section)
+            new_lines.append(f"bLockOverpopulatedTeamsConfig={lock_val}")
+            new_lines.append(f"OverpopulatedTeamThresholdConfig={thresh_val}")
+        else:
+            insertions = []
+            if not has_thresh:
+                insertions.append(f"OverpopulatedTeamThresholdConfig={thresh_val}")
+            if not has_lock:
+                insertions.append(f"bLockOverpopulatedTeamsConfig={lock_val}")
+            for ins in insertions:
+                new_lines.insert(section_idx + 1, ins)
+                    
+        new_text = '\n'.join(new_lines)
+        await self.update_config(revision, new_text)
+
 # Instance to be imported by the router
 rcon_client = RCONClient(
     base_url=ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_URL,

@@ -184,21 +184,58 @@ async def switch_faction_patch(steam_id: str, req: schemas.FactionRequest, auth:
 async def switch_faction_post(steam_id: str, req: schemas.FactionRequest, auth: str = Depends(verify_auth)):
     return await switch_faction_patch(steam_id, req, auth)
 
+mock_config_state = {
+    "revision": "rev100",
+    "text": (
+        "[/Script/WDGame.WDGameSession]\n"
+        "ServerName=Wardogs Mock Server\n"
+        "MaxReservedSlots=20\n\n"
+        "[/Script/WDGame.WDGameStateSession]\n"
+        "bLockOverpopulatedTeamsConfig=true\n"
+        "OverpopulatedTeamThresholdConfig=1\n"
+    )
+}
+
 @app.get("/v1/config", response_model=schemas.Config1)
 async def get_config(auth: str = Depends(verify_auth)):
     return {
-        "text": "Server config text",
-        "revision": "rev123"
+        "text": mock_config_state["text"],
+        "revision": mock_config_state["revision"]
     }
 
 @app.put("/v1/config", response_model=schemas.ConfigResult)
 async def update_config(req: Request, auth: str = Depends(verify_auth)):
     body = await req.body()
+    new_text = body.decode("utf-8")
+    mock_config_state["text"] = new_text
+    rev_num = 100
+    try:
+        rev_num = int(mock_config_state["revision"].replace("rev", "")) + 1
+    except Exception:
+        rev_num += 1
+    new_rev = f"rev{rev_num}"
+    mock_config_state["revision"] = new_rev
     add_audit_log("ConfigUpdate", f"Configuration was updated: {len(body)} bytes")
     return {
         "success": True,
-        "newRevision": "rev124"
+        "newRevision": new_rev
     }
+
+@app.post("/mock/next_match")
+async def force_next_match():
+    mock_state["score"] = 0
+    mock_state["rotation"] = (mock_state["rotation"] + 1) % len(mock_state["maps"])
+    mock_state["match_seconds"] = 0
+    mock_state["lonestar_score"] = 0
+    mock_state["manticore_score"] = 0
+    mock_state["valkyre_score"] = 0
+    add_audit_log("MatchTransition", f"Forced next match: {mock_state['maps'][mock_state['rotation']]}")
+    return {
+        "ok": True,
+        "new_rotation": mock_state["rotation"],
+        "map": mock_state["maps"][mock_state["rotation"]]
+    }
+
 
 @app.post("/mock/seed_full_server")
 async def seed_full_server(total: int = 100):

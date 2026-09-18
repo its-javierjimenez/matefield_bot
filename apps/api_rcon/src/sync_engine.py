@@ -79,6 +79,40 @@ async def poll_rcon():
                     current_match_id = new_match.id
                     current_rotation_index = rotation_index
                     current_map = map_name
+
+                    # 50v50 Mode lifecycle transition on new match
+                    stmt_state = select(BotConfig).where(BotConfig.config_key == "MODE_50V50_STATE")
+                    cfg_state = (await session.exec(stmt_state)).first()
+                    if cfg_state and cfg_state.config_value:
+                        cur_state = cfg_state.config_value.strip().lower()
+                        if cur_state == "pending_enable":
+                            cfg_state.config_value = "active"
+                            session.add(cfg_state)
+                            cfg_en = await session.get(BotConfig, "MODE_50V50_ENABLED")
+                            if cfg_en:
+                                cfg_en.config_value = "true"
+                                session.add(cfg_en)
+                            else:
+                                session.add(BotConfig(config_key="MODE_50V50_ENABLED", config_value="true"))
+                            logger.info("[50v50 Mode] New match started! 50v50 Mode is now ACTIVE.")
+                            try:
+                                await rcon_client.broadcast("Modo 50v50 ACTIVADO para esta partida (Rojo vs Verde)!")
+                            except Exception:
+                                pass
+                        elif cur_state == "pending_disable":
+                            cfg_state.config_value = "inactive"
+                            session.add(cfg_state)
+                            cfg_en = await session.get(BotConfig, "MODE_50V50_ENABLED")
+                            if cfg_en:
+                                cfg_en.config_value = "false"
+                                session.add(cfg_en)
+                            else:
+                                session.add(BotConfig(config_key="MODE_50V50_ENABLED", config_value="false"))
+                            logger.info("[50v50 Mode] New match started! 50v50 Mode is now INACTIVE.")
+                            try:
+                                await rcon_client.broadcast("Modo 50v50 FINALIZADO. Volviendo a 33v33v33.")
+                            except Exception:
+                                pass
                 
                 # Sync players
                 if players and players.players:
@@ -223,19 +257,33 @@ async def poll_rcon():
             await asyncio.sleep(10)
 
 
+# In-memory dict to track recently transferred players and prevent ping-ponging
+recently_swapped_players: dict[str, float] = {}
+
 async def mode_50v50_loop():
-    logger.info("Starting 50v50 Mode Engine (Checks every 5 seconds)...")
+    logger.info("Starting 50v50 Mode Engine (Checks every 6 seconds)...")
     while True:
         try:
             is_enabled = False
             async with AsyncSession(engine) as session:
-                stmt = select(BotConfig).where(BotConfig.config_key == "MODE_50V50_ENABLED")
-                config = (await session.exec(stmt)).first()
-                if config and config.config_value:
-                    val = config.config_value.strip().lower()
-                    is_enabled = val in ("true", "1", "enabled", "yes", "on")
+                stmt_state = select(BotConfig).where(BotConfig.config_key == "MODE_50V50_STATE")
+                config_state = (await session.exec(stmt_state)).first()
+                if config_state and config_state.config_value:
+                    is_enabled = (config_state.config_value.strip().lower() == "active")
+                else:
+                    stmt = select(BotConfig).where(BotConfig.config_key == "MODE_50V50_ENABLED")
+                    config = (await session.exec(stmt)).first()
+                    if config and config.config_value:
+                        val = config.config_value.strip().lower()
+                        is_enabled = val in ("true", "1", "enabled", "yes", "on")
 
             if is_enabled:
+                now_ts = time.time()
+                # Purge expired cooldowns (> 120 seconds)
+                expired = [sid for sid, ts in recently_swapped_players.items() if now_ts - ts > 120]
+                for sid in expired:
+                    del recently_swapped_players[sid]
+
                 # Dynamically resolve exact faction names from live server status (e.g. "Valkyra" vs "Valkyre")
                 red_name = "Valkyra"
                 green_name = "Manticore"
@@ -255,38 +303,80 @@ async def mode_50v50_loop():
                 all_players = players_resp.players or []
                 
                 blue_players = []
-                valkyre_count = 0
-                manticore_count = 0
+                red_players = []
+                green_players = []
                 
                 for p in all_players:
                     f = (p.faction or "").strip().lower()
                     if f.startswith("lone"):
                         blue_players.append(p)
                     elif f.startswith("valk"):
-                        valkyre_count += 1
+                        red_players.append(p)
                     elif f.startswith("mant"):
-                        manticore_count += 1
+                        green_players.append(p)
+                    # NOTE: Players with "white" or spectator/none factions are strictly ignored
                 
+                # Step 1: Transfer any players in Lonestar (Blue) to whichever team is smaller
                 if blue_players:
-                    logger.info(f"[50v50 Mode] Found {len(blue_players)} players in Lonestar (Blue). Auto-balancing to Red vs Green... (Current: {red_name}={valkyre_count}, {green_name}={manticore_count})")
+                    logger.info(f"[50v50 Mode] Found {len(blue_players)} players in Lonestar (Blue). Transferring... ({red_name}={len(red_players)}, {green_name}={len(green_players)})")
                     for p in blue_players:
                         if not p.steamId:
                             continue
-                        if valkyre_count <= manticore_count:
+                        if len(red_players) <= len(green_players):
                             target_faction = red_name
-                            valkyre_count += 1
+                            red_players.append(p)
                         else:
                             target_faction = green_name
-                            manticore_count += 1
+                            green_players.append(p)
                             
                         try:
                             await rcon_client.switch_faction(p.steamId, target_faction)
+                            recently_swapped_players[p.steamId] = now_ts
                             logger.info(f"[50v50 Mode] Moved {p.name} ({p.steamId}) from Lonestar -> {target_faction}")
                         except Exception as err:
                             logger.error(f"[50v50 Mode] Failed to move {p.steamId} to {target_faction}: {err}")
 
+                # Step 2: Auto-teambalancing between Red and Green (since in-game balancing is unlocked)
+                # If difference is >= 2, move the newest players (lowest cash, lowest stats) from larger to smaller
+                diff = len(red_players) - len(green_players)
+                if abs(diff) >= 2:
+                    count_to_move = abs(diff) // 2
+                    if diff > 0:
+                        donor_team = red_players
+                        target_faction = green_name
+                        donor_name = red_name
+                    else:
+                        donor_team = green_players
+                        target_faction = red_name
+                        donor_name = green_name
+
+                    # Sort candidates: prioritize newest players (lowest cash, then lowest kills+deaths)
+                    # Exclude players who were recently swapped within last 60 seconds
+                    candidates = [p for p in donor_team if p.steamId and (now_ts - recently_swapped_players.get(p.steamId, 0) > 60)]
+                    # If all candidates have cooldown, allow any candidate with steamId
+                    if not candidates:
+                        candidates = [p for p in donor_team if p.steamId]
+
+                    # Sort key: 1) cash (0 cash first), 2) kills + deaths, 3) kills
+                    candidates.sort(key=lambda p: (
+                        p.cash if p.cash is not None else 0,
+                        (p.kills or 0) + (p.deaths or 0),
+                        p.kills or 0
+                    ))
+
+                    logger.info(f"[50v50 Mode] Teambalance triggered! {donor_name} has {len(donor_team)} vs {target_faction} ({len(donor_team) - abs(diff)}). Moving {count_to_move} newest player(s)...")
+
+                    for p in candidates[:count_to_move]:
+                        try:
+                            await rcon_client.switch_faction(p.steamId, target_faction)
+                            recently_swapped_players[p.steamId] = now_ts
+                            logger.info(f"[50v50 Mode] Rebalanced {p.name} ({p.steamId}, cash=${p.cash or 0}, K/D={p.kills or 0}/{p.deaths or 0}) {donor_name} -> {target_faction}")
+                        except Exception as err:
+                            logger.error(f"[50v50 Mode] Failed to rebalance {p.steamId} to {target_faction}: {err}")
+
         except Exception as e:
             logger.error(f"[50v50 Mode] Error in 50v50 loop: {e}")
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(6)
+
 
