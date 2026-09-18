@@ -327,8 +327,8 @@ async def poll_rcon():
 
 
 async def mode_50v50_loop():
-    logger.info("Starting 50v50 Mode Engine (Checks every 6 seconds)...")
-    warmup_15s_sent = False
+    logger.info("Starting 50v50 Mode Engine (Checks every 3 seconds)...")
+    warmup_10s_sent = False
     active_broadcast_sent = False
     last_50v50_match_id = None
 
@@ -369,14 +369,14 @@ async def mode_50v50_loop():
                     last_50v50_match_id = current_match_id
                     player_team_history.clear()
                     recently_swapped_players.clear()
-                    warmup_15s_sent = False
+                    warmup_10s_sent = False
                     active_broadcast_sent = False
-                elif match_seconds is not None and match_seconds < 15 and active_broadcast_sent:
+                elif match_seconds is not None and match_seconds < 10 and active_broadcast_sent:
                     # In-place match restart on same match/map
                     logger.info("[50v50 Mode] In-place match restart detected. Resetting team tracking & broadcasts.")
                     player_team_history.clear()
                     recently_swapped_players.clear()
-                    warmup_15s_sent = False
+                    warmup_10s_sent = False
                     active_broadcast_sent = False
 
                 # Purge expired cooldowns (> 120 seconds)
@@ -402,20 +402,20 @@ async def mode_50v50_loop():
                 except Exception as err_status:
                     logger.warning(f"[50v50 Mode] Could not get live faction names from status: {err_status}")
 
-                # Broadcast announcements for warmup (15s) and active autobalance
+                # Broadcast announcements for warmup (10s) and active autobalance
                 if match_seconds is not None:
-                    if match_seconds < 15 and not warmup_15s_sent:
+                    if match_seconds < 10 and not warmup_10s_sent:
                         try:
-                            await rcon_client.broadcast("Modo 50v50: 15s antes de autobalance")
-                            warmup_15s_sent = True
-                            logger.info("[50v50 Mode] Broadcast sent: 'Modo 50v50: 15s antes de autobalance'")
+                            await rcon_client.broadcast("Modo 50v50: 10s antes de autobalance")
+                            warmup_10s_sent = True
+                            logger.info("[50v50 Mode] Broadcast sent: 'Modo 50v50: 10s antes de autobalance'")
                         except Exception as err_bc:
-                            logger.warning(f"[50v50 Mode] Could not send 15s warmup broadcast: {err_bc}")
-                    elif match_seconds >= 15 and not active_broadcast_sent:
+                            logger.warning(f"[50v50 Mode] Could not send 10s warmup broadcast: {err_bc}")
+                    elif match_seconds >= 10 and not active_broadcast_sent:
                         try:
                             await rcon_client.broadcast("Modo 50v50: Autobalance ACTIVO")
                             active_broadcast_sent = True
-                            warmup_15s_sent = True
+                            warmup_10s_sent = True
                             logger.info("[50v50 Mode] Broadcast sent: 'Modo 50v50: Autobalance ACTIVO'")
                         except Exception as err_bc:
                             logger.warning(f"[50v50 Mode] Could not send active broadcast: {err_bc}")
@@ -535,7 +535,7 @@ async def mode_50v50_loop():
                             logger.error(f"[50v50 Mode] Failed to move {p.steamId} to {target_faction}: {err}")
 
                 # Step 2: Process new entrants joining Valkyra or Manticore
-                is_warmup = (match_seconds is not None and match_seconds < 15)
+                is_warmup = (match_seconds is not None and match_seconds < 10)
                 for p, f_canonical in new_entrants:
                     if not p.steamId:
                         continue
@@ -559,12 +559,12 @@ async def mode_50v50_loop():
                         should_redirect = True
                         redirect_reason = f"Equipo {f_canonical} lleno (50 jugadores)"
                     elif is_warmup:
-                        # Rule 2: Warmup (< 15s) allows freedom up to 6 players difference
+                        # Rule 2: Warmup (< 10s) allows freedom up to 6 players difference
                         if (chosen_count - opposite_count) >= 6:
                             should_redirect = True
                             redirect_reason = f"Diferencia máxima superada en calentamiento ({chosen_count} vs {opposite_count})"
                     else:
-                        # Rule 3: Post-warmup (>= 15s) Gatekeeper redirects if choosing overpopulated team
+                        # Rule 3: Post-warmup (>= 10s) Gatekeeper redirects if choosing overpopulated team
                         if chosen_count > opposite_count:
                             should_redirect = True
                             redirect_reason = f"Equipo sobrepoblado ({chosen_count} vs {opposite_count})"
@@ -608,10 +608,13 @@ async def mode_50v50_loop():
                     for pl in player_list:
                         if not pl.steamId:
                             continue
-                        # Protect players swapped in the last 30s
-                        if (now_ts - recently_swapped_players.get(pl.steamId, 0)) < 30:
+                        # Protect players swapped in the last 20s
+                        if (now_ts - recently_swapped_players.get(pl.steamId, 0)) < 20:
                             continue
                         candidates.append(pl)
+                    # If all players had recent cooldown, don't stall: allow any player with steamId
+                    if not candidates and player_list:
+                        candidates = [pl for pl in player_list if pl.steamId]
                     # Least disruptive: sort by cash ascending, kills ascending
                     candidates.sort(key=lambda x: (x.cash or 0, x.kills or 0))
                     return candidates
@@ -715,6 +718,6 @@ async def mode_50v50_loop():
         except Exception as e:
             logger.error(f"[50v50 Mode] Error in 50v50 loop: {e}")
 
-        await asyncio.sleep(6)
+        await asyncio.sleep(3)
 
 

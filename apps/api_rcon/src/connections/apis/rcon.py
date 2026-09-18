@@ -184,6 +184,8 @@ class RCONClient:
     async def switch_faction(self, steam_id: str, faction: str) -> None:
         payload = {"faction": faction}
         await self._request("PATCH", f"/v1/players/{steam_id}", json=payload)
+        async with self._cache_lock:
+            self._cache.pop("players", None)
 
     async def set_team_balancing(self, enabled: bool, threshold: int = 1) -> None:
         config = await self.get_config()
