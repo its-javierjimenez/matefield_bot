@@ -327,7 +327,7 @@ async def poll_rcon():
 
 
 async def mode_50v50_loop():
-    logger.info("Starting 50v50 Mode Engine (Checks every 3 seconds)...")
+    logger.info("Starting 50v50 Mode Engine (Checks every 6 seconds)...")
     warmup_10s_sent = False
     active_broadcast_sent = False
     last_50v50_match_id = None
@@ -718,6 +718,6 @@ async def mode_50v50_loop():
         except Exception as e:
             logger.error(f"[50v50 Mode] Error in 50v50 loop: {e}")
 
-        await asyncio.sleep(3)
+        await asyncio.sleep(6)
 
 
