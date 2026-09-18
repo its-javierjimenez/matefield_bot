@@ -331,15 +331,18 @@ async def mode_50v50_loop():
                 # Dynamically resolve exact faction names from live server status (e.g. "Valkyra" vs "Valkyre")
                 red_name = "Valkyra"
                 green_name = "Manticore"
+                match_seconds = None
                 try:
                     status_resp = await rcon_client.get_status()
-                    if status_resp and status_resp.factionScores:
-                        for fs in status_resp.factionScores:
-                            fn = (fs.name or "").strip()
-                            if fn.lower().startswith("valk"):
-                                red_name = fn
-                            elif fn.lower().startswith("mant"):
-                                green_name = fn
+                    if status_resp:
+                        match_seconds = getattr(status_resp, "matchSeconds", None)
+                        if status_resp.factionScores:
+                            for fs in status_resp.factionScores:
+                                fn = (fs.name or "").strip()
+                                if fn.lower().startswith("valk"):
+                                    red_name = fn
+                                elif fn.lower().startswith("mant"):
+                                    green_name = fn
                 except Exception as err_status:
                     logger.warning(f"[50v50 Mode] Could not get live faction names from status: {err_status}")
 
@@ -436,67 +439,77 @@ async def mode_50v50_loop():
                             logger.error(f"[50v50 Mode] Failed to move {p.steamId} to {target_faction}: {err}")
 
                 # Step 2: Auto-teambalancing between Red and Green (since in-game balancing is unlocked)
-                # If difference is >= 2, move fresh non-combatant arrivals from larger to smaller
-                diff = len(red_players) - len(green_players)
-                if abs(diff) >= 2:
-                    count_to_move = abs(diff) // 2
-                    if diff > 0:
-                        donor_team = red_players
-                        target_faction = green_name
-                        target_key = "manticore"
-                        donor_name = red_name
-                    else:
-                        donor_team = green_players
-                        target_faction = red_name
-                        target_key = "valkyra"
-                        donor_name = green_name
+                # Check 1: 1-minute warmup grace period at match start (matchSeconds < 60)
+                # Allows squads and friends to connect and select their faction during initial loading without aggressive shifts.
+                if match_seconds is not None and match_seconds < 60:
+                    logger.debug(f"[50v50 Mode] Warmup grace period active (matchSeconds={match_seconds}s < 60s). Skipping Red vs Green auto-balancing.")
+                else:
+                    diff = len(red_players) - len(green_players)
+                    if abs(diff) >= 2:
+                        count_to_move = abs(diff) // 2
+                        if diff > 0:
+                            donor_team = red_players
+                            target_faction = green_name
+                            target_key = "manticore"
+                            donor_name = red_name
+                        else:
+                            donor_team = green_players
+                            target_faction = red_name
+                            target_key = "valkyra"
+                            donor_name = green_name
 
-                    # STRICT FAIRNESS RULE:
-                    # Original veterans who chose their team (or were assigned from Blue) and have combated
-                    # (cash > 0 or K/D > 0) are 100% IMMUNE from being forced to the other team when players ragequit.
-                    # ONLY fresh arrivals without combat footprint ($0 cash and 0 kills and 0 deaths) are eligible.
-                    # Exclude any player currently in the 60s swap cooldown.
-                    eligible_candidates = []
-                    for p in donor_team:
-                        if not p.steamId:
-                            continue
-                        if (now_ts - recently_swapped_players.get(p.steamId, 0)) <= 60:
-                            continue
+                        # STRICT FAIRNESS RULE:
+                        # 1. Combat veterans (cash > 0 or K/D > 0) are 100% IMMUNE.
+                        # 2. Base deployment guard: Only recruits who joined <= 24 seconds ago are eligible.
+                        #    Anyone on the team > 24 seconds is protected (likely buying vehicles/gear at base terminal).
+                        # 3. Exclude anyone in the 60s swap cooldown.
+                        eligible_candidates = []
+                        for p in donor_team:
+                            if not p.steamId:
+                                continue
+                            if (now_ts - recently_swapped_players.get(p.steamId, 0)) <= 60:
+                                continue
 
-                        has_combat_footprint = ((p.cash or 0) > 0) or ((p.kills or 0) > 0) or ((p.deaths or 0) > 0)
-                        if not has_combat_footprint:
-                            eligible_candidates.append(p)
-
-                    if not eligible_candidates:
-                        logger.info(f"[50v50 Mode] Teambalance: {donor_name} has {len(donor_team)} vs {target_faction} ({len(donor_team) - abs(diff)}), but all players on {donor_name} are protected original veterans. Keeping teams as-is until new players connect.")
-                    else:
-                        # Sort eligible fresh candidates by newest join time (-joined_team_at)
-                        def candidate_sort_key(p):
                             hist = player_team_history.get(p.steamId, {})
                             joined_at = hist.get("joined_team_at", now_ts)
-                            return -joined_at
+                            time_on_team = now_ts - joined_at
 
-                        eligible_candidates.sort(key=candidate_sort_key)
-                        actual_move = min(count_to_move, len(eligible_candidates))
+                            has_combat_footprint = ((p.cash or 0) > 0) or ((p.kills or 0) > 0) or ((p.deaths or 0) > 0)
+                            is_fresh_recruit = (not has_combat_footprint) and (time_on_team <= 24)
 
-                        logger.info(f"[50v50 Mode] Teambalance triggered! {donor_name} has {len(donor_team)} vs {target_faction} ({len(donor_team) - abs(diff)}). Moving {actual_move} eligible fresh candidate(s)...")
+                            if is_fresh_recruit:
+                                eligible_candidates.append(p)
 
-                        for p in eligible_candidates[:actual_move]:
-                            try:
-                                await rcon_client.switch_faction(p.steamId, target_faction)
-                                recently_swapped_players[p.steamId] = now_ts
-                                player_team_history[p.steamId] = {
-                                    "current_faction": target_key,
-                                    "assigned_faction": target_key,
-                                    "joined_team_at": now_ts,
-                                }
-                                logger.info(f"[50v50 Mode] Rebalanced {p.name} ({p.steamId}, cash=${p.cash or 0}, K/D={p.kills or 0}/{p.deaths or 0}) {donor_name} -> {target_faction}")
+                        if not eligible_candidates:
+                            logger.info(f"[50v50 Mode] Teambalance: {donor_name} has {len(donor_team)} vs {target_faction} ({len(donor_team) - abs(diff)}), but all players on {donor_name} are protected (combat veterans or base deployment > 24s). Keeping teams as-is until new players connect.")
+                        else:
+                            # Sort eligible fresh candidates by newest join time (-joined_team_at)
+                            def candidate_sort_key(p):
+                                hist = player_team_history.get(p.steamId, {})
+                                joined_at = hist.get("joined_team_at", now_ts)
+                                return -joined_at
+
+                            eligible_candidates.sort(key=candidate_sort_key)
+                            actual_move = min(count_to_move, len(eligible_candidates))
+
+                            logger.info(f"[50v50 Mode] Teambalance triggered! {donor_name} has {len(donor_team)} vs {target_faction} ({len(donor_team) - abs(diff)}). Moving {actual_move} eligible fresh candidate(s)...")
+
+                            for p in eligible_candidates[:actual_move]:
                                 try:
-                                    await rcon_client.send_player_message(p.steamId, f"Se te ha asignado al equipo {target_faction} para balancear la partida.")
-                                except Exception:
-                                    pass
-                            except Exception as err:
-                                logger.error(f"[50v50 Mode] Failed to rebalance {p.steamId} to {target_faction}: {err}")
+                                    await rcon_client.switch_faction(p.steamId, target_faction)
+                                    recently_swapped_players[p.steamId] = now_ts
+                                    player_team_history[p.steamId] = {
+                                        "current_faction": target_key,
+                                        "assigned_faction": target_key,
+                                        "joined_team_at": now_ts,
+                                    }
+                                    logger.info(f"[50v50 Mode] Rebalanced {p.name} ({p.steamId}, cash=${p.cash or 0}, tenure={round(now_ts - hist.get('joined_team_at', now_ts), 1)}s) {donor_name} -> {target_faction}")
+                                    try:
+                                        await rcon_client.send_player_message(p.steamId, f"Se te ha asignado al equipo {target_faction} para balancear la partida.")
+                                    except Exception:
+                                        pass
+                                except Exception as err:
+                                    logger.error(f"[50v50 Mode] Failed to rebalance {p.steamId} to {target_faction}: {err}")
 
         except Exception as e:
             logger.error(f"[50v50 Mode] Error in 50v50 loop: {e}")

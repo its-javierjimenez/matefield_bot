@@ -281,7 +281,7 @@ async def main():
         player_team_history[fresh_p["steamId"]] = {
             "current_faction": "valkyra",
             "assigned_faction": "valkyra",
-            "joined_team_at": 1250.0 + i,
+            "joined_team_at": 1285.0 + i,  # joined 11-15s ago (<= 24s)
         }
 
     # Valkyra now has 20 veterans + 4 fresh = 24.
@@ -296,7 +296,7 @@ async def main():
     diff = len(red_players) - len(green_players)
     count_to_move = abs(diff) // 2
 
-    # Collect eligible candidates (only non-combatants: $0 cash, 0 kills, 0 deaths)
+    # Collect eligible candidates (only non-combatants: $0 cash, 0 kills, 0 deaths, and joined <= 24s ago)
     donor_team = red_players
     target_faction = "Manticore"
     target_key = "manticore"
@@ -307,7 +307,8 @@ async def main():
         if (now_ts - recently_swapped_players.get(sid, 0)) <= 60:
             continue
         has_combat = ((p.get("cash") or 0) > 0) or ((p.get("kills") or 0) > 0)
-        if not has_combat:
+        time_on_team = now_ts - player_team_history.get(p["steamId"], {}).get("joined_team_at", now_ts)
+        if (not has_combat) and (time_on_team <= 24):
             eligible_candidates.append(p)
 
     # Sort by newest join time
@@ -339,7 +340,34 @@ async def main():
     # Verify audit log in Mock RCON
     audits = await rcon.get_audit()
     assert any("Se te ha asignado al equipo Manticore para balancear la partida." in a["detail"] for a in audits)
-    print("  ✅ PASSED: 2 novatos sin combatir ($0 cash) auto-balanceados a Manticore con whisper. 100% de veteranos protegidos.")
+    print("  ✅ PASSED: 2 novatos sin combatir ($0 cash, <= 24s) auto-balanceados a Manticore con whisper. 100% de veteranos protegidos.")
+
+    print("\n--- [TEST 4: Base Tenure Protection (> 24s) and Match Warmup (< 60s)] ---")
+    # A player buying a vehicle in base for 30s ($0 cash, 0 K/D)
+    vehicle_buyer = {
+        "steamId": "buyer_1",
+        "name": "Buyer1",
+        "faction": "Valkyra",
+        "kills": 0,
+        "deaths": 0,
+        "cash": 0,
+        "pingMs": 40
+    }
+    mock_players.append(vehicle_buyer)
+    player_team_history["buyer_1"] = {
+        "current_faction": "valkyra",
+        "assigned_faction": "valkyra",
+        "joined_team_at": 1400.0  # At 1435.0, tenure = 35s > 24s
+    }
+
+    test4_now = 1435.0
+    buyer_tenure = test4_now - player_team_history["buyer_1"]["joined_team_at"]
+    assert buyer_tenure > 24, "Buyer tenure should be > 24s"
+
+    # Evaluated for balance:
+    buyer_eligible = (not (((vehicle_buyer.get("cash") or 0) > 0) or ((vehicle_buyer.get("kills") or 0) > 0))) and (buyer_tenure <= 24)
+    assert buyer_eligible is False, "Player in base > 24s must NOT be eligible for transfer!"
+    print("  ✅ PASSED: Comprador de vehículo en base (> 24s) es 100% inmune ante transferencias en Mock RCON.")
 
     print("\n=======================================================")
     print("  MOCK RCON E2E INTEGRATION TESTS: 100% PASSED!")

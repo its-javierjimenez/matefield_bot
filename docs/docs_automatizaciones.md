@@ -75,12 +75,17 @@ Los cambios en `ServerSettings.ini` solo son procesados por el servidor de juego
      > *"Se te ha asignado al equipo {target_faction}."*
    - **Tratamiento como Originales**: Quedan registrados como miembros oficiales de esa facción. Al entrar en combate y ganar dinero/bajas, adquieren exactamente la misma inmunidad que un veterano original. Si intentan cambiarse al otro equipo, el sellado ARMA los bloquea y revierte.
 4. **Paso 2 - Auto-Teambalancing Rojo vs Verde**: Como el balanceo interno del juego está desactivado, si la diferencia poblacional entre Rojo y Verde es $\ge 2$:
-   - Se calculan $\lfloor\text{diferencia}/2\rfloor$ jugadores a transferir del equipo mayoritario al minoritario.
+   - **Periodo de Gracia Inicial (Warmup de 1 minuto / 60 segundos)**: Durante los primeros 60 segundos de partida (`matchSeconds < 60`), el auto-balanceo entre Rojo y Verde está **PAUSADO**. Esto permite que amigos y escuadras carguen el mapa y elijan bando juntos sin miedo a ser separados por diferencias momentáneas en la velocidad de conexión de sus PCs. (El drenado de Azul y el sellado ARMA permanecen activos).
+   - Transcurridos los primeros 60 segundos, si la diferencia es $\ge 2$, se calculan $\lfloor\text{diferencia}/2\rfloor$ jugadores a transferir del equipo mayoritario al minoritario.
    - **Regla de Inmunidad Absoluta para Combatientes y Veteranos**:
      - Todo jugador que ya haya combatido (`cash > 0` o `kills + deaths > 0`) es **100% INMUNE** a ser forzado al equipo rival si otros abandonan la partida.
      - Si el equipo mayoritario tiene 50 jugadores y todos son veteranos con combate activo, **NO SE MUEVE A NADIE**. El desbalance se resuelve pacíficamente conforme ingresen nuevos jugadores al servidor.
+   - **Protección de Compras en Base (Ventana de Novato de 24 Segundos)**:
+     - El dato `cash` del RCON únicamente refleja dinero ganado por zona (`ScorePeriod=30s`), no el dinero gastado en tanques/armamento en base.
+     - Para evitar que un jugador que gastó su dinero en base pierda su vehículo/equipo, el bot exige que el jugador lleve **$\le 24$ segundos en el equipo** (`now_ts - joined_team_at <= 24`).
+     - Si un jugador lleva más de 24 segundos en base, **se considera protegido** (se asume que ya está interactuando con terminales o desplegando) aunque su `cash` ganado sea $0.
    - **Únicos Candidatos Elegibles para Balancear**:
-     - **Recién Ingresados**: Quienes acaban de conectar/spawnear en base y tienen **\$0 cash y 0 K/D** (aún no han pisado la zona de combate, por lo que no pierden progreso alguno). Se ordenan por tiempo de llegada más reciente.
+     - Recién ingresados que lleven **$\le 24$ segundos en el equipo** Y tengan **\$0 cash y 0 K/D**. Se ordenan por tiempo de llegada más reciente.
    - **Whisper de Balanceo**: Al mover a un recién ingresado por desbalance, el bot le notifica:
      > *"Se te ha asignado al equipo {target_faction} para balancear la partida."*
    - **Protecciones Incondicionales**:

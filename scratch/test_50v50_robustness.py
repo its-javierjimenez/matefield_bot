@@ -176,7 +176,7 @@ async def process_player_stats(session: AsyncSession, current_match_id: str, p: 
 
 
 # --- Helper to simulate 50v50 step logic replicating sync_engine.py ---
-async def run_50v50_step(all_players: List[MockRconPlayer], now_ts: float):
+async def run_50v50_step(all_players: List[MockRconPlayer], now_ts: float, match_seconds: Optional[int] = 120):
     switched_calls.clear()
     whisper_calls.clear()
     red_name = "Valkyra"
@@ -258,6 +258,10 @@ async def run_50v50_step(all_players: List[MockRconPlayer], now_ts: float):
             }
 
     # Step 2: Balance Red vs Green
+    # Check 1: 1-minute warmup grace period at match start (match_seconds < 60)
+    if match_seconds is not None and match_seconds < 60:
+        return
+
     diff = len(red_players) - len(green_players)
     if abs(diff) >= 2:
         count_to_move = abs(diff) // 2
@@ -271,9 +275,10 @@ async def run_50v50_step(all_players: List[MockRconPlayer], now_ts: float):
             target_key = "valkyra"
 
         # STRICT FAIRNESS RULE:
-        # Original veterans who chose their team (or were assigned from Blue) and have combated
-        # (cash > 0 or K/D > 0) are 100% IMMUNE from being forced to the other team when players ragequit.
-        # ONLY fresh arrivals without combat footprint ($0 cash and 0 kills and 0 deaths) are eligible.
+        # 1. Combat veterans (cash > 0 or K/D > 0) are 100% IMMUNE.
+        # 2. Base deployment guard: Only recruits who joined <= 24 seconds ago are eligible.
+        #    Anyone on the team > 24 seconds is protected (likely buying vehicles/gear at base terminal).
+        # 3. Exclude anyone in the 60s swap cooldown.
         eligible_candidates = []
         for p in donor_team:
             if not p.steamId:
@@ -281,8 +286,14 @@ async def run_50v50_step(all_players: List[MockRconPlayer], now_ts: float):
             if (now_ts - recently_swapped_players.get(p.steamId, 0)) <= 60:
                 continue
 
+            hist = player_team_history.get(p.steamId, {})
+            joined_at = hist.get("joined_team_at", now_ts)
+            time_on_team = now_ts - joined_at
+
             has_combat_footprint = ((p.cash or 0) > 0) or ((p.kills or 0) > 0) or ((p.deaths or 0) > 0)
-            if not has_combat_footprint:
+            is_fresh_recruit = (not has_combat_footprint) and (time_on_team <= 24)
+
+            if is_fresh_recruit:
                 eligible_candidates.append(p)
 
         if eligible_candidates:
@@ -425,13 +436,13 @@ async def main():
                 "joined_team_at": 1000.0,
             }
 
-        # 2 new players connect and join Valkyra at t=1600 (without combat footprint)
+        # 2 new players connect and join Valkyra at t=1690 (without combat footprint)
         new_valk_players = [
             MockRconPlayer(steamId="new_v_1", name="NewV_1", faction="Valkyra", kills=0, deaths=0, cash=0),
             MockRconPlayer(steamId="new_v_2", name="NewV_2", faction="Valkyra", kills=0, deaths=0, cash=0),
         ]
-        player_team_history["new_v_1"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 1600.0}
-        player_team_history["new_v_2"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 1605.0}
+        player_team_history["new_v_1"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 1690.0}
+        player_team_history["new_v_2"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 1695.0}
 
         # Current roster: Valkyra has 20 originals + 3 attempting overpop + 2 newcomers = 25 players.
         # Manticore has 17 players.
@@ -448,7 +459,7 @@ async def main():
         assert "overpop_1" in blocked_whispers and "overpop_2" in blocked_whispers and "overpop_3" in blocked_whispers
 
         # 3. In Step 2 (Valkyra 22 vs Manticore 20 -> diff=2, count=1):
-        # The newcomer with newest tenure (new_v_2) is moved to balance, receiving whisper!
+        # The newcomer with newest tenure <= 24s (new_v_2) is moved to balance, receiving whisper!
         balanced_whispers = [sid for sid, msg in whisper_calls if "balancear la partida" in msg]
         assert len(balanced_whispers) == 1
         assert balanced_whispers[0] == "new_v_2"
@@ -474,9 +485,9 @@ async def main():
         p_jr_rich = MockRconPlayer(steamId="jr_rich", name="JrRich", faction="Valkyra", kills=10, deaths=2, cash=2000)
         player_team_history["jr_rich"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 800.0}
 
-        # Junior fresh: joined at t=800, cash=$0, K/D=0/0 (elegible por no tener combate)
+        # Junior fresh: joined at t=885, cash=$0, K/D=0/0 (elegible por unirse hace <= 24s a t=900)
         p_jr_fresh = MockRconPlayer(steamId="jr_fresh", name="JrFresh", faction="Valkyra", kills=0, deaths=0, cash=0)
-        player_team_history["jr_fresh"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 800.0}
+        player_team_history["jr_fresh"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 885.0}
 
         # Valkyra has 3 players, Manticore has 1 player -> diff=2, count_to_move=1
         mant_single = [MockRconPlayer(steamId="m_single", name="MSingle", faction="Manticore", kills=1, deaths=1, cash=0)]
@@ -486,7 +497,7 @@ async def main():
         assert len(switched_calls) == 1
         assert switched_calls[0][0] == "jr_fresh", f"Expected jr_fresh to be moved, got {switched_calls[0][0]}"
         assert whisper_calls[0] == ("jr_fresh", "Se te ha asignado al equipo Manticore para balancear la partida.")
-        print("  ✅ PASSED: JrRich con combate es inmune. JrFresh ($0 cash, sin kills) es transferido con whisper de balanceo.")
+        print("  ✅ PASSED: JrRich con combate es inmune. JrFresh ($0 cash, sin kills, tenure <= 24s) es transferido con whisper de balanceo.")
 
         # -------------------------------------------------------------
         # Q6: Aislamiento absoluto de White / Espectadores
@@ -876,8 +887,8 @@ async def main():
 
         p_fresh_1 = MockRconPlayer(steamId="flow_fresh_1", name="FreshA", faction="Valkyra", kills=0, deaths=0, cash=0)
         p_fresh_2 = MockRconPlayer(steamId="flow_fresh_2", name="FreshB", faction="Valkyra", kills=0, deaths=0, cash=0)
-        player_team_history["flow_fresh_1"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 1500.0}
-        player_team_history["flow_fresh_2"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 1510.0}
+        player_team_history["flow_fresh_1"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 1990.0}
+        player_team_history["flow_fresh_2"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 1995.0}
 
         p_white = MockRconPlayer(steamId="flow_white", name="FlowWhite", faction="White", kills=0, deaths=0, cash=0)
 
@@ -911,9 +922,63 @@ async def main():
         assert len(white_whispers) == 0
         print("  ✅ PASSED: Verificación integral completada: Bloqueo ARMA, Asignación Azul, Auto-balance y Aislamiento White funcionando a la perfección.")
 
+        # -------------------------------------------------------------
+        # Q20: Periodo de gracia inicial de 1 minuto al comienzo de la partida
+        # -------------------------------------------------------------
+        print("\n▶ Auto-Pregunta 20: ¿Al inicio de partida (matchSeconds < 60) se pausa el auto-balanceo para no separar amigos?")
+        player_team_history.clear()
+        recently_swapped_players.clear()
+
+        # 5 friends load into Valkyra within the first 25 seconds of the match. Manticore has 0 players.
+        squad_friends = [
+            MockRconPlayer(steamId=f"friend_{i}", name=f"Friend_{i}", faction="Valkyra", kills=0, deaths=0, cash=0)
+            for i in range(5)
+        ]
+        for f in squad_friends:
+            player_team_history[f.steamId] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 20.0}
+
+        # Step runs at matchSeconds = 25s (< 60s warmup)
+        await run_50v50_step(squad_friends, now_ts=25.0, match_seconds=25)
+
+        # ZERO players moved between Red and Green during the first minute!
+        assert len(switched_calls) == 0, f"ERROR: Friends were moved during early grace period! {switched_calls}"
+        print("  ✅ PASSED: Durante el primer minuto (25s < 60s), el auto-balanceo estuvo pausado y los 5 amigos quedaron juntos en Valkyra.")
+
+        # -------------------------------------------------------------
+        # Q21: Protección de novato en base (> 24 segundos de antigüedad)
+        # -------------------------------------------------------------
+        print("\n▶ Auto-Pregunta 21: ¿Un jugador con $0 cash que lleva > 24s comprando en base es protegido contra balanceo?")
+        player_team_history.clear()
+        recently_swapped_players.clear()
+
+        # Player in base for 35 seconds buying a tank ($0 cash earned, 0 K/D)
+        tank_buyer = MockRconPlayer(steamId="tank_buyer", name="TankBuyer", faction="Valkyra", kills=0, deaths=0, cash=0)
+        player_team_history["tank_buyer"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 2000.0}
+
+        # Fresh recruit who just connected 10 seconds ago ($0 cash, 0 K/D)
+        fresh_recruit = MockRconPlayer(steamId="fresh_recruit", name="FreshRecruit", faction="Valkyra", kills=0, deaths=0, cash=0)
+        player_team_history["fresh_recruit"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 2025.0}
+
+        # Valkyra has 20 veterans + tank_buyer + fresh_recruit = 22. Manticore has 20 -> diff = 2, count = 1.
+        valk_vets = [MockRconPlayer(steamId=f"vv_{i}", name=f"VV_{i}", faction="Valkyra", kills=3, cash=1000) for i in range(20)]
+        for v in valk_vets:
+            player_team_history[v.steamId] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 1500.0}
+        mant_vets = [MockRconPlayer(steamId=f"mv_{i}", name=f"MV_{i}", faction="Manticore", kills=3, cash=1000) for i in range(20)]
+        for m in mant_vets:
+            player_team_history[m.steamId] = {"current_faction": "manticore", "assigned_faction": "manticore", "joined_team_at": 1500.0}
+
+        # Run step at t=2035 (tenure: tank_buyer = 35s > 24s; fresh_recruit = 10s <= 24s)
+        await run_50v50_step(valk_vets + [tank_buyer, fresh_recruit] + mant_vets, now_ts=2035.0, match_seconds=120)
+
+        # Only fresh_recruit is eligible! tank_buyer is PROTECTED because tenure > 24s!
+        assert len(switched_calls) == 1
+        assert switched_calls[0] == ("fresh_recruit", "Manticore")
+        assert ("fresh_recruit", "Se te ha asignado al equipo Manticore para balancear la partida.") in whisper_calls
+        print("  ✅ PASSED: El comprador de tanque en base (> 24s) fue 100% protegido. Solo se movió al novato de 10s, evitando pérdida de vehículos.")
+
         print("\n=======================================================")
-        print("  TODAS LAS 19 AUTO-PREGUNTAS PASARON SATISFACTORIAMENTE!")
-        print("  MODO 50v50 SELLADO ESTILO ARMA Y WHISPERS 100% OPERATIVOS")
+        print("  TODAS LAS 21 AUTO-PREGUNTAS PASARON SATISFACTORIAMENTE!")
+        print("  MODO 50v50 SELLADO ESTILO ARMA, WHISPERS Y PROTECCIÓN BASE 100% OPERATIVOS")
         print("=======================================================\n")
 
 if __name__ == "__main__":
