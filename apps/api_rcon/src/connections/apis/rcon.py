@@ -93,11 +93,6 @@ class RCONClient:
             new_lines.append('[/Script/WDGame.WDGameSession]')
             insert_idx = len(new_lines) - 1
             
-        if insert_idx == -1:
-            new_lines.append('')
-            new_lines.append('[/Script/WDGame.WDGameSession]')
-            insert_idx = len(new_lines) - 1
-            
         if insert_idx != -1:
             slot_lines = ['!DefaultReservedPlayerIds=ClearArray']
             for sid in steam_ids:
@@ -145,11 +140,6 @@ class RCONClient:
             new_lines.append('[/Script/WDGame.WDGameSession]')
             insert_idx = len(new_lines) - 1
             
-        if insert_idx == -1:
-            new_lines.append('')
-            new_lines.append('[/Script/WDGame.WDGameSession]')
-            insert_idx = len(new_lines) - 1
-            
         if insert_idx != -1:
             slot_lines = ['!DefaultBannedPlayerIds=ClearArray']
             for sid in steam_ids:
@@ -157,12 +147,6 @@ class RCONClient:
             new_lines = new_lines[:insert_idx+1] + slot_lines + new_lines[insert_idx+1:]
             new_text = '\n'.join(new_lines)
             await self.update_config(revision, new_text)
-
-    async def broadcast(self, message: str) -> None:
-        await self._request("POST", "/v1/broadcast", json={"message": message})
-
-    async def send_player_message(self, steam_id: str, message: str) -> None:
-        await self._request("POST", f"/v1/players/{steam_id}/message", json={"message": message})
 
     async def get_config(self) -> schemas.Config1:
         async with aiohttp.ClientSession(headers=self.headers) as session:

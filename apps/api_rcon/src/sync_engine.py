@@ -306,7 +306,9 @@ async def poll_rcon():
 
 async def mode_50v50_loop():
     logger.info("Starting 50v50 Mode Engine (Checks every 6 seconds)...")
-    warmup_broadcast_sent = False
+    warmup_1m_sent = False
+    warmup_30s_sent = False
+    warmup_10s_sent = False
     active_broadcast_sent = False
     last_50v50_match_id = None
 
@@ -333,7 +335,9 @@ async def mode_50v50_loop():
                     last_50v50_match_id = current_match_id
                     player_team_history.clear()
                     recently_swapped_players.clear()
-                    warmup_broadcast_sent = False
+                    warmup_1m_sent = False
+                    warmup_30s_sent = False
+                    warmup_10s_sent = False
                     active_broadcast_sent = False
 
                 # Purge expired cooldowns (> 120 seconds)
@@ -359,20 +363,36 @@ async def mode_50v50_loop():
                 except Exception as err_status:
                     logger.warning(f"[50v50 Mode] Could not get live faction names from status: {err_status}")
 
-                # Broadcast announcements for warmup and active autobalance
+                # Broadcast announcements for warmup (1m, 30s, 10s) and active autobalance
                 if match_seconds is not None:
-                    if match_seconds < 60 and not warmup_broadcast_sent:
+                    if match_seconds < 30 and not warmup_1m_sent:
                         try:
                             await rcon_client.broadcast("Modo 50v50: 1m antes de autobalance")
-                            warmup_broadcast_sent = True
+                            warmup_1m_sent = True
                             logger.info("[50v50 Mode] Broadcast sent: 'Modo 50v50: 1m antes de autobalance'")
                         except Exception as err_bc:
-                            logger.warning(f"[50v50 Mode] Could not send warmup broadcast: {err_bc}")
+                            logger.warning(f"[50v50 Mode] Could not send 1m warmup broadcast: {err_bc}")
+                    elif 30 <= match_seconds < 50 and not warmup_30s_sent:
+                        try:
+                            await rcon_client.broadcast("Modo 50v50: 30s antes de autobalance")
+                            warmup_30s_sent = True
+                            logger.info("[50v50 Mode] Broadcast sent: 'Modo 50v50: 30s antes de autobalance'")
+                        except Exception as err_bc:
+                            logger.warning(f"[50v50 Mode] Could not send 30s warmup broadcast: {err_bc}")
+                    elif 50 <= match_seconds < 60 and not warmup_10s_sent:
+                        try:
+                            await rcon_client.broadcast("Modo 50v50: 10s antes de autobalance")
+                            warmup_10s_sent = True
+                            logger.info("[50v50 Mode] Broadcast sent: 'Modo 50v50: 10s antes de autobalance'")
+                        except Exception as err_bc:
+                            logger.warning(f"[50v50 Mode] Could not send 10s warmup broadcast: {err_bc}")
                     elif match_seconds >= 60 and not active_broadcast_sent:
                         try:
                             await rcon_client.broadcast("Modo 50v50: Autobalance ACTIVO")
                             active_broadcast_sent = True
-                            warmup_broadcast_sent = True
+                            warmup_1m_sent = True
+                            warmup_30s_sent = True
+                            warmup_10s_sent = True
                             logger.info("[50v50 Mode] Broadcast sent: 'Modo 50v50: Autobalance ACTIVO'")
                         except Exception as err_bc:
                             logger.warning(f"[50v50 Mode] Could not send active broadcast: {err_bc}")

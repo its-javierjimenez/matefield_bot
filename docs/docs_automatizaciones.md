@@ -71,8 +71,12 @@ Los cambios en `ServerSettings.ini` solo son procesados por el servidor de juego
      > *"Cambio de equipo no permitido durante la partida."*
    - Aplica un cooldown de 15 segundos al jugador para evitar bucles de reversión.
 3. **Anuncios Globales por Chat (Broadcast - `POST /v1/broadcast`)**:
-   - Al iniciar la partida (`matchSeconds < 60`): Emite una sola vez el anuncio a todo el servidor:
+   - Al iniciar la partida (`matchSeconds < 30`): Emite una sola vez el anuncio a todo el servidor:
      > `Modo 50v50: 1m antes de autobalance`
+   - A los 30 segundos (`30 <= matchSeconds < 50`): Emite una sola vez el anuncio a todo el servidor:
+     > `Modo 50v50: 30s antes de autobalance`
+   - A los 50 segundos (`50 <= matchSeconds < 60`): Emite una sola vez el anuncio a todo el servidor:
+     > `Modo 50v50: 10s antes de autobalance`
    - Al cumplirse el primer minuto (`matchSeconds >= 60`): Emite una sola vez el anuncio a todo el servidor:
      > `Modo 50v50: Autobalance ACTIVO`
 4. **Paso 1 - Eliminación y Asimilación de Lonestar (Azul)**:

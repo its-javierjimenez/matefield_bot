@@ -85,12 +85,18 @@ class MatchMode50v50:
         await ctx.defer(ephemeral=True)
         try:
             if self.action == "enable":
-                await plugin.model.api.set_mode_50v50(True)
-                await ctx.respond(
-                    "⏳ **Modo 50v50 PROGRAMADO para la siguiente partida**.\n"
-                    "• Team balancing desactivado en la configuración RCON del servidor.\n"
-                    "• Se aplicará automáticamente al iniciar la próxima partida o reiniciar el servidor."
-                )
+                res = await plugin.model.api.set_mode_50v50(True)
+                if res.get("state") == "active":
+                    await ctx.respond(
+                        "🟢 **Desactivación CANCELADA**.\n"
+                        "• El Modo 50v50 continuará activo en las siguientes partidas."
+                    )
+                else:
+                    await ctx.respond(
+                        "⏳ **Modo 50v50 PROGRAMADO para la siguiente partida**.\n"
+                        "• Team balancing desactivado en la configuración RCON del servidor.\n"
+                        "• Se aplicará automáticamente al iniciar la próxima partida o reiniciar el servidor."
+                    )
             elif self.action == "disable":
                 res = await plugin.model.api.set_mode_50v50(False)
                 state = res.get("state", "inactive")
@@ -129,12 +135,18 @@ class MatchMode50v50Enable:
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
         try:
-            await plugin.model.api.set_mode_50v50(True)
-            await ctx.respond(
-                "⏳ **Modo 50v50 PROGRAMADO para la siguiente partida**.\n"
-                "• Team balancing desactivado en la configuración RCON del servidor.\n"
-                "• Se aplicará automáticamente al iniciar la próxima partida o reiniciar el servidor."
-            )
+            res = await plugin.model.api.set_mode_50v50(True)
+            if res.get("state") == "active":
+                await ctx.respond(
+                    "🟢 **Desactivación CANCELADA**.\n"
+                    "• El Modo 50v50 continuará activo en las siguientes partidas."
+                )
+            else:
+                await ctx.respond(
+                    "⏳ **Modo 50v50 PROGRAMADO para la siguiente partida**.\n"
+                    "• Team balancing desactivado en la configuración RCON del servidor.\n"
+                    "• Se aplicará automáticamente al iniciar la próxima partida o reiniciar el servidor."
+                )
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
 

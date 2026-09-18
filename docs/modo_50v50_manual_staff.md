@@ -28,8 +28,10 @@ Imaginate que el servidor es un **boliche (discoteca)** con dos salas: **Sala Ro
 1. **La Puerta Libre (Primer minuto):**
    * Durante el primer minuto de la partida, la puerta está abierta de par en par.
    * Vos y tus 4 amigos entran juntos a la Sala Roja sin que nadie les rompa las bolas.
-   * En el chat de todo el servidor sale un cartel:  
-     > 📢 `Modo 50v50: 1m antes de autobalance`
+   * En el chat de todo el servidor van saliendo los avisos progresivos:  
+     > 📢 `Modo 50v50: 1m antes de autobalance`  
+     > 📢 `Modo 50v50: 30s antes de autobalance`  
+     > 📢 `Modo 50v50: 10s antes de autobalance`  
 
 2. **Nadie que esté adentro se mueve (Regla de Oro):**
    * Si ya entraste a una sala, **el bot NUNCA te va a sacar**.
@@ -38,7 +40,7 @@ Imaginate que el servidor es un **boliche (discoteca)** con dos salas: **Sala Ro
    * ¿El otro equipo se quedó sin gente porque son malos y se fueron (ragequit)? **A vos NO te pasa nadie.** Seguís jugando en tu equipo.
 
 3. **El Portero en la Entrada (Pasado el primer minuto):**
-   * Al cumplirse el minuto 1 sale el aviso:  
+   * Al cumplirse el minuto 1 sale el aviso definitivo:  
      > 📢 `Modo 50v50: Autobalance ACTIVO`
    * A partir de ahí, el bot se para de **patovica/portero** en la entrada:
      * Si la Sala Roja tiene 30 personas y la Verde tiene 20, y cae un **jugador nuevo** que intenta meterse a la Roja...
@@ -85,17 +87,36 @@ Aquí tenés exactamente lo que pasa en cada situación para que no tengas miedo
 
 ## 4. Resumen de Mensajes que ven los Jugadores 💬
 
-Para que sepas qué le aparece en pantalla a la gente:
+### A. Avisos de Estado (cuando el Staff usa los comandos):
+* 📢 **Al programar activación:**  
+  `Modo 50v50: En la siguiente partida se activara el modo 50v50`
+* 📢 **Al cancelar activación:**  
+  `Modo 50v50: Se ha cancelado la activacion, seguiremos normal`
+* 📢 **Al programar desactivación en plena partida:**  
+  `Modo 50v50: En la siguiente partida se desactivara el modo 50v50`
+* 📢 **Al cancelar desactivación (seguir en 50v50):**  
+  `Modo 50v50: Se ha cancelado la desactivacion, seguiremos en modo 50v50`
+* 📢 **Al iniciar la partida 50v50:**  
+  `Modo 50v50 ACTIVADO para esta partida (Rojo vs Verde)!`
+* 📢 **Al finalizar la partida 50v50:**  
+  `Modo 50v50 FINALIZADO. Volviendo a 33v33v33.`
 
-* 📢 **Anuncio para todos (Minuto 0):**  
+### B. Avisos de Calentamiento / Autobalance:
+* 📢 **Segundo 0 (Inicio de partida):**  
   `Modo 50v50: 1m antes de autobalance`
-* 📢 **Anuncio para todos (Minuto 1):**  
+* 📢 **Segundo 30:**  
+  `Modo 50v50: 30s antes de autobalance`
+* 📢 **Segundo 50:**  
+  `Modo 50v50: 10s antes de autobalance`
+* 📢 **Segundo 60 (Autobalance Activo):**  
   `Modo 50v50: Autobalance ACTIVO`
-* 💬 **Susurro al que intentó cambiarse de equipo de vivo:**  
+
+### C. Mensajes Privados (Susurros):
+* 💬 **Al que intentó cambiarse de equipo de vivo:**  
   `Cambio de equipo no permitido durante la partida.`
-* 💬 **Susurro al que entró en Azul:**  
+* 💬 **Al que entró en Azul:**  
   `Se te ha asignado al equipo Valkyra/Manticore.`
-* 💬 **Susurro al nuevo que intentó entrar al equipo lleno:**  
+* 💬 **Al nuevo que intentó entrar al equipo lleno:**  
   `Se te ha asignado al equipo Valkyra/Manticore para balancear la partida.`
 * 🛡️ **A los Moderadores / Espectadores (White):**  
   *Silencio total.* El bot no los toca, no los mueve y no les manda mensajes.
