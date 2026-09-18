@@ -306,6 +306,10 @@ async def poll_rcon():
 
 async def mode_50v50_loop():
     logger.info("Starting 50v50 Mode Engine (Checks every 6 seconds)...")
+    warmup_broadcast_sent = False
+    active_broadcast_sent = False
+    last_50v50_match_id = None
+
     while True:
         try:
             is_enabled = False
@@ -323,6 +327,15 @@ async def mode_50v50_loop():
 
             if is_enabled:
                 now_ts = time.time()
+                # Reset tracking on new match transition
+                if current_match_id != last_50v50_match_id:
+                    logger.info(f"[50v50 Mode] New match detected ({current_match_id}). Resetting team tracking & broadcasts.")
+                    last_50v50_match_id = current_match_id
+                    player_team_history.clear()
+                    recently_swapped_players.clear()
+                    warmup_broadcast_sent = False
+                    active_broadcast_sent = False
+
                 # Purge expired cooldowns (> 120 seconds)
                 expired = [sid for sid, ts in recently_swapped_players.items() if now_ts - ts > 120]
                 for sid in expired:
@@ -346,82 +359,111 @@ async def mode_50v50_loop():
                 except Exception as err_status:
                     logger.warning(f"[50v50 Mode] Could not get live faction names from status: {err_status}")
 
+                # Broadcast announcements for warmup and active autobalance
+                if match_seconds is not None:
+                    if match_seconds < 60 and not warmup_broadcast_sent:
+                        try:
+                            await rcon_client.broadcast("Modo 50v50: 1m antes de autobalance")
+                            warmup_broadcast_sent = True
+                            logger.info("[50v50 Mode] Broadcast sent: 'Modo 50v50: 1m antes de autobalance'")
+                        except Exception as err_bc:
+                            logger.warning(f"[50v50 Mode] Could not send warmup broadcast: {err_bc}")
+                    elif match_seconds >= 60 and not active_broadcast_sent:
+                        try:
+                            await rcon_client.broadcast("Modo 50v50: Autobalance ACTIVO")
+                            active_broadcast_sent = True
+                            warmup_broadcast_sent = True
+                            logger.info("[50v50 Mode] Broadcast sent: 'Modo 50v50: Autobalance ACTIVO'")
+                        except Exception as err_bc:
+                            logger.warning(f"[50v50 Mode] Could not send active broadcast: {err_bc}")
+
                 players_resp = await rcon_client.get_players()
                 all_players = players_resp.players or []
                 
                 blue_players = []
                 red_players = []
                 green_players = []
+                new_entrants = []
                 
+                # First pass: Categorize existing players vs new entrants
                 for p in all_players:
                     f = (p.faction or "").strip().lower()
                     if f.startswith("lone"):
                         blue_players.append(p)
-                        f_canonical = "lonestar"
                     elif f.startswith("valk"):
                         f_canonical = "valkyra"
+                        if not p.steamId:
+                            continue
+                        if p.steamId not in player_team_history:
+                            new_entrants.append((p, f_canonical))
+                        else:
+                            hist = player_team_history[p.steamId]
+                            bot_swapped = (now_ts - recently_swapped_players.get(p.steamId, 0)) < 15
+                            assigned = hist.get("assigned_faction", "valkyra")
+                            if not bot_swapped and assigned != "valkyra":
+                                # ARMA lock: Revert unauthorized team switch
+                                revert_target = green_name
+                                logger.warning(f"[50v50 Mode] Player {p.name} ({p.steamId}) attempted manual switch from {assigned} -> valkyra! Reverting...")
+                                try:
+                                    await rcon_client.switch_faction(p.steamId, revert_target)
+                                    recently_swapped_players[p.steamId] = now_ts
+                                    await rcon_client.send_player_message(p.steamId, "Cambio de equipo no permitido durante la partida.")
+                                except Exception as err_revert:
+                                    logger.error(f"[50v50 Mode] Failed to revert {p.steamId}: {err_revert}")
+                                green_players.append(p)
+                            else:
+                                hist["current_faction"] = "valkyra"
+                                red_players.append(p)
                     elif f.startswith("mant"):
                         f_canonical = "manticore"
+                        if not p.steamId:
+                            continue
+                        if p.steamId not in player_team_history:
+                            new_entrants.append((p, f_canonical))
+                        else:
+                            hist = player_team_history[p.steamId]
+                            bot_swapped = (now_ts - recently_swapped_players.get(p.steamId, 0)) < 15
+                            assigned = hist.get("assigned_faction", "manticore")
+                            if not bot_swapped and assigned != "manticore":
+                                # ARMA lock: Revert unauthorized team switch
+                                revert_target = red_name
+                                logger.warning(f"[50v50 Mode] Player {p.name} ({p.steamId}) attempted manual switch from {assigned} -> manticore! Reverting...")
+                                try:
+                                    await rcon_client.switch_faction(p.steamId, revert_target)
+                                    recently_swapped_players[p.steamId] = now_ts
+                                    await rcon_client.send_player_message(p.steamId, "Cambio de equipo no permitido durante la partida.")
+                                except Exception as err_revert:
+                                    logger.error(f"[50v50 Mode] Failed to revert {p.steamId}: {err_revert}")
+                                red_players.append(p)
+                            else:
+                                hist["current_faction"] = "manticore"
+                                green_players.append(p)
                     else:
-                        # NOTE: Players with "white" or spectator/none factions are strictly ignored
+                        # Spectator / White / None are strictly ignored
                         continue
 
-                    # Update player team tenure and prevent unpermitted voluntary team switches
-                    if p.steamId and f_canonical in ("valkyra", "manticore"):
-                        hist = player_team_history.get(p.steamId)
-                        if not hist:
-                            # First time seen on a team in this match -> Register initial assigned team!
-                            player_team_history[p.steamId] = {
-                                "current_faction": f_canonical,
-                                "assigned_faction": f_canonical,
-                                "joined_team_at": now_ts,
-                            }
-                        else:
-                            if hist["current_faction"] != f_canonical:
-                                old_f = hist["current_faction"]
-                                bot_swapped = (now_ts - recently_swapped_players.get(p.steamId, 0)) < 15
-
-                                # ARMA-STYLE STRICT LOCK: If player manually switched between Red and Green, block & revert!
-                                if not bot_swapped:
-                                    assigned = hist.get("assigned_faction", old_f)
-                                    if assigned in ("valkyra", "manticore") and assigned != f_canonical:
-                                        revert_target = red_name if assigned == "valkyra" else green_name
-                                        logger.warning(f"[50v50 Mode] Player {p.name} ({p.steamId}) attempted manual team switch from {assigned} -> {f_canonical}! Blocking and reverting back to {revert_target}...")
-                                        try:
-                                            await rcon_client.switch_faction(p.steamId, revert_target)
-                                            recently_swapped_players[p.steamId] = now_ts
-                                            await rcon_client.send_player_message(p.steamId, "Cambio de equipo no permitido durante la partida.")
-                                        except Exception as err_revert:
-                                            logger.error(f"[50v50 Mode] Failed to revert unpermitted team switch for {p.steamId}: {err_revert}")
-                                        if assigned == "valkyra":
-                                            red_players.append(p)
-                                        else:
-                                            green_players.append(p)
-                                        continue
-
-                                hist["current_faction"] = f_canonical
-                                hist["joined_team_at"] = now_ts
-
-                        if f_canonical == "valkyra":
-                            red_players.append(p)
-                        else:
-                            green_players.append(p)
-                
                 # Step 1: Transfer any players in Lonestar (Blue) to whichever team is smaller
                 if blue_players:
                     logger.info(f"[50v50 Mode] Found {len(blue_players)} players in Lonestar (Blue). Transferring... ({red_name}={len(red_players)}, {green_name}={len(green_players)})")
                     for p in blue_players:
                         if not p.steamId:
                             continue
-                        if len(red_players) <= len(green_players):
+                        existing_hist = player_team_history.get(p.steamId)
+                        if existing_hist and existing_hist.get("assigned_faction") in ("valkyra", "manticore"):
+                            target_key = existing_hist["assigned_faction"]
+                            target_faction = red_name if target_key == "valkyra" else green_name
+                        elif len(red_players) <= len(green_players):
                             target_faction = red_name
                             target_key = "valkyra"
-                            red_players.append(p)
                         else:
                             target_faction = green_name
                             target_key = "manticore"
-                            green_players.append(p)
                             
+                        if target_key == "valkyra":
+                            red_players.append(p)
+                        else:
+                            green_players.append(p)
+
                         try:
                             await rcon_client.switch_faction(p.steamId, target_faction)
                             recently_swapped_players[p.steamId] = now_ts
@@ -438,78 +480,68 @@ async def mode_50v50_loop():
                         except Exception as err:
                             logger.error(f"[50v50 Mode] Failed to move {p.steamId} to {target_faction}: {err}")
 
-                # Step 2: Auto-teambalancing between Red and Green (since in-game balancing is unlocked)
-                # Check 1: 1-minute warmup grace period at match start (matchSeconds < 60)
-                # Allows squads and friends to connect and select their faction during initial loading without aggressive shifts.
-                if match_seconds is not None and match_seconds < 60:
-                    logger.debug(f"[50v50 Mode] Warmup grace period active (matchSeconds={match_seconds}s < 60s). Skipping Red vs Green auto-balancing.")
-                else:
-                    diff = len(red_players) - len(green_players)
-                    if abs(diff) >= 2:
-                        count_to_move = abs(diff) // 2
-                        if diff > 0:
-                            donor_team = red_players
+                # Step 2: Process new entrants joining Valkyra or Manticore
+                is_warmup = (match_seconds is not None and match_seconds < 60)
+                for p, f_canonical in new_entrants:
+                    if not p.steamId:
+                        continue
+                    if is_warmup:
+                        # 1-minute warmup grace period: Free selection for squads/friends
+                        player_team_history[p.steamId] = {
+                            "current_faction": f_canonical,
+                            "assigned_faction": f_canonical,
+                            "joined_team_at": now_ts,
+                        }
+                        if f_canonical == "valkyra":
+                            red_players.append(p)
+                        else:
+                            green_players.append(p)
+                        logger.info(f"[50v50 Mode] Warmup entrant {p.name} ({p.steamId}) joined {f_canonical} (R:{len(red_players)}, G:{len(green_players)})")
+                    else:
+                        # Post-warmup (matchSeconds >= 60): Overpopulation Gatekeeper
+                        # If entrant chooses a team that already has more players than the other, redirect and lock!
+                        is_overpopulating = False
+                        if f_canonical == "valkyra" and len(red_players) > len(green_players):
+                            is_overpopulating = True
                             target_faction = green_name
                             target_key = "manticore"
-                            donor_name = red_name
-                        else:
-                            donor_team = green_players
+                        elif f_canonical == "manticore" and len(green_players) > len(red_players):
+                            is_overpopulating = True
                             target_faction = red_name
                             target_key = "valkyra"
-                            donor_name = green_name
 
-                        # STRICT FAIRNESS RULE:
-                        # 1. Combat veterans (cash > 0 or K/D > 0) are 100% IMMUNE.
-                        # 2. Base deployment guard: Only recruits who joined <= 24 seconds ago are eligible.
-                        #    Anyone on the team > 24 seconds is protected (likely buying vehicles/gear at base terminal).
-                        # 3. Exclude anyone in the 60s swap cooldown.
-                        eligible_candidates = []
-                        for p in donor_team:
-                            if not p.steamId:
-                                continue
-                            if (now_ts - recently_swapped_players.get(p.steamId, 0)) <= 60:
-                                continue
-
-                            hist = player_team_history.get(p.steamId, {})
-                            joined_at = hist.get("joined_team_at", now_ts)
-                            time_on_team = now_ts - joined_at
-
-                            has_combat_footprint = ((p.cash or 0) > 0) or ((p.kills or 0) > 0) or ((p.deaths or 0) > 0)
-                            is_fresh_recruit = (not has_combat_footprint) and (time_on_team <= 24)
-
-                            if is_fresh_recruit:
-                                eligible_candidates.append(p)
-
-                        if not eligible_candidates:
-                            logger.info(f"[50v50 Mode] Teambalance: {donor_name} has {len(donor_team)} vs {target_faction} ({len(donor_team) - abs(diff)}), but all players on {donor_name} are protected (combat veterans or base deployment > 24s). Keeping teams as-is until new players connect.")
-                        else:
-                            # Sort eligible fresh candidates by newest join time (-joined_team_at)
-                            def candidate_sort_key(p):
-                                hist = player_team_history.get(p.steamId, {})
-                                joined_at = hist.get("joined_team_at", now_ts)
-                                return -joined_at
-
-                            eligible_candidates.sort(key=candidate_sort_key)
-                            actual_move = min(count_to_move, len(eligible_candidates))
-
-                            logger.info(f"[50v50 Mode] Teambalance triggered! {donor_name} has {len(donor_team)} vs {target_faction} ({len(donor_team) - abs(diff)}). Moving {actual_move} eligible fresh candidate(s)...")
-
-                            for p in eligible_candidates[:actual_move]:
+                        if is_overpopulating:
+                            logger.info(f"[50v50 Mode] Overpopulation Gatekeeper: {p.name} ({p.steamId}) tried to join {f_canonical} (R:{len(red_players)} vs G:{len(green_players)}). Redirecting to {target_faction}!")
+                            try:
+                                await rcon_client.switch_faction(p.steamId, target_faction)
+                                recently_swapped_players[p.steamId] = now_ts
+                                player_team_history[p.steamId] = {
+                                    "current_faction": target_key,
+                                    "assigned_faction": target_key,
+                                    "joined_team_at": now_ts,
+                                }
+                                if target_key == "valkyra":
+                                    red_players.append(p)
+                                else:
+                                    green_players.append(p)
                                 try:
-                                    await rcon_client.switch_faction(p.steamId, target_faction)
-                                    recently_swapped_players[p.steamId] = now_ts
-                                    player_team_history[p.steamId] = {
-                                        "current_faction": target_key,
-                                        "assigned_faction": target_key,
-                                        "joined_team_at": now_ts,
-                                    }
-                                    logger.info(f"[50v50 Mode] Rebalanced {p.name} ({p.steamId}, cash=${p.cash or 0}, tenure={round(now_ts - hist.get('joined_team_at', now_ts), 1)}s) {donor_name} -> {target_faction}")
-                                    try:
-                                        await rcon_client.send_player_message(p.steamId, f"Se te ha asignado al equipo {target_faction} para balancear la partida.")
-                                    except Exception:
-                                        pass
-                                except Exception as err:
-                                    logger.error(f"[50v50 Mode] Failed to rebalance {p.steamId} to {target_faction}: {err}")
+                                    await rcon_client.send_player_message(p.steamId, f"Se te ha asignado al equipo {target_faction} para balancear la partida.")
+                                except Exception:
+                                    pass
+                            except Exception as err:
+                                logger.error(f"[50v50 Mode] Failed to redirect {p.steamId} to {target_faction}: {err}")
+                        else:
+                            # Entrant picked smaller or equal team
+                            player_team_history[p.steamId] = {
+                                "current_faction": f_canonical,
+                                "assigned_faction": f_canonical,
+                                "joined_team_at": now_ts,
+                            }
+                            if f_canonical == "valkyra":
+                                red_players.append(p)
+                            else:
+                                green_players.append(p)
+                            logger.info(f"[50v50 Mode] Entrant {p.name} ({p.steamId}) accepted into {f_canonical} (R:{len(red_players)}, G:{len(green_players)})")
 
         except Exception as e:
             logger.error(f"[50v50 Mode] Error in 50v50 loop: {e}")

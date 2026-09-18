@@ -185,67 +185,73 @@ async def run_50v50_step(all_players: List[MockRconPlayer], now_ts: float, match
     blue_players = []
     red_players = []
     green_players = []
+    new_entrants = []
 
+    # First pass: Categorize existing players vs new entrants
     for p in all_players:
         f = (p.faction or "").strip().lower()
         if f.startswith("lone"):
             blue_players.append(p)
-            f_canonical = "lonestar"
         elif f.startswith("valk"):
             f_canonical = "valkyra"
+            if not p.steamId:
+                continue
+            if p.steamId not in player_team_history:
+                new_entrants.append((p, f_canonical))
+            else:
+                hist = player_team_history[p.steamId]
+                bot_swapped = (now_ts - recently_swapped_players.get(p.steamId, 0)) < 15
+                assigned = hist.get("assigned_faction", "valkyra")
+                if not bot_swapped and assigned != "valkyra":
+                    revert_target = green_name
+                    switched_calls.append((p.steamId, revert_target))
+                    recently_swapped_players[p.steamId] = now_ts
+                    whisper_calls.append((p.steamId, "Cambio de equipo no permitido durante la partida."))
+                    green_players.append(p)
+                else:
+                    hist["current_faction"] = "valkyra"
+                    red_players.append(p)
         elif f.startswith("mant"):
             f_canonical = "manticore"
+            if not p.steamId:
+                continue
+            if p.steamId not in player_team_history:
+                new_entrants.append((p, f_canonical))
+            else:
+                hist = player_team_history[p.steamId]
+                bot_swapped = (now_ts - recently_swapped_players.get(p.steamId, 0)) < 15
+                assigned = hist.get("assigned_faction", "manticore")
+                if not bot_swapped and assigned != "manticore":
+                    revert_target = red_name
+                    switched_calls.append((p.steamId, revert_target))
+                    recently_swapped_players[p.steamId] = now_ts
+                    whisper_calls.append((p.steamId, "Cambio de equipo no permitido durante la partida."))
+                    red_players.append(p)
+                else:
+                    hist["current_faction"] = "manticore"
+                    green_players.append(p)
         else:
-            # White, None, spectators are strictly ignored
             continue
-
-        if p.steamId and f_canonical in ("valkyra", "manticore"):
-            hist = player_team_history.get(p.steamId)
-            if not hist:
-                player_team_history[p.steamId] = {
-                    "current_faction": f_canonical,
-                    "assigned_faction": f_canonical,
-                    "joined_team_at": now_ts,
-                }
-            else:
-                if hist["current_faction"] != f_canonical:
-                    old_f = hist["current_faction"]
-                    bot_swapped = (now_ts - recently_swapped_players.get(p.steamId, 0)) < 15
-
-                    # ARMA-STYLE STRICT LOCK: If player manually switched between Red and Green, block & revert!
-                    if not bot_swapped:
-                        assigned = hist.get("assigned_faction", old_f)
-                        if assigned in ("valkyra", "manticore") and assigned != f_canonical:
-                            revert_target = red_name if assigned == "valkyra" else green_name
-                            switched_calls.append((p.steamId, revert_target))
-                            recently_swapped_players[p.steamId] = now_ts
-                            whisper_calls.append((p.steamId, "Cambio de equipo no permitido durante la partida."))
-                            if assigned == "valkyra":
-                                red_players.append(p)
-                            else:
-                                green_players.append(p)
-                            continue
-
-                    hist["current_faction"] = f_canonical
-                    hist["joined_team_at"] = now_ts
-
-            if f_canonical == "valkyra":
-                red_players.append(p)
-            else:
-                green_players.append(p)
 
     # Step 1: Drain Blue
     if blue_players:
         for p in blue_players:
             if not p.steamId:
                 continue
-            if len(red_players) <= len(green_players):
+            existing_hist = player_team_history.get(p.steamId)
+            if existing_hist and existing_hist.get("assigned_faction") in ("valkyra", "manticore"):
+                target_key = existing_hist["assigned_faction"]
+                target_faction = red_name if target_key == "valkyra" else green_name
+            elif len(red_players) <= len(green_players):
                 target_faction = red_name
                 target_key = "valkyra"
-                red_players.append(p)
             else:
                 target_faction = green_name
                 target_key = "manticore"
+
+            if target_key == "valkyra":
+                red_players.append(p)
+            else:
                 green_players.append(p)
 
             switched_calls.append((p.steamId, target_faction))
@@ -257,55 +263,33 @@ async def run_50v50_step(all_players: List[MockRconPlayer], now_ts: float, match
                 "joined_team_at": now_ts,
             }
 
-    # Step 2: Balance Red vs Green
-    # Check 1: 1-minute warmup grace period at match start (match_seconds < 60)
-    if match_seconds is not None and match_seconds < 60:
-        return
-
-    diff = len(red_players) - len(green_players)
-    if abs(diff) >= 2:
-        count_to_move = abs(diff) // 2
-        if diff > 0:
-            donor_team = red_players
-            target_faction = green_name
-            target_key = "manticore"
+    # Step 2: Process new entrants
+    is_warmup = (match_seconds is not None and match_seconds < 60)
+    for p, f_canonical in new_entrants:
+        if not p.steamId:
+            continue
+        if is_warmup:
+            player_team_history[p.steamId] = {
+                "current_faction": f_canonical,
+                "assigned_faction": f_canonical,
+                "joined_team_at": now_ts,
+            }
+            if f_canonical == "valkyra":
+                red_players.append(p)
+            else:
+                green_players.append(p)
         else:
-            donor_team = green_players
-            target_faction = red_name
-            target_key = "valkyra"
+            is_overpopulating = False
+            if f_canonical == "valkyra" and len(red_players) > len(green_players):
+                is_overpopulating = True
+                target_faction = green_name
+                target_key = "manticore"
+            elif f_canonical == "manticore" and len(green_players) > len(red_players):
+                is_overpopulating = True
+                target_faction = red_name
+                target_key = "valkyra"
 
-        # STRICT FAIRNESS RULE:
-        # 1. Combat veterans (cash > 0 or K/D > 0) are 100% IMMUNE.
-        # 2. Base deployment guard: Only recruits who joined <= 24 seconds ago are eligible.
-        #    Anyone on the team > 24 seconds is protected (likely buying vehicles/gear at base terminal).
-        # 3. Exclude anyone in the 60s swap cooldown.
-        eligible_candidates = []
-        for p in donor_team:
-            if not p.steamId:
-                continue
-            if (now_ts - recently_swapped_players.get(p.steamId, 0)) <= 60:
-                continue
-
-            hist = player_team_history.get(p.steamId, {})
-            joined_at = hist.get("joined_team_at", now_ts)
-            time_on_team = now_ts - joined_at
-
-            has_combat_footprint = ((p.cash or 0) > 0) or ((p.kills or 0) > 0) or ((p.deaths or 0) > 0)
-            is_fresh_recruit = (not has_combat_footprint) and (time_on_team <= 24)
-
-            if is_fresh_recruit:
-                eligible_candidates.append(p)
-
-        if eligible_candidates:
-            def candidate_sort_key(p):
-                hist = player_team_history.get(p.steamId, {})
-                joined_at = hist.get("joined_team_at", now_ts)
-                return -joined_at
-
-            eligible_candidates.sort(key=candidate_sort_key)
-            actual_move = min(count_to_move, len(eligible_candidates))
-
-            for p in eligible_candidates[:actual_move]:
+            if is_overpopulating:
                 switched_calls.append((p.steamId, target_faction))
                 whisper_calls.append((p.steamId, f"Se te ha asignado al equipo {target_faction} para balancear la partida."))
                 recently_swapped_players[p.steamId] = now_ts
@@ -314,6 +298,20 @@ async def run_50v50_step(all_players: List[MockRconPlayer], now_ts: float, match
                     "assigned_faction": target_key,
                     "joined_team_at": now_ts,
                 }
+                if target_key == "valkyra":
+                    red_players.append(p)
+                else:
+                    green_players.append(p)
+            else:
+                player_team_history[p.steamId] = {
+                    "current_faction": f_canonical,
+                    "assigned_faction": f_canonical,
+                    "joined_team_at": now_ts,
+                }
+                if f_canonical == "valkyra":
+                    red_players.append(p)
+                else:
+                    green_players.append(p)
 
 
 # ==============================================================================
@@ -419,7 +417,7 @@ async def main():
             MockRconPlayer(steamId=f"orig_m_{i}", name=f"OrigM_{i}", faction="Manticore", kills=4, deaths=2, cash=1000)
             for i in range(20)
         ]
-        await run_50v50_step(valk_team + mant_team, now_ts=1000.0)
+        await run_50v50_step(valk_team + mant_team, now_ts=1000.0, match_seconds=30)
         assert len(switched_calls) == 0, "Balanced 20v20 should trigger 0 switches."
 
         # At t=1500: 3 players from Manticore attempt to switch in-game to Valkyra (overpopulating Valkyra!)
@@ -436,68 +434,72 @@ async def main():
                 "joined_team_at": 1000.0,
             }
 
-        # 2 new players connect and join Valkyra at t=1690 (without combat footprint)
-        new_valk_players = [
-            MockRconPlayer(steamId="new_v_1", name="NewV_1", faction="Valkyra", kills=0, deaths=0, cash=0),
-            MockRconPlayer(steamId="new_v_2", name="NewV_2", faction="Valkyra", kills=0, deaths=0, cash=0),
-        ]
-        player_team_history["new_v_1"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 1690.0}
-        player_team_history["new_v_2"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 1695.0}
+        for op in overpop_players:
+            player_team_history[op.steamId] = {
+                "current_faction": "manticore",
+                "assigned_faction": "manticore",
+                "joined_team_at": 1000.0,
+            }
 
-        # Current roster: Valkyra has 20 originals + 3 attempting overpop + 2 newcomers = 25 players.
-        # Manticore has 17 players.
-        current_roster = valk_team + overpop_players + new_valk_players + mant_team[:17]
-        await run_50v50_step(current_roster, now_ts=1700.0)
+        # 1 new player connects and joins Valkyra at t=1700 (NOT in player_team_history yet)
+        new_valk_player = MockRconPlayer(steamId="new_v_entrant", name="NewV_Entrant", faction="Valkyra", kills=0, deaths=0, cash=0)
+
+        # Current roster: Valkyra has 20 originals + 3 attempting overpop + 1 newcomer = 24 players.
+        # Manticore has 16 players. After reverting the 3 cheaters to Manticore, Manticore has 19 vs Valkyra 20.
+        # Thus, Valkyra is overpopulated, and the newcomer trying to pick Valkyra is redirected to Manticore!
+        current_roster = valk_team + overpop_players + [new_valk_player] + mant_team[:16]
+        await run_50v50_step(current_roster, now_ts=1700.0, match_seconds=120)
 
         # 1. The 3 attempting to switch MUST be immediately blocked and reverted back to Manticore!
-        reverted = [sid for sid, target in switched_calls if target == "Manticore"]
+        reverted = [sid for sid, target in switched_calls if target == "Manticore" and sid.startswith("overpop")]
+        assert len(reverted) == 3
         assert "overpop_1" in reverted and "overpop_2" in reverted and "overpop_3" in reverted
 
         # 2. All 3 must receive whisper: "Cambio de equipo no permitido durante la partida."
         blocked_whispers = [sid for sid, msg in whisper_calls if "Cambio de equipo no permitido" in msg]
         assert len(blocked_whispers) == 3
-        assert "overpop_1" in blocked_whispers and "overpop_2" in blocked_whispers and "overpop_3" in blocked_whispers
 
-        # 3. In Step 2 (Valkyra 22 vs Manticore 20 -> diff=2, count=1):
-        # The newcomer with newest tenure <= 24s (new_v_2) is moved to balance, receiving whisper!
-        balanced_whispers = [sid for sid, msg in whisper_calls if "balancear la partida" in msg]
-        assert len(balanced_whispers) == 1
-        assert balanced_whispers[0] == "new_v_2"
+        # 3. The new entrant who tried to join overpopulated Valkyra is intercepted at the gate and redirected to Manticore!
+        assert ("new_v_entrant", "Manticore") in switched_calls
+        assert ("new_v_entrant", "Se te ha asignado al equipo Manticore para balancear la partida.") in whisper_calls
 
         # 4. Check that NONE of the 20 original veterans were moved
         for v in valk_team:
             assert v.steamId not in [sid for sid, target in switched_calls], f"ERROR: Original player {v.steamId} was moved!"
 
-        print("  ✅ PASSED: Los 3 que intentaron cambiar fueron bloqueados, devueltos a Manticore con whisper. El recién llegado fue auto-balanceado con whisper. Los 20 originales fueron 100% protegidos.")
+        print("  ✅ PASSED: Los 3 que intentaron cambiar fueron bloqueados, devueltos a Manticore con whisper. El nuevo entrante sobrepopulador fue redirigido a Manticore con whisper. Los 20 originales fueron 100% protegidos.")
 
         # -------------------------------------------------------------
-        # Q5: Prioridad de orden por antigüedad, cash y actividad
+        # Q5: Inmunidad absoluta de jugadores existentes en el equipo vs Nuevo entrante
         # -------------------------------------------------------------
-        print("\n▶ Auto-Pregunta 5: ¿Cómo se desempata entre jugadores legítimos (Antigüedad > Cash > K/D)?")
+        print("\n▶ Auto-Pregunta 5: ¿Un jugador ya en equipo (esperando heli o en base) es inmune y solo el nuevo entrante es redirigido?")
         player_team_history.clear()
         recently_swapped_players.clear()
 
-        # Senior player: joined at t=500, cash=$0, K/D=0/0
-        p_senior = MockRconPlayer(steamId="senior_p", name="Senior", faction="Valkyra", kills=0, deaths=0, cash=0)
-        player_team_history["senior_p"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 500.0}
+        # Existing player on Valkyra waiting for a helicopter (already registered, $0 cash, 0 K/D)
+        p_heli_waiter = MockRconPlayer(steamId="heli_waiter", name="HeliWaiter", faction="Valkyra", kills=0, deaths=0, cash=0)
+        player_team_history["heli_waiter"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 500.0}
 
-        # Junior rich: joined at t=800, cash=$2000, K/D=10/2 (inmune por tener combate)
-        p_jr_rich = MockRconPlayer(steamId="jr_rich", name="JrRich", faction="Valkyra", kills=10, deaths=2, cash=2000)
-        player_team_history["jr_rich"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 800.0}
+        # Existing veteran on Valkyra
+        p_vet = MockRconPlayer(steamId="vet_valk", name="VetValk", faction="Valkyra", kills=10, deaths=2, cash=2000)
+        player_team_history["vet_valk"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 500.0}
 
-        # Junior fresh: joined at t=885, cash=$0, K/D=0/0 (elegible por unirse hace <= 24s a t=900)
-        p_jr_fresh = MockRconPlayer(steamId="jr_fresh", name="JrFresh", faction="Valkyra", kills=0, deaths=0, cash=0)
-        player_team_history["jr_fresh"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 885.0}
-
-        # Valkyra has 3 players, Manticore has 1 player -> diff=2, count_to_move=1
+        # Existing single Manticore player
         mant_single = [MockRconPlayer(steamId="m_single", name="MSingle", faction="Manticore", kills=1, deaths=1, cash=0)]
-        valk_trio = [p_senior, p_jr_rich, p_jr_fresh]
+        player_team_history["m_single"] = {"current_faction": "manticore", "assigned_faction": "manticore", "joined_team_at": 500.0}
 
-        await run_50v50_step(valk_trio + mant_single, now_ts=900.0)
+        # New incoming entrant trying to pick Valkyra when Valkyra has 2 and Manticore has 1
+        p_new_entrant = MockRconPlayer(steamId="new_entrant_1", name="NewEntrant", faction="Valkyra", kills=0, deaths=0, cash=0)
+
+        await run_50v50_step([p_heli_waiter, p_vet, p_new_entrant] + mant_single, now_ts=900.0, match_seconds=120)
+
+        # The heli waiter was NOT moved!
+        assert "heli_waiter" not in [sid for sid, _ in switched_calls], "ERROR: Heli waiter was moved!"
+        # Only the new entrant was redirected to Manticore!
         assert len(switched_calls) == 1
-        assert switched_calls[0][0] == "jr_fresh", f"Expected jr_fresh to be moved, got {switched_calls[0][0]}"
-        assert whisper_calls[0] == ("jr_fresh", "Se te ha asignado al equipo Manticore para balancear la partida.")
-        print("  ✅ PASSED: JrRich con combate es inmune. JrFresh ($0 cash, sin kills, tenure <= 24s) es transferido con whisper de balanceo.")
+        assert switched_calls[0] == ("new_entrant_1", "Manticore")
+        assert whisper_calls[0] == ("new_entrant_1", "Se te ha asignado al equipo Manticore para balancear la partida.")
+        print("  ✅ PASSED: El jugador que esperaba helicóptero fue 100% inmune. Solo el nuevo entrante sobrepopulador fue redirigido con whisper.")
 
         # -------------------------------------------------------------
         # Q6: Aislamiento absoluto de White / Espectadores
@@ -506,13 +508,18 @@ async def main():
         player_team_history.clear()
         recently_swapped_players.clear()
 
+        for v in valk_team[:10]:
+            player_team_history[v.steamId] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 500.0}
+        for m in mant_team[:10]:
+            player_team_history[m.steamId] = {"current_faction": "manticore", "assigned_faction": "manticore", "joined_team_at": 500.0}
+
         white_players = [
             MockRconPlayer(steamId="white_1", name="WhitePlayer1", faction="White", kills=0, deaths=0, cash=0),
             MockRconPlayer(steamId="white_2", name="Spectator1", faction="", kills=0, deaths=0, cash=0),
             MockRconPlayer(steamId="white_3", name="NonePlayer", faction="None", kills=0, deaths=0, cash=0),
         ]
         roster_with_white = valk_team[:10] + mant_team[:10] + white_players
-        await run_50v50_step(roster_with_white, now_ts=1000.0)
+        await run_50v50_step(roster_with_white, now_ts=1000.0, match_seconds=120)
         assert len(switched_calls) == 0, "No one should be moved in balanced 10v10"
         for wp in white_players:
             assert wp.steamId not in player_team_history, f"White player {wp.steamId} was wrongly tracked!"
@@ -527,26 +534,41 @@ async def main():
 
         v50 = [MockRconPlayer(steamId=f"v_{i}", name=f"V_{i}", faction="Valkyra") for i in range(50)]
         m49 = [MockRconPlayer(steamId=f"m_{i}", name=f"M_{i}", faction="Manticore") for i in range(49)]
-        await run_50v50_step(v50 + m49, now_ts=2000.0)
+        for v in v50:
+            player_team_history[v.steamId] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 500.0}
+        for m in m49:
+            player_team_history[m.steamId] = {"current_faction": "manticore", "assigned_faction": "manticore", "joined_team_at": 500.0}
+
+        await run_50v50_step(v50 + m49, now_ts=2000.0, match_seconds=120)
         assert len(switched_calls) == 0, "Delta of 1 must NOT trigger any team transfers!"
         print("  ✅ PASSED: Diferencia de 1 jugador no dispara transferencias (evita bucle infinito 50v49 <-> 49v50).")
 
         # -------------------------------------------------------------
-        # Q8: Cooldown anti ping-pong (60 segundos)
+        # Q8: Inmunidad de jugadores existentes vs nuevo sobrepopulador
         # -------------------------------------------------------------
-        print("\n▶ Auto-Pregunta 8: ¿El cooldown de 60 segundos previene que un jugador rebote entre equipos?")
-        recently_swapped_players["bounced_player"] = 3000.0
-        p_bounced = MockRconPlayer(steamId="bounced_player", name="Bounced", faction="Valkyra", kills=0, deaths=0, cash=0)
-        p_other = MockRconPlayer(steamId="other_candidate", name="Other", faction="Valkyra", kills=0, deaths=0, cash=0)
-        p_third = MockRconPlayer(steamId="third_candidate", name="Third", faction="Valkyra", kills=0, deaths=0, cash=0)
-        mant_dummy = [MockRconPlayer(steamId="md", name="MD", faction="Manticore")]
+        print("\n▶ Auto-Pregunta 8: ¿Un jugador existente es protegido y solo el nuevo entrante sobrepopulador es transferido?")
+        player_team_history.clear()
+        recently_swapped_players.clear()
 
-        # At t=3030 (30 seconds after swap, still in cooldown)
-        # Valkyra has 3 players, Manticore has 1 -> diff=2, count_to_move=1
-        await run_50v50_step([p_bounced, p_other, p_third] + mant_dummy, now_ts=3030.0)
+        # Existing player on Valkyra
+        p_existing = MockRconPlayer(steamId="existing_player", name="Existing", faction="Valkyra", kills=0, deaths=0, cash=0)
+        player_team_history["existing_player"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 2000.0}
+
+        # Existing player on Manticore
+        mant_dummy = [MockRconPlayer(steamId="md", name="MD", faction="Manticore")]
+        player_team_history["md"] = {"current_faction": "manticore", "assigned_faction": "manticore", "joined_team_at": 2000.0}
+
+        # New entrant tries to join Valkyra when Valkyra has 1 and Manticore has 1 (balanced: entrant accepted into Valkyra -> 2v1)
+        p_new_entrant = MockRconPlayer(steamId="new_candidate", name="NewCandidate", faction="Valkyra", kills=0, deaths=0, cash=0)
+
+        # Another new entrant connects and also tries to join Valkyra (now overpopulated: 2 > 1 -> redirected!)
+        p_overpop_entrant = MockRconPlayer(steamId="overpop_candidate", name="OverpopCandidate", faction="Valkyra", kills=0, deaths=0, cash=0)
+
+        await run_50v50_step([p_existing, p_new_entrant, p_overpop_entrant] + mant_dummy, now_ts=3030.0, match_seconds=120)
         assert len(switched_calls) == 1
-        assert switched_calls[0][0] == "other_candidate", f"Expected other_candidate, but got {switched_calls[0][0]}"
-        print("  ✅ PASSED: Jugador en cooldown es protegido de rebotar y se selecciona el siguiente candidato.")
+        assert switched_calls[0][0] == "overpop_candidate", f"Expected overpop_candidate, but got {switched_calls[0][0]}"
+        assert "existing_player" not in [sid for sid, _ in switched_calls]
+        print("  ✅ PASSED: Jugador existente protegido al 100%. Solo el nuevo entrante sobrepopulador fue transferido a Manticore.")
 
         # -------------------------------------------------------------
         # Q9: Ciclo de vida: pending_enable, pending_disable y rotación
@@ -623,6 +645,10 @@ async def main():
         blues = [MockRconPlayer(steamId=f"blue_{i}", name=f"Blue_{i}", faction="Lonestar") for i in range(4)]
         reds = [MockRconPlayer(steamId=f"red_{i}", name=f"Red_{i}", faction="Valkyra") for i in range(20)]
         greens = [MockRconPlayer(steamId=f"green_{i}", name=f"Green_{i}", faction="Manticore") for i in range(18)]
+        for r in reds:
+            player_team_history[r.steamId] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 2000.0}
+        for g in greens:
+            player_team_history[g.steamId] = {"current_faction": "manticore", "assigned_faction": "manticore", "joined_team_at": 2000.0}
 
         # Green has 18, Red has 20.
         # Blue 0 should go to Green (now 19).
@@ -806,24 +832,23 @@ async def main():
         print("  ✅ PASSED: Ningún veterano original fue transferido. Se mantuvieron 50 vs 45 sin enojar a nadie.")
 
         # Now 2 fresh new players connect to Valkyra with $0 cash and 0 K/D:
+        # 2 new entrants connect and try to join Valkyra (overpopulated: 50 > 45)
         p_new_1 = MockRconPlayer(steamId="fresh_1", name="Fresh1", faction="Valkyra", kills=0, deaths=0, cash=0)
         p_new_2 = MockRconPlayer(steamId="fresh_2", name="Fresh2", faction="Valkyra", kills=0, deaths=0, cash=0)
-        player_team_history["fresh_1"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 2050.0}
-        player_team_history["fresh_2"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 2050.0}
 
-        # Valkyra now has 52 vs Manticore 45 (diff = 7, count_to_move = 3, but only 2 eligible fresh players)
-        await run_50v50_step(v50_vets + [p_new_1, p_new_2] + m45_players, now_ts=2060.0)
+        # Valkyra has 50 vs Manticore 45. 2 new entrants attempt to join Valkyra.
+        await run_50v50_step(v50_vets + [p_new_1, p_new_2] + m45_players, now_ts=2060.0, match_seconds=120)
 
-        # Only the 2 fresh players are moved!
+        # Both new entrants are intercepted at the gate and redirected to Manticore!
         moved = [sid for sid, target in switched_calls]
         assert len(moved) == 2
         assert "fresh_1" in moved and "fresh_2" in moved
         for v in v50_vets:
             assert v.steamId not in moved, f"ERROR: Veteran {v.steamId} was moved!"
-        # Whispers sent to the 2 fresh players
+        # Whispers sent to the 2 fresh entrants
         assert ("fresh_1", "Se te ha asignado al equipo Manticore para balancear la partida.") in whisper_calls
         assert ("fresh_2", "Se te ha asignado al equipo Manticore para balancear la partida.") in whisper_calls
-        print("  ✅ PASSED: Al ingresar 2 nuevos sin combatir ($0 cash), el bot movió a los 2 nuevos con whispers protegiendo al 100% de los veteranos.")
+        print("  ✅ PASSED: Al ingresar 2 nuevos sobrepopuladores, el bot los redirigió a Manticore con whispers, protegiendo al 100% de los veteranos.")
 
         # -------------------------------------------------------------
         # Q18: Asimilación de Azules como originales y bloqueo ARMA si intentan cambiarse
@@ -832,9 +857,14 @@ async def main():
         player_team_history.clear()
         recently_swapped_players.clear()
 
+        for v in v50_vets:
+            player_team_history[v.steamId] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 2000.0}
+        for m in m45_players:
+            player_team_history[m.steamId] = {"current_faction": "manticore", "assigned_faction": "manticore", "joined_team_at": 2000.0}
+
         # Blue player spawns in Lonestar
         blue_p = MockRconPlayer(steamId="blue_veteran", name="BlueVet", faction="Lonestar", kills=0, deaths=0, cash=0)
-        await run_50v50_step([blue_p] + v50_vets[:10] + m45_players[:10], now_ts=3000.0)
+        await run_50v50_step([blue_p] + v50_vets[:10] + m45_players[:10], now_ts=3000.0, match_seconds=120)
 
         # Step 1 transferred him to whichever was equal/smaller
         assert len(switched_calls) == 1
@@ -859,7 +889,7 @@ async def main():
         blue_p.faction = other_target
 
         # Step runs at t=3100 (bot detects unpermitted manual switch)
-        await run_50v50_step([blue_p] + v50_vets[:25] + m45_players[:20], now_ts=3100.0)
+        await run_50v50_step([blue_p] + v50_vets[:25] + m45_players[:20], now_ts=3100.0, match_seconds=120)
 
         # ARMA lock must immediately revert the player back to assigned_target!
         assert len(switched_calls) == 1
@@ -879,17 +909,13 @@ async def main():
         # Scenario:
         # 1 Lonestar player (needs assignment)
         # 1 Valkyra player trying manual switch to Manticore (needs block & revert)
-        # 2 Fresh Valkyra arrivals ($0 cash) with Valkyra having 24 vs Manticore 20 (needs auto-balance)
+        # 1 Fresh Valkyra arrival trying to overpopulate Valkyra (22 vs 20)
         # 1 White spectator (must be ignored)
         p_blue = MockRconPlayer(steamId="flow_blue", name="FlowBlue", faction="Lonestar")
         p_cheater = MockRconPlayer(steamId="flow_rebel", name="FlowRebel", faction="Manticore")
         player_team_history["flow_rebel"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 1000.0}
 
         p_fresh_1 = MockRconPlayer(steamId="flow_fresh_1", name="FreshA", faction="Valkyra", kills=0, deaths=0, cash=0)
-        p_fresh_2 = MockRconPlayer(steamId="flow_fresh_2", name="FreshB", faction="Valkyra", kills=0, deaths=0, cash=0)
-        player_team_history["flow_fresh_1"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 1990.0}
-        player_team_history["flow_fresh_2"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 1995.0}
-
         p_white = MockRconPlayer(steamId="flow_white", name="FlowWhite", faction="White", kills=0, deaths=0, cash=0)
 
         v_base = [MockRconPlayer(steamId=f"v_base_{i}", name=f"VBase_{i}", faction="Valkyra", kills=5, cash=1000) for i in range(22)]
@@ -899,8 +925,8 @@ async def main():
         for m in m_base:
             player_team_history[m.steamId] = {"current_faction": "manticore", "assigned_faction": "manticore", "joined_team_at": 1000.0}
 
-        all_flow = [p_blue, p_cheater, p_fresh_1, p_fresh_2, p_white] + v_base + m_base
-        await run_50v50_step(all_flow, now_ts=2000.0)
+        all_flow = [p_blue, p_cheater, p_fresh_1, p_white] + v_base + m_base
+        await run_50v50_step(all_flow, now_ts=2000.0, match_seconds=120)
 
         # 1. Flow rebel must have received "Cambio de equipo no permitido"
         assert ("flow_rebel", "Cambio de equipo no permitido durante la partida.") in whisper_calls
@@ -911,9 +937,7 @@ async def main():
         assert "Se te ha asignado al equipo" in blue_whispers[0]
 
         # 3. Flow fresh must have received "balancear la partida"
-        fresh_whispers = [msg for sid, msg in whisper_calls if sid.startswith("flow_fresh")]
-        assert len(fresh_whispers) >= 1
-        assert any("para balancear la partida" in msg for msg in fresh_whispers)
+        assert ("flow_fresh_1", "Se te ha asignado al equipo Manticore para balancear la partida.") in whisper_calls
 
         # 4. White player received ZERO whispers and ZERO switches
         white_actions = [sid for sid, _ in switched_calls if sid == "flow_white"]
@@ -934,32 +958,31 @@ async def main():
             MockRconPlayer(steamId=f"friend_{i}", name=f"Friend_{i}", faction="Valkyra", kills=0, deaths=0, cash=0)
             for i in range(5)
         ]
-        for f in squad_friends:
-            player_team_history[f.steamId] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 20.0}
 
         # Step runs at matchSeconds = 25s (< 60s warmup)
         await run_50v50_step(squad_friends, now_ts=25.0, match_seconds=25)
 
         # ZERO players moved between Red and Green during the first minute!
         assert len(switched_calls) == 0, f"ERROR: Friends were moved during early grace period! {switched_calls}"
+        for f in squad_friends:
+            assert player_team_history[f.steamId]["assigned_faction"] == "valkyra"
         print("  ✅ PASSED: Durante el primer minuto (25s < 60s), el auto-balanceo estuvo pausado y los 5 amigos quedaron juntos en Valkyra.")
 
         # -------------------------------------------------------------
-        # Q21: Protección de novato en base (> 24 segundos de antigüedad)
+        # Q21: Inmunidad absoluta de jugadores esperando vehículos / helicópteros
         # -------------------------------------------------------------
-        print("\n▶ Auto-Pregunta 21: ¿Un jugador con $0 cash que lleva > 24s comprando en base es protegido contra balanceo?")
+        print("\n▶ Auto-Pregunta 21: ¿Un jugador ya en equipo esperando un heli o comprando en base NUNCA es movido?")
         player_team_history.clear()
         recently_swapped_players.clear()
 
-        # Player in base for 35 seconds buying a tank ($0 cash earned, 0 K/D)
-        tank_buyer = MockRconPlayer(steamId="tank_buyer", name="TankBuyer", faction="Valkyra", kills=0, deaths=0, cash=0)
-        player_team_history["tank_buyer"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 2000.0}
+        # Player in base for 2 minutes waiting for a helicopter ($0 cash earned, 0 K/D)
+        heli_guy = MockRconPlayer(steamId="heli_guy", name="HeliGuy", faction="Valkyra", kills=0, deaths=0, cash=0)
+        player_team_history["heli_guy"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 2000.0}
 
-        # Fresh recruit who just connected 10 seconds ago ($0 cash, 0 K/D)
-        fresh_recruit = MockRconPlayer(steamId="fresh_recruit", name="FreshRecruit", faction="Valkyra", kills=0, deaths=0, cash=0)
-        player_team_history["fresh_recruit"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 2025.0}
+        # New incoming entrant choosing Valkyra at t=2120 (when Valkyra has 21 vs Manticore 20)
+        fresh_entrant = MockRconPlayer(steamId="fresh_entrant", name="FreshEntrant", faction="Valkyra", kills=0, deaths=0, cash=0)
 
-        # Valkyra has 20 veterans + tank_buyer + fresh_recruit = 22. Manticore has 20 -> diff = 2, count = 1.
+        # Valkyra has 20 veterans + heli_guy = 21. Manticore has 20.
         valk_vets = [MockRconPlayer(steamId=f"vv_{i}", name=f"VV_{i}", faction="Valkyra", kills=3, cash=1000) for i in range(20)]
         for v in valk_vets:
             player_team_history[v.steamId] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 1500.0}
@@ -967,14 +990,16 @@ async def main():
         for m in mant_vets:
             player_team_history[m.steamId] = {"current_faction": "manticore", "assigned_faction": "manticore", "joined_team_at": 1500.0}
 
-        # Run step at t=2035 (tenure: tank_buyer = 35s > 24s; fresh_recruit = 10s <= 24s)
-        await run_50v50_step(valk_vets + [tank_buyer, fresh_recruit] + mant_vets, now_ts=2035.0, match_seconds=120)
+        # Run step at t=2120 with match_seconds=120 (active autobalance)
+        await run_50v50_step(valk_vets + [heli_guy, fresh_entrant] + mant_vets, now_ts=2120.0, match_seconds=120)
 
-        # Only fresh_recruit is eligible! tank_buyer is PROTECTED because tenure > 24s!
+        # heli_guy was NOT moved! Heli and wallet are 100% safe!
+        assert "heli_guy" not in [sid for sid, _ in switched_calls]
+        # Only the new entrant who tried to join the overpopulated team was redirected!
         assert len(switched_calls) == 1
-        assert switched_calls[0] == ("fresh_recruit", "Manticore")
-        assert ("fresh_recruit", "Se te ha asignado al equipo Manticore para balancear la partida.") in whisper_calls
-        print("  ✅ PASSED: El comprador de tanque en base (> 24s) fue 100% protegido. Solo se movió al novato de 10s, evitando pérdida de vehículos.")
+        assert switched_calls[0] == ("fresh_entrant", "Manticore")
+        assert ("fresh_entrant", "Se te ha asignado al equipo Manticore para balancear la partida.") in whisper_calls
+        print("  ✅ PASSED: El jugador esperando helicóptero fue 100% protegido. Solo el nuevo entrante sobrepopulador fue redirigido al equipo contrario.")
 
         print("\n=======================================================")
         print("  TODAS LAS 21 AUTO-PREGUNTAS PASARON SATISFACTORIAMENTE!")

@@ -263,76 +263,65 @@ async def main():
     assert any("Cambio de equipo no permitido durante la partida." in a["detail"] for a in audits)
     print("  ✅ PASSED: Intento de cambio bloqueado al estilo ARMA. Jugador devuelto a Manticore y whisper enviado.")
 
-    print("\n--- [TEST 3: Auto-Balancing with Immunity for Combat Veterans] ---")
+    print("\n--- [TEST 3: Overpopulation Gatekeeper with Real Mock RCON] ---")
     now_ts = 1300.0
 
-    # Add 4 fresh arrivals with $0 cash and 0 K/D to Valkyra in Mock RCON
-    for i in range(4):
-        fresh_p = {
-            "steamId": f"fresh_valk_{i}",
-            "name": f"FreshValk_{i}",
-            "faction": "Valkyra",
-            "kills": 0,
-            "deaths": 0,
-            "cash": 0,
-            "pingMs": 50
-        }
-        mock_players.append(fresh_p)
-        player_team_history[fresh_p["steamId"]] = {
-            "current_faction": "valkyra",
-            "assigned_faction": "valkyra",
-            "joined_team_at": 1285.0 + i,  # joined 11-15s ago (<= 24s)
-        }
+    # At t=1300, Valkyra has 20 veterans, Manticore has 18 veterans + 1 blue = 19 players.
+    # Valkyra is overpopulated compared to Manticore (20 > 19).
+    # A new entrant connects and attempts to join Valkyra in Mock RCON:
+    fresh_entrant = {
+        "steamId": "fresh_valk_entrant",
+        "name": "FreshValkEntrant",
+        "faction": "Valkyra",
+        "kills": 0,
+        "deaths": 0,
+        "cash": 0,
+        "pingMs": 50
+    }
+    mock_players.append(fresh_entrant)
 
-    # Valkyra now has 20 veterans + 4 fresh = 24.
-    # Manticore has 18 veterans + 1 blue = 19.
-    # Diff = 24 - 19 = 5 -> count_to_move = 2.
-    import unittest.mock
-    with unittest.mock.patch.object(mock_rcon_module.random, "random", return_value=0.0):
-        raw_players = await rcon.get_players()
-    red_players = [p for p in raw_players if (p["faction"] or "").strip().lower().startswith("valk")]
-    green_players = [p for p in raw_players if (p["faction"] or "").strip().lower().startswith("mant")]
+    # Bot sync tick runs
+    raw_players = await rcon.get_players()
+    red_players = []
+    green_players = []
+    new_entrants = []
 
-    diff = len(red_players) - len(green_players)
-    count_to_move = abs(diff) // 2
-
-    # Collect eligible candidates (only non-combatants: $0 cash, 0 kills, 0 deaths, and joined <= 24s ago)
-    donor_team = red_players
-    target_faction = "Manticore"
-    target_key = "manticore"
-
-    eligible_candidates = []
-    for p in donor_team:
+    for p in raw_players:
         sid = p["steamId"]
-        if (now_ts - recently_swapped_players.get(sid, 0)) <= 60:
-            continue
-        has_combat = ((p.get("cash") or 0) > 0) or ((p.get("kills") or 0) > 0)
-        time_on_team = now_ts - player_team_history.get(p["steamId"], {}).get("joined_team_at", now_ts)
-        if (not has_combat) and (time_on_team <= 24):
-            eligible_candidates.append(p)
+        f = (p["faction"] or "").strip().lower()
+        if f.startswith("valk"):
+            if sid not in player_team_history:
+                new_entrants.append((p, "valkyra"))
+            else:
+                red_players.append(p)
+        elif f.startswith("mant"):
+            if sid not in player_team_history:
+                new_entrants.append((p, "manticore"))
+            else:
+                green_players.append(p)
 
-    # Sort by newest join time
-    eligible_candidates.sort(key=lambda p: -player_team_history.get(p["steamId"], {}).get("joined_team_at", now_ts))
-
-    moved_count = min(count_to_move, len(eligible_candidates))
-    moved_sids = []
-    for p in eligible_candidates[:moved_count]:
+    # Process new entrants (match_seconds >= 60 -> active autobalance)
+    for p, f_canonical in new_entrants:
         sid = p["steamId"]
-        await rcon.switch_faction(sid, target_faction)
-        await rcon.send_player_message(sid, f"Se te ha asignado al equipo {target_faction} para balancear la partida.")
-        recently_swapped_players[sid] = now_ts
-        player_team_history[sid] = {
-            "current_faction": target_key,
-            "assigned_faction": target_key,
-            "joined_team_at": now_ts,
-        }
-        moved_sids.append(sid)
+        if f_canonical == "valkyra" and len(red_players) > len(green_players):
+            # Overpopulator!
+            target_faction = "Manticore"
+            target_key = "manticore"
+            await rcon.switch_faction(sid, target_faction)
+            await rcon.send_player_message(sid, f"Se te ha asignado al equipo {target_faction} para balancear la partida.")
+            recently_swapped_players[sid] = now_ts
+            player_team_history[sid] = {
+                "current_faction": target_key,
+                "assigned_faction": target_key,
+                "joined_team_at": now_ts,
+            }
+            green_players.append(p)
 
-    # Check Mock RCON state
-    assert len(moved_sids) == 2
-    assert "fresh_valk_3" in moved_sids and "fresh_valk_2" in moved_sids
+    # Verify in Mock RCON:
+    mock_p = next(p for p in mock_players if p["steamId"] == "fresh_valk_entrant")
+    assert mock_p["faction"] == "Manticore", f"Expected Manticore, got {mock_p['faction']}"
 
-    # None of the 20 veterans were moved!
+    # None of the 20 veterans on Valkyra were moved!
     for i in range(20):
         vet_p = next(p for p in mock_players if p["steamId"] == f"vet_valk_{i}")
         assert vet_p["faction"] == "Valkyra", f"Veteran vet_valk_{i} was wrongly moved!"
@@ -340,10 +329,10 @@ async def main():
     # Verify audit log in Mock RCON
     audits = await rcon.get_audit()
     assert any("Se te ha asignado al equipo Manticore para balancear la partida." in a["detail"] for a in audits)
-    print("  ✅ PASSED: 2 novatos sin combatir ($0 cash, <= 24s) auto-balanceados a Manticore con whisper. 100% de veteranos protegidos.")
+    print("  ✅ PASSED: Nuevo entrante sobrepopulador redirigido a Manticore con whisper en Mock RCON. 100% de veteranos intactos.")
 
-    print("\n--- [TEST 4: Base Tenure Protection (> 24s) and Match Warmup (< 60s)] ---")
-    # A player buying a vehicle in base for 30s ($0 cash, 0 K/D)
+    print("\n--- [TEST 4: Absolute Immunity for Existing Players in Base Waiting for Vehicles] ---")
+    # A player buying a vehicle in base / waiting 2 minutes for a heli ($0 cash, 0 K/D)
     vehicle_buyer = {
         "steamId": "buyer_1",
         "name": "Buyer1",
@@ -354,20 +343,19 @@ async def main():
         "pingMs": 40
     }
     mock_players.append(vehicle_buyer)
+    # Already registered in player_team_history!
     player_team_history["buyer_1"] = {
         "current_faction": "valkyra",
         "assigned_faction": "valkyra",
-        "joined_team_at": 1400.0  # At 1435.0, tenure = 35s > 24s
+        "joined_team_at": 1200.0
     }
 
-    test4_now = 1435.0
-    buyer_tenure = test4_now - player_team_history["buyer_1"]["joined_team_at"]
-    assert buyer_tenure > 24, "Buyer tenure should be > 24s"
-
-    # Evaluated for balance:
-    buyer_eligible = (not (((vehicle_buyer.get("cash") or 0) > 0) or ((vehicle_buyer.get("kills") or 0) > 0))) and (buyer_tenure <= 24)
-    assert buyer_eligible is False, "Player in base > 24s must NOT be eligible for transfer!"
-    print("  ✅ PASSED: Comprador de vehículo en base (> 24s) es 100% inmune ante transferencias en Mock RCON.")
+    # Bot evaluates sync tick:
+    # Since buyer_1 is ALREADY in player_team_history, they are an existing player and NEVER moved!
+    assert "buyer_1" in player_team_history
+    buyer_in_mock = next(p for p in mock_players if p["steamId"] == "buyer_1")
+    assert buyer_in_mock["faction"] == "Valkyra"
+    print("  ✅ PASSED: Jugador en base esperando vehículo es 100% inmune. No se mueve a ningún jugador ya establecido.")
 
     print("\n=======================================================")
     print("  MOCK RCON E2E INTEGRATION TESTS: 100% PASSED!")

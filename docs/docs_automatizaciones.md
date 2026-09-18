@@ -62,36 +62,35 @@ Los cambios en `ServerSettings.ini` solo son procesados por el servidor de juego
 3. `pending_disable`: El admin desactiva el modo mientras hay una partida 50v50 en curso. RCON se restaura a `true`. Para no romper la partida a mitad de juego, la automatización del bot sigue activa hasta que concluya el round.
 4. `inactive`: Modo completamente apagado. Se entra aquí automáticamente al iniciar el siguiente match tras `pending_disable`, o de forma inmediata si se cancela mientras estaba en `pending_enable`.
 
-### C. Algoritmo de Balanceo y Sellado Estilo ARMA (cada 6 segundos)
+### C. Algoritmo de Balanceo: "Portero Global" y Sellado Estilo ARMA (cada 6 segundos)
 1. **Detección Dinámica de Facción**: Inspecciona `status.factionScores` en cada ciclo para identificar los nombres exactos en vivo (`Valkyra`, `Manticore`, `Lonestar`).
 2. **Sellado de Equipos Estilo ARMA (Prohibición de Cambio Voluntario)**:
-   - Los equipos quedan sellados durante toda la partida. Ningún jugador tiene permitido cambiarse de bando a voluntad.
-   - Si un jugador intenta cambiarse manualmente mediante el menú del juego, el bot detecta de inmediato la discrepancia entre su equipo asignado (`assigned_faction`) y su nueva facción.
+   - Los equipos quedan sellados durante toda la partida. Ningún jugador tiene permitido cambiarse de bando a voluntad desde el menú in-game.
+   - Si un jugador intenta cambiarse manualmente, el bot detecta de inmediato la discrepancia entre su equipo asignado (`assigned_faction`) y su nueva facción.
    - **Reversión Inmediata**: El bot ejecuta `switch_faction` revirtiendo al jugador a su equipo asignado y le envía un whisper directo:
      > *"Cambio de equipo no permitido durante la partida."*
-3. **Paso 1 - Eliminación y Asimilación de Lonestar (Azul)**:
-   - Todos los jugadores en Azul son transferidos inmediatamente al equipo con menor población entre Rojo y Verde.
+3. **Anuncios Globales (Broadcast)**:
+   - Al iniciar la partida (`matchSeconds < 60`): Emite anuncio broadcast a todo el servidor:
+     > `Modo 50v50: 1m antes de autobalance`
+   - Al cumplirse el primer minuto (`matchSeconds >= 60`): Emite anuncio broadcast a todo el servidor:
+     > `Modo 50v50: Autobalance ACTIVO`
+4. **Paso 1 - Eliminación y Asimilación de Lonestar (Azul)**:
+   - Todos los jugadores en Azul son transferidos inmediatamente al equipo con menor población entre Rojo y Verde (o devueltos a su equipo si ya tenían uno asignado).
    - **Whisper de Asignación**: Se le envía un mensaje privado por RCON informándole:
      > *"Se te ha asignado al equipo {target_faction}."*
-   - **Tratamiento como Originales**: Quedan registrados como miembros oficiales de esa facción. Al entrar en combate y ganar dinero/bajas, adquieren exactamente la misma inmunidad que un veterano original. Si intentan cambiarse al otro equipo, el sellado ARMA los bloquea y revierte.
-4. **Paso 2 - Auto-Teambalancing Rojo vs Verde**: Como el balanceo interno del juego está desactivado, si la diferencia poblacional entre Rojo y Verde es $\ge 2$:
-   - **Periodo de Gracia Inicial (Warmup de 1 minuto / 60 segundos)**: Durante los primeros 60 segundos de partida (`matchSeconds < 60`), el auto-balanceo entre Rojo y Verde está **PAUSADO**. Esto permite que amigos y escuadras carguen el mapa y elijan bando juntos sin miedo a ser separados por diferencias momentáneas en la velocidad de conexión de sus PCs. (El drenado de Azul y el sellado ARMA permanecen activos).
-   - Transcurridos los primeros 60 segundos, si la diferencia es $\ge 2$, se calculan $\lfloor\text{diferencia}/2\rfloor$ jugadores a transferir del equipo mayoritario al minoritario.
-   - **Regla de Inmunidad Absoluta para Combatientes y Veteranos**:
-     - Todo jugador que ya haya combatido (`cash > 0` o `kills + deaths > 0`) es **100% INMUNE** a ser forzado al equipo rival si otros abandonan la partida.
-     - Si el equipo mayoritario tiene 50 jugadores y todos son veteranos con combate activo, **NO SE MUEVE A NADIE**. El desbalance se resuelve pacíficamente conforme ingresen nuevos jugadores al servidor.
-   - **Protección de Compras en Base (Ventana de Novato de 24 Segundos)**:
-     - El dato `cash` del RCON únicamente refleja dinero ganado por zona (`ScorePeriod=30s`), no el dinero gastado en tanques/armamento en base.
-     - Para evitar que un jugador que gastó su dinero en base pierda su vehículo/equipo, el bot exige que el jugador lleve **$\le 24$ segundos en el equipo** (`now_ts - joined_team_at <= 24`).
-     - Si un jugador lleva más de 24 segundos en base, **se considera protegido** (se asume que ya está interactuando con terminales o desplegando) aunque su `cash` ganado sea $0.
-   - **Únicos Candidatos Elegibles para Balancear**:
-     - Recién ingresados que lleven **$\le 24$ segundos en el equipo** Y tengan **\$0 cash y 0 K/D**. Se ordenan por tiempo de llegada más reciente.
-   - **Whisper de Balanceo**: Al mover a un recién ingresado por desbalance, el bot le notifica:
-     > *"Se te ha asignado al equipo {target_faction} para balancear la partida."*
+   - Quedan registrados como miembros oficiales de esa facción. Si intentan cambiarse al otro equipo, el sellado ARMA los bloquea y revierte.
+5. **Paso 2 - Portero Global (Overpopulation Gatekeeper)**:
+   - **Calentamiento Inicial (Primeros 60 segundos)**: Durante `matchSeconds < 60`, los jugadores pueden conectarse y elegir equipo con total libertad. Amigos y escuadras pueden unirse al mismo bando sin que el bot los separe por diferencias en tiempos de carga.
+   - **Inmunidad Total para Jugadores Existentes**: Todo jugador que ya esté jugando en un equipo es **100% INMUNE** y **NUNCA se le mueve de bando**.
+     - ¿Compró un tanque en base? **Protegido.**
+     - ¿Está esperando 2 minutos a que llegue un helicóptero? **Protegido.**
+     - ¿Gasta dinero en terminales? **Protegido.**
+   - **Portero de Sobrepoblación en la Entrada**: A partir del minuto 1:00 (`matchSeconds >= 60`), cuando un **NUEVO jugador** conecta al servidor:
+     - Si intenta entrar al equipo que ya tiene más jugadores (sobrepopulador): El bot lo intercepta de inmediato, lo transfiere al equipo menor, lo bloquea allí y le envía un whisper:
+       > *"Se te ha asignado al equipo {target_faction} para balancear la partida."*
+     - Si entra al equipo menor o empatado: Es aceptado inmediatamente sin alteración.
    - **Protecciones Incondicionales**:
-     - Nunca se tocan ni se envían mensajes a jugadores en facción `White` o `None` (espectadores o en pantalla de carga).
-     - Cooldown estricto de 60 segundos por jugador tras una transferencia para evitar oscilaciones (*ping-pong*).
-     - Umbral $\Delta < 2$: No se mueve a nadie en diferencias de 1 jugador (ej: 50 vs 49).
+     - Jugadores en facción `White` o `None` (espectadores o árbitros) son estrictamente ignorados: jamás se les transfiere ni se les envían mensajes.
 
 ### D. Resiliencia de Estadísticas ante Cambios de Equipo
 El motor de sincronización (`poll_rcon` en `sync_engine.py`) asegura que las estadísticas de partida nunca se corrompan ni se pierdan al ser transferido o cambiar de equipo:

@@ -1,6 +1,6 @@
 # 🛡️ Manual de Operación: Modo 50v50 & Team Balancing
 > **Documento Oficial de Referencia para el Equipo de Staff y Moderación**  
-> *Versión 2.0 — Compatible con Discord Markdown (Sin tablas rotas ni LaTeX)*
+> *Versión 2.1 — Modelo Global de Portero (Gatekeeper), Calentamiento de 1 Minuto, Whispers y Sellado ARMA*
 
 ---
 
@@ -11,19 +11,24 @@ El juego *Wardogs* está diseñado nativamente con una estructura tripartita de 
 * 🟢 **Manticore (Verde)**
 * 🔵 **Lonestar (Azul)**
 
-El **Modo 50v50** es un sistema automatizado desarrollado en el bot que transforma la partida en una guerra campal bipartita de **50 vs 50 (Valkyra vs Manticore)**, neutralizando por completo la facción **Lonestar (Azul)** y garantizando un equilibrio justo sin alterar la diversión de los veteranos ni de los grupos de amigos.
+El **Modo 50v50** transforma la partida en una guerra campal de **50 vs 50 (Valkyra vs Manticore)**, neutralizando por completo la facción **Lonestar (Azul)** y garantizando un equilibrio justo sin alterar la partida de los veteranos, sin separar a grupos de amigos y sin arriesgar el dinero o vehículos comprados en base.
 
 ```text
 [Jugadores conectando al servidor]
  ├── Entran a Lonestar (Azul)
  │    └──► Drenado Inmediato ──► Asignación al equipo menor (Rojo/Verde) + Whisper
  └── Entran a Valkyra (Rojo) o Manticore (Verde)
-      ├── ¿Intentan cambiarse manualmente de equipo?
+      ├── ¿Intentan cambiarse manualmente de equipo en el menú?
       │    └──► SÍ ──► Sellado ARMA: Reversión inmediata a su equipo + Whisper
-      └──► NO ──► Juegan legalmente en su equipo
-           ├── ¿Hay desbalance >= 2 y van > 60s de partida?
-           │    └──► SÍ ──► Auto-balance SOLO de novatos (<= 24s en base)
-           └──► NO ──► Partida normal sin alteraciones
+      │
+      ├── ¿La partida lleva menos de 1 minuto (< 60s)?
+      │    └──► SÍ ──► Calentamiento: Selección libre con amigos + Anuncio global
+      │
+      └──► ¿La partida lleva 1 minuto o más (>= 60s)?
+           ├── ¿Ya estaban jugando en su equipo?
+           │    └──► INMUNIDAD TOTAL: Jamás son movidos (helicópteros y tanques 100% a salvo)
+           └── ¿Es un jugador nuevo entrando al equipo LLENO / MAYOR?
+                └──► PORTERO ACTIVO: Redirección inmediata al equipo menor + Whisper + Bloqueo
 ```
 
 ---
@@ -52,7 +57,7 @@ Los cambios en la configuración del servidor de juego (`ServerSettings.ini`) so
 * 🟡 **`pending_enable`** *(Pendiente de activación)*
   > El staff ejecutó `/mode50v50 enable`. El RCON ya queda configurado con el candado nativo en `false`. La automatización espera pacientemente a que termine la partida actual para no romperla.
 * 🟢 **`active`** *(Modo 50v50 100% activo)*
-  > La nueva partida inició tras la rotación. Se emite broadcast global *"Modo 50v50 ACTIVADO"* y el bot balancea activamente cada 6 segundos.
+  > La nueva partida inició tras la rotación. Se resetea el conteo y arranca el ciclo de 50v50 con los anuncios globales.
 * 🟠 **`pending_disable`** *(Pendiente de apagado)*
   > El staff ejecutó `/mode50v50 disable`. El RCON se restaura a `true`. Para no estropear la partida en juego, el bot sigue operando en 50v50 hasta que concluya el mapa.
 * ⚪ **`inactive`** *(Modo apagado)*
@@ -66,7 +71,7 @@ Los cambios en la configuración del servidor de juego (`ServerSettings.ini`) so
 
 Inspirado en los servidores tácticos de **ARMA King of the Hill**, los equipos quedan **sellados durante toda la partida**:
 
-1. **Sin Cambios de Conveniencia**: Los jugadores **no pueden** cambiarse voluntariamente de equipo a mitad de partida (por ejemplo, pasarse al bando que va ganando o donde hay mejores vehículos).
+1. **Sin Cambios de Conveniencia**: Los jugadores **no pueden** cambiarse voluntariamente de equipo a mitad de partida (por ejemplo, pasarse al bando que va ganando).
 2. **Detección Instantánea**: Cada 6 segundos, el bot compara la facción en vivo del jugador con su facción oficialmente asignada (`assigned_faction`).
 3. **Reversión Inmediata**: Si detecta que un jugador se cambió de equipo por su cuenta:
    * Ejecuta inmediatamente `switch_faction` regresándolo a su bando asignado.
@@ -76,71 +81,72 @@ Inspirado en los servidores tácticos de **ARMA King of the Hill**, los equipos 
 
 ---
 
-## 5. Sistema de Whispers Directos por RCON
+## 5. Anuncios Globales (Broadcast) y Whispers Privados
 
-El bot se comunica directamente con la pantalla del jugador mediante el endpoint oficial de mensajes privados de RCON:
+El bot informa tanto a todo el servidor como de forma privada a cada jugador:
 
+### 📢 Anuncios Globales por Chat (Broadcast):
+* Al inicio de la partida (durante el primer minuto):
+  > 📢 `Modo 50v50: 1m antes de autobalance`
+* Al cumplirse el primer minuto de juego (minuto 1:00):
+  > 📢 `Modo 50v50: Autobalance ACTIVO`
+
+### 💬 Whispers Privados por RCON:
 * 💬 **Intento de cambio manual no permitido:**
   > `"Cambio de equipo no permitido durante la partida."`  
-  *Explicación:* Informa al infractor que el cambio voluntario está prohibido y que fue devuelto a su facción.
+  *Explicación:* Informa al jugador que el cambio manual está prohibido y que fue devuelto a su facción.
 
 * 💬 **Asignación automática desde Lonestar (Azul):**
   > `"Se te ha asignado al equipo {Valkyra/Manticore}."`  
   *Explicación:* Explica al jugador recién conectado a qué equipo oficial fue destinado.
 
-* 💬 **Auto-Balance por desbalance poblacional:**
+* 💬 **Nuevo jugador redirigido por sobrepoblación:**
   > `"Se te ha asignado al equipo {Valkyra/Manticore} para balancear la partida."`  
-  *Explicación:* Notifica con total transparencia que fue transferido para equilibrar los equipos.
+  *Explicación:* Notifica al nuevo jugador que intentó entrar al equipo mayor que fue reubicado en el equipo con menos jugadores para mantener la partida equilibrada.
 
 * 🛡️ **Espectadores y Árbitros (`White` / `None`):**
   > *Silencio absoluto.* Nunca reciben mensajes ni son transferidos.
 
 ---
 
-## 6. Algoritmo de Team Balancing Inteligente y Justo
+## 6. Algoritmo de Team Balancing: "Portero Global" (Simple y Seguro)
 
-El bot ejecuta un ciclo de análisis cada 6 segundos (`mode_50v50_loop`). El algoritmo opera en dos pasos:
+El bot ejecuta un ciclo cada 6 segundos (`mode_50v50_loop`). El sistema funciona bajo un principio simple: **nadie que ya esté jugando es movido jamás, el balance se gestiona en la puerta de entrada**:
 
 ### Paso 1: Drenado Continuo de Lonestar (Azul)
-* Cualquier jugador que aparezca en Lonestar (Azul) es transferido al equipo con menor población entre Valkyra y Manticore.
+* Cualquier jugador que aparezca en Lonestar (Azul) es transferido al equipo con menor población entre Valkyra y Manticore (o a su equipo original si ya tenía uno asignado).
 * Recibe el whisper: *"Se te ha asignado al equipo {target}."*
-* **Asimilación como Original**: Una vez asignado, se le registra su facción oficial. Pasa a ser considerado un miembro legítimo de ese bando.
 
-### Paso 2: Auto-Teambalancing Rojo vs Verde
-Si la diferencia poblacional entre Valkyra y Manticore es de **2 o más jugadores** (Diferencia >= 2), el bot evalúa si corresponde balancear aplicando **4 salvaguardas estrictas**:
+### Paso 2: Fase 1 — Calentamiento Inicial (Primeros 60 Segundos)
+* Durante el primer minuto (`matchSeconds < 60`), se emite el anuncio `Modo 50v50: 1m antes de autobalance`.
+* Los jugadores pueden conectarse y elegir Valkyra o Manticore con total libertad.
+* **Propósito:** Permite que grupos de amigos, clanes o escuadras carguen el mapa (sin importar si uno tiene SSD y otro HDD) y elijan el mismo equipo sin que el bot los separe en el arranque.
 
-#### ⏱️ Salvaguarda 1: Periodo de Gracia Inicial (Warmup de 1 Minuto / 60 Segundos)
-* **El Problema:** Los jugadores con SSD rápidos cargan en 10 segundos, mientras que amigos con discos mecánicos tardan 40 segundos. Si 5 amigos entran a Valkyra, en el segundo 20 el servidor está 5v0.
-* **La Solución:** Durante los primeros **60 segundos** (`matchSeconds < 60`), el auto-balanceo Rojo vs Verde está **completamente pausado**.
-* **Efecto:** Grupos de amigos y escuadras pueden cargar el mapa y elegir bando juntos sin miedo a que el bot los separe en el primer minuto.
-
-#### 🎖️ Salvaguarda 2: Inmunidad Absoluta para Combatientes y Veteranos
-* Si un jugador ya participó en el combate de la partida:
-  > **Cash ganado > $0**  O  **Kills + Deaths > 0**
-* Es **100% INMUNE** a ser cambiado de equipo por abandono de rivales (*ragequits*).
-* Si el equipo perdedor sufre una desbandada y queda en 50 vs 43 veteranos, **EL BOT NO MUEVE A NINGÚN VETERANO**. La partida continúa 50 vs 43 hasta que entren nuevos jugadores al servidor.
-
-#### 🚜 Salvaguarda 3: Protección de Compras en Base (Regla de los 24 Segundos)
-* **El Problema:** En RCON, el dato `cash` solo representa el **dinero ganado por capturar zonas** (`ScorePeriod=30s`). No refleja el dinero de la billetera ni lo gastado en terminales de vehículos. Un jugador puede haber gastado $10.000 en un tanque recién llegado a base y su `cash` ganado aún figura en $0.
-* **La Solución:** Para ser elegible de transferencia, el jugador debe llevar **24 segundos o menos en el equipo** (`tiempo_en_equipo <= 24`).
-* **Efecto:** Si un jugador lleva más de 24 segundos en base, el bot lo considera protegido (asume que ya está interactuando con terminales o desplegando un vehículo). Su dinero y su tanque están 100% a salvo.
-
-#### 🔄 Salvaguarda 4: Cooldown Anti-Pingpong (60 Segundos)
-* Todo jugador transferido por el bot recibe inmunidad durante **60 segundos**, impidiendo que rebote repetidamente entre equipos.
+### Paso 3: Fase 2 — Portero Activo (A partir del Minuto 1 / matchSeconds >= 60)
+* Al minuto 1:00, se emite el anuncio `Modo 50v50: Autobalance ACTIVO`.
+* **Inmunidad Total para Jugadores Existentes:** Todo jugador que ya esté en Valkyra o Manticore queda **100% protegido para siempre**.
+  * ¿Compró un tanque en base? **Protegido.**
+  * ¿Está esperando 2 minutos a que llegue un helicóptero? **Protegido.**
+  * ¿Gastó su billetera en equipamiento? **Protegido.**
+  * Jamás se le moverá de equipo por abandonos ajenos.
+* **El Portero en la Entrada:** Cuando un **NUEVO jugador** conecta al servidor:
+  * Si elige el equipo con **MÁS jugadores** que el rival (sobrepopulador): El bot lo intercepta de inmediato en la pantalla de bienvenida, lo transfiere al equipo con menos jugadores, lo bloquea allí y le envía el whisper: *"Se te ha asignado al equipo {target} para balancear la partida."*
+  * Si elige el equipo con **MENOS o IGUAL número de jugadores**: Es aceptado de forma inmediata en su equipo elegido.
 
 ---
 
 ## 7. Matriz Rápida de Decisiones del Bot
 
 ```text
-PERFIL DEL JUGADOR       CASH GANADO   K / D   TIEMPO EN EQUIPO   ESTADO EN EL BOT
-────────────────────────────────────────────────────────────────────────────────────────
-Veterano en combate      > $0          Cualq   Cualquiera         ❌ INMUNE (100%)
-Veterano con bajas       $0            >= 1    Cualquiera         ❌ INMUNE (100%)
-Comprando en base        $0            0 / 0   > 24 segundos      ❌ PROTEGIDO (No pierde tanques)
-Recién conectado         $0            0 / 0   <= 24 segundos     ✅ ELEGIBLE para balancear
-Espectador / Árbitro     Facción White  -      -                  ❌ INTOCABLE (Ignorado)
-Cambio voluntario        Cualquiera    Cualq   Cualquiera         ⛔ BLOQUEADO (Revertido con whisper)
+PERFIL DEL JUGADOR       ESTADO EN EL JUEGO    TIEMPO / ACTIVIDAD    ACCIÓN DEL BOT
+─────────────────────────────────────────────────────────────────────────────────────────────
+Jugador existente        Ya en Valkyra/Manticore Cualquiera (0 a 100m) ❌ INMUNE (Jamás se mueve)
+Comprando en base        Esperando heli/tanque  $0 cash ganado        ❌ PROTEGIDO (100% seguro)
+Amigos en calentamiento  Minuto 0:00 a 1:00     matchSeconds < 60s    ✅ LIBRE (Eligen juntos)
+Nuevo sobrepopulador     Entra tras minuto 1:00 Intenta bando mayor   ⛔ REDIRIGIDO al menor + whisper
+Nuevo balanceador        Entra tras minuto 1:00 Elige bando menor     ✅ ACEPTADO en su equipo
+Espectador / Árbitro     Facción White / None   Cualquiera            ❌ INTOCABLE (Ignorado)
+Cambio voluntario menú   Intento en el menú     Cualquiera            ⛔ REVERTIDO al suyo + whisper
 ```
 
 ---
@@ -148,13 +154,13 @@ Cambio voluntario        Cualquiera    Cualq   Cualquiera         ⛔ BLOQUEADO 
 ## 8. Guía de Casos de Uso Reales para el Staff (FAQ)
 
 ### ❓ Caso 1: *"Entré con 4 amigos a Valkyra y Manticore está vacío (5v0) al empezar la ronda. ¿Nos va a separar el bot?"*
-> **Respuesta:** **No.** Durante el primer minuto de partida (`matchSeconds < 60`), el auto-balanceo está pausado. Todos los amigos pueden ingresar juntos y elegir el mismo equipo sin interferencias.
+> **Respuesta:** **No.** Durante el primer minuto de partida (`matchSeconds < 60`), el auto-balanceo está pausado. Los 5 amigos pueden elegir Valkyra sin problema mientras ven en pantalla el anuncio `Modo 50v50: 1m antes de autobalance`.
 
-### ❓ Caso 2: *"A mitad de partida compré un helicóptero o un tanque en base. ¿El bot me puede cambiar de equipo y hacerme perder el dinero?"*
-> **Respuesta:** **No.** Si ya participaste en combate, eres inmune por estadísticas de score/kills. Y si te acabas de conectar pero llevas más de 24 segundos en base equipándote o comprando el vehículo, la regla de los 24 segundos te protege automáticamente.
+### ❓ Caso 2: *"Compré un helicóptero o un tanque y estoy esperando 2 minutos en base a que llegue. ¿El bot me puede cambiar de equipo y hacerme perder la plata?"*
+> **Respuesta:** **No.** Los jugadores que ya están dentro del equipo tienen inmunidad total. El bot **nunca** mueve a nadie que ya esté en el roster de un equipo. Tu dinero, tus vehículos y tu escuadra están 100% a salvo.
 
 ### ❓ Caso 3: *"Manticore va perdiendo y 7 jugadores se desconectaron por frustración (quedó 50 vs 43). ¿El bot va a pasar a los veteranos de Valkyra?"*
-> **Respuesta:** **No.** El bot jamás castiga a los veteranos del equipo ganador. Si todos los jugadores de Valkyra ya combatieron o llevan más de 24 segundos en juego, el bot no mueve a nadie. El balanceo esperará a que ingresen nuevos jugadores al servidor.
+> **Respuesta:** **No.** El bot jamás castiga ni frustra a los jugadores que ya están jugando en Valkyra. La partida se equilibra naturalmente a través del **portero**: cada jugador nuevo que ingrese al servidor intentando meterse a Valkyra será automáticamente transferido a Manticore hasta que los equipos vuelvan a estar 50 vs 50.
 
 ### ❓ Caso 4: *"Un jugador nuevo conecta al servidor y el juego lo asigna a Lonestar (Azul). ¿Qué sucede?"*
 > **Respuesta:** En menos de 6 segundos, el bot lo transfiere automáticamente al equipo con menor cantidad de jugadores (Rojo o Verde) y le manda el whisper privado: *"Se te ha asignado al equipo Valkyra/Manticore"*. A partir de ahí, queda sellado en ese bando.
