@@ -92,12 +92,20 @@ class MatchMode50v50:
                     "• Se aplicará automáticamente al iniciar la próxima partida o reiniciar el servidor."
                 )
             elif self.action == "disable":
-                await plugin.model.api.set_mode_50v50(False)
-                await ctx.respond(
-                    "⚪ **Modo 50v50 DESACTIVADO**.\n"
-                    "• Team balancing restaurado con límite 1 en el servidor.\n"
-                    "• El servidor vuelve al esquema estándar 33v33v33."
-                )
+                res = await plugin.model.api.set_mode_50v50(False)
+                state = res.get("state", "inactive")
+                if state == "pending_disable":
+                    await ctx.respond(
+                        "⏳ **Desactivación PROGRAMADA para la siguiente partida**.\n"
+                        "• La automatización 50v50 continuará activa durante la partida actual.\n"
+                        "• La próxima partida iniciará en 33v33v33 con el team balancing del servidor activo."
+                    )
+                else:
+                    await ctx.respond(
+                        "⚪ **Modo 50v50 CANCELADO / DESACTIVADO**.\n"
+                        "• Team balancing restaurado con límite 1 en el servidor.\n"
+                        "• El servidor vuelve al esquema estándar 33v33v33."
+                    )
             else:
                 status_50v50 = await plugin.model.api.get_mode_50v50_status()
                 st = status_50v50.get("state", "inactive")
@@ -139,14 +147,23 @@ class MatchMode50v50Disable:
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
         try:
-            await plugin.model.api.set_mode_50v50(False)
-            await ctx.respond(
-                "⚪ **Modo 50v50 DESACTIVADO**.\n"
-                "• Team balancing restaurado con límite 1 en el servidor.\n"
-                "• El servidor vuelve al esquema estándar 33v33v33."
-            )
+            res = await plugin.model.api.set_mode_50v50(False)
+            state = res.get("state", "inactive")
+            if state == "pending_disable":
+                await ctx.respond(
+                    "⏳ **Desactivación PROGRAMADA para la siguiente partida**.\n"
+                    "• La automatización 50v50 continuará activa durante la partida actual.\n"
+                    "• La próxima partida iniciará en 33v33v33 con el team balancing del servidor activo."
+                )
+            else:
+                await ctx.respond(
+                    "⚪ **Modo 50v50 CANCELADO / DESACTIVADO**.\n"
+                    "• Team balancing restaurado con límite 1 en el servidor.\n"
+                    "• El servidor vuelve al esquema estándar 33v33v33."
+                )
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
+
 
 
 @plugin.include

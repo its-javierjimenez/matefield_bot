@@ -269,7 +269,7 @@ async def mode_50v50_loop():
                 stmt_state = select(BotConfig).where(BotConfig.config_key == "MODE_50V50_STATE")
                 config_state = (await session.exec(stmt_state)).first()
                 if config_state and config_state.config_value:
-                    is_enabled = (config_state.config_value.strip().lower() == "active")
+                    is_enabled = config_state.config_value.strip().lower() in ("active", "pending_disable")
                 else:
                     stmt = select(BotConfig).where(BotConfig.config_key == "MODE_50V50_ENABLED")
                     config = (await session.exec(stmt)).first()
