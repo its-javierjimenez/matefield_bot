@@ -62,15 +62,24 @@ Los cambios en `ServerSettings.ini` solo son procesados por el servidor de juego
 3. `pending_disable`: El admin desactiva el modo mientras hay una partida 50v50 en curso. RCON se restaura a `true`. Para no romper la partida a mitad de juego, la automatización del bot sigue activa hasta que concluya el round.
 4. `inactive`: Modo completamente apagado. Se entra aquí automáticamente al iniciar el siguiente match tras `pending_disable`, o de forma inmediata si se cancela mientras estaba en `pending_enable`.
 
-### C. Algoritmo de Balanceo (cada 6 segundos)
+### C. Algoritmo de Balanceo y Prioridad Justa (cada 6 segundos)
 1. **Detección Dinámica de Facción**: Inspecciona `status.factionScores` en cada ciclo para identificar los nombres exactos en vivo (`Valkyra`, `Manticore`, `Lonestar`).
 2. **Paso 1 - Eliminación de Lonestar**: Todos los jugadores en Azul son transferidos inmediatamente al equipo con menor población entre Rojo y Verde.
 3. **Paso 2 - Auto-Teambalancing Rojo vs Verde**: Como el balanceo interno del juego está desactivado, si la diferencia poblacional entre Rojo y Verde es $\ge 2$:
    - Se transfieren $\lfloor\text{diferencia}/2\rfloor$ jugadores del equipo mayoritario al minoritario.
-   - **Regla de Jugadores Más Nuevos**: Se priorizan candidatos por:
-     1. Menor `cash` ($0$ cash primero, quienes recién ingresaron al servidor y no tienen vehículos o equipamiento comprado).
-     2. Menor actividad global (`kills + deaths`).
-   - **Protecciones**:
-     - Nunca se tocan jugadores en facción `White` o `None` (espectadores o eligiendo equipo).
-     - Se mantiene un cooldown de 60 segundos por jugador para evitar transferencias de ida y vuelta en bucle (*ping-pong*).
+   - **Regla de Prioridad Justa (Fairness / Protección de Originales)**:
+     1. **Sobrepobladores Voluntarios**: Jugadores que cambiaron voluntariamente de equipo durante la partida hacia el bando más numeroso son seleccionados de primeros para ser devueltos.
+     2. **Antigüedad en el Equipo (`joined_team_at`)**: Quienes recién se unieron al equipo son candidatos antes que quienes llevan más tiempo. Los jugadores originales que eligieron el equipo al principio de la partida quedan protegidos al final de la cola y nunca se mueven innecesariamente.
+     3. **Dinero (`cash`)**: Candidatos con $0 cash (recién spawneados, sin vehículos ni compras) antes que jugadores veteranos con dinero acumulado.
+     4. **Actividad de Combate (`kills + deaths`)**: Jugadores con menor combate antes que quienes están en rachas o activos.
+   - **Protecciones Incondicionales**:
+     - Nunca se tocan jugadores en facción `White` o `None` (espectadores o en pantalla de selección).
+     - Cooldown estricto de 60 segundos por jugador tras una transferencia para evitar oscilaciones (*ping-pong*).
+     - Umbral $\Delta < 2$: No se mueve a nadie en diferencias de 1 jugador (ej: 50 vs 49).
+
+### D. Resiliencia de Estadísticas ante Cambios de Equipo
+El motor de sincronización (`poll_rcon` en `sync_engine.py`) asegura que las estadísticas de partida nunca se corrompan ni se pierdan al ser transferido o cambiar de equipo:
+- **Reseteo por Servidor de Juego**: Si el servidor de juego reinicia `kills` o `deaths` a 0 al cambiar de facción, el motor detecta la caída (`raw_kills < last_raw_kills`), acumula la diferencia en un offset en memoria y sigue sumando las nuevas bajas.
+- **Persistencia sin Duplicación**: Si el servidor de juego preserva los contadores, el motor actualiza los números directamente sin duplicar estadísticas.
+- **Preservación de Dinero (`cash_earned`)**: Registra la marca máxima histórica (*high watermark*) durante la partida, impidiendo que el valor disminuya al comprar tanques, armas o cambiar de equipo.
 

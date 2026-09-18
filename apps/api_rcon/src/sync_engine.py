@@ -22,8 +22,14 @@ if not logger.handlers:
     ch.setFormatter(formatter)
     logger.addHandler(ch)
 
+# In-memory tracking across polls
+last_rcon_player_stats: dict[str, dict] = {}
+player_team_history: dict[str, dict] = {}
+recently_swapped_players: dict[str, float] = {}
+
 async def poll_rcon():
     global current_rotation_index, current_match_id, current_map
+
     
     logger.info("Starting RCON Polling Engine...")
     last_poll_time = datetime.datetime.now(datetime.timezone.utc)
@@ -80,6 +86,11 @@ async def poll_rcon():
                     current_rotation_index = rotation_index
                     current_map = map_name
 
+                    # Clear in-memory match tracking for fresh match
+                    last_rcon_player_stats.clear()
+                    player_team_history.clear()
+                    recently_swapped_players.clear()
+
                     # 50v50 Mode lifecycle transition on new match
                     stmt_state = select(BotConfig).where(BotConfig.config_key == "MODE_50V50_STATE")
                     cfg_state = (await session.exec(stmt_state)).first()
@@ -127,9 +138,8 @@ async def poll_rcon():
                             session.add(db_player)
                             await session.commit()
                             
-                        # 2. Update MatchPlayerStats
+                        # 2. Update MatchPlayerStats with resilience to stat resets on team change
                         if current_match_id:
-                            # Bug 2 Fix: Extract Team ID from player faction
                             team_id = None
                             if p.faction:
                                 faction_name = str(p.faction)
@@ -142,6 +152,34 @@ async def poll_rcon():
                                     await session.refresh(team)
                                 team_id = team.id
 
+                            # Handle server stat resets (if game resets kills/deaths when player switches team)
+                            raw_kills = p.kills or 0
+                            raw_deaths = p.deaths or 0
+                            p_faction_str = str(p.faction or "")
+                            
+                            tracker = last_rcon_player_stats.setdefault(p.steamId, {
+                                "last_raw_kills": raw_kills,
+                                "last_raw_deaths": raw_deaths,
+                                "offset_kills": 0,
+                                "offset_deaths": 0,
+                                "last_faction": p_faction_str
+                            })
+                            
+                            # If raw kills dropped (e.g. 10 -> 0 after faction change), accumulate offset
+                            if raw_kills < tracker["last_raw_kills"]:
+                                tracker["offset_kills"] += tracker["last_raw_kills"]
+                                logger.info(f"[Stats Engine] Server reset kills for {p.steamId} on faction change ({tracker['last_raw_kills']} -> {raw_kills}). Accumulated offset: {tracker['offset_kills']}")
+                                
+                            if raw_deaths < tracker["last_raw_deaths"]:
+                                tracker["offset_deaths"] += tracker["last_raw_deaths"]
+                                
+                            tracker["last_raw_kills"] = raw_kills
+                            tracker["last_raw_deaths"] = raw_deaths
+                            tracker["last_faction"] = p_faction_str
+                            
+                            effective_kills = tracker["offset_kills"] + raw_kills
+                            effective_deaths = tracker["offset_deaths"] + raw_deaths
+
                             stmt = select(MatchPlayerStats).where(
                                 MatchPlayerStats.match_id == current_match_id,
                                 MatchPlayerStats.steam_id == p.steamId
@@ -152,22 +190,22 @@ async def poll_rcon():
                                     match_id=current_match_id,
                                     steam_id=p.steamId,
                                     team_id=team_id,
-                                    kills=p.kills or 0,
-                                    deaths=p.deaths or 0,
+                                    kills=effective_kills,
+                                    deaths=effective_deaths,
                                     cash_earned=p.cash or 0
                                 )
                             else:
-                                # Update kills/deaths cumulatively
-                                stats.kills = p.kills or 0
-                                stats.deaths = p.deaths or 0
+                                stats.kills = effective_kills
+                                stats.deaths = effective_deaths
                                 stats.team_id = team_id
                                 
-                                # Track highest watermark for cash_earned to avoid resetting when buying vehicles
+                                # Track highest watermark for cash_earned to avoid resetting when buying vehicles or changing teams
                                 current_cash = p.cash or 0
                                 if current_cash > stats.cash_earned:
                                     stats.cash_earned = current_cash
                             
                             session.add(stats)
+
                             
                     # Session Tracking Logic
                     current_players = (status.players.current or 0) if status.players else 0
@@ -257,9 +295,6 @@ async def poll_rcon():
             await asyncio.sleep(10)
 
 
-# In-memory dict to track recently transferred players and prevent ping-ponging
-recently_swapped_players: dict[str, float] = {}
-
 async def mode_50v50_loop():
     logger.info("Starting 50v50 Mode Engine (Checks every 6 seconds)...")
     while True:
@@ -310,11 +345,41 @@ async def mode_50v50_loop():
                     f = (p.faction or "").strip().lower()
                     if f.startswith("lone"):
                         blue_players.append(p)
+                        f_canonical = "lonestar"
                     elif f.startswith("valk"):
                         red_players.append(p)
+                        f_canonical = "valkyra"
                     elif f.startswith("mant"):
                         green_players.append(p)
-                    # NOTE: Players with "white" or spectator/none factions are strictly ignored
+                        f_canonical = "manticore"
+                    else:
+                        # NOTE: Players with "white" or spectator/none factions are strictly ignored
+                        continue
+
+                    # Update player team tenure and voluntary switch detection
+                    if p.steamId:
+                        hist = player_team_history.get(p.steamId)
+                        if not hist:
+                            # First time seen on a team in this match -> Original team choice!
+                            player_team_history[p.steamId] = {
+                                "current_faction": f_canonical,
+                                "joined_team_at": now_ts,
+                                "switched_voluntarily": False,
+                                "switched_to_overpopulated": False,
+                            }
+                        else:
+                            if hist["current_faction"] != f_canonical:
+                                old_f = hist["current_faction"]
+                                bot_swapped = (now_ts - recently_swapped_players.get(p.steamId, 0)) < 15
+                                hist["current_faction"] = f_canonical
+                                hist["joined_team_at"] = now_ts
+                                if not bot_swapped:
+                                    # Player voluntarily switched teams in-game!
+                                    hist["switched_voluntarily"] = True
+                                    hist["switched_to_overpopulated"] = True
+                                    logger.info(f"[50v50 Mode] Player {p.name} ({p.steamId}) voluntarily switched from {old_f} to {f_canonical}!")
+                                else:
+                                    hist["switched_to_overpopulated"] = False
                 
                 # Step 1: Transfer any players in Lonestar (Blue) to whichever team is smaller
                 if blue_players:
@@ -324,52 +389,82 @@ async def mode_50v50_loop():
                             continue
                         if len(red_players) <= len(green_players):
                             target_faction = red_name
+                            target_key = "valkyra"
                             red_players.append(p)
                         else:
                             target_faction = green_name
+                            target_key = "manticore"
                             green_players.append(p)
                             
                         try:
                             await rcon_client.switch_faction(p.steamId, target_faction)
                             recently_swapped_players[p.steamId] = now_ts
+                            player_team_history[p.steamId] = {
+                                "current_faction": target_key,
+                                "joined_team_at": now_ts,
+                                "switched_voluntarily": False,
+                                "switched_to_overpopulated": False,
+                            }
                             logger.info(f"[50v50 Mode] Moved {p.name} ({p.steamId}) from Lonestar -> {target_faction}")
                         except Exception as err:
                             logger.error(f"[50v50 Mode] Failed to move {p.steamId} to {target_faction}: {err}")
 
                 # Step 2: Auto-teambalancing between Red and Green (since in-game balancing is unlocked)
-                # If difference is >= 2, move the newest players (lowest cash, lowest stats) from larger to smaller
+                # If difference is >= 2, move voluntary overpopulators or newest players from larger to smaller
                 diff = len(red_players) - len(green_players)
                 if abs(diff) >= 2:
                     count_to_move = abs(diff) // 2
                     if diff > 0:
                         donor_team = red_players
                         target_faction = green_name
+                        target_key = "manticore"
                         donor_name = red_name
                     else:
                         donor_team = green_players
                         target_faction = red_name
+                        target_key = "valkyra"
                         donor_name = green_name
 
-                    # Sort candidates: prioritize newest players (lowest cash, then lowest kills+deaths)
-                    # Exclude players who were recently swapped within last 60 seconds
+                    # Exclude players who were recently swapped within last 60 seconds to prevent ping-pong
                     candidates = [p for p in donor_team if p.steamId and (now_ts - recently_swapped_players.get(p.steamId, 0) > 60)]
-                    # If all candidates have cooldown, allow any candidate with steamId
+                    # Fallback if everyone on team has active cooldown
                     if not candidates:
                         candidates = [p for p in donor_team if p.steamId]
 
-                    # Sort key: 1) cash (0 cash first), 2) kills + deaths, 3) kills
-                    candidates.sort(key=lambda p: (
-                        p.cash if p.cash is not None else 0,
-                        (p.kills or 0) + (p.deaths or 0),
-                        p.kills or 0
-                    ))
+                    # Sort key prioritization (Fairness Rule):
+                    # 1. Voluntary overpopulators (switched into donor team): 0 comes first!
+                    # 2. Team tenure: -joined_team_at (newest arrivals on team have lowest negative numbers -> moved first).
+                    #    Original team players who chose first at match start are placed last (PROTECTED).
+                    # 3. Cash: lower cash moved first (fresh spawns with $0 before players who saved money/bought vehicles).
+                    # 4. Activity: lower combat activity (kills + deaths) moved first.
+                    def candidate_sort_key(p):
+                        hist = player_team_history.get(p.steamId, {})
+                        is_overpop = 0 if hist.get("switched_to_overpopulated", False) else 1
+                        joined_at = hist.get("joined_team_at", now_ts)
+                        cash_val = p.cash if p.cash is not None else 0
+                        activity_val = (p.kills or 0) + (p.deaths or 0)
+                        return (
+                            is_overpop,
+                            -joined_at,
+                            cash_val,
+                            activity_val,
+                            p.kills or 0
+                        )
 
-                    logger.info(f"[50v50 Mode] Teambalance triggered! {donor_name} has {len(donor_team)} vs {target_faction} ({len(donor_team) - abs(diff)}). Moving {count_to_move} newest player(s)...")
+                    candidates.sort(key=candidate_sort_key)
+
+                    logger.info(f"[50v50 Mode] Teambalance triggered! {donor_name} has {len(donor_team)} vs {target_faction} ({len(donor_team) - abs(diff)}). Moving {count_to_move} candidate(s)...")
 
                     for p in candidates[:count_to_move]:
                         try:
                             await rcon_client.switch_faction(p.steamId, target_faction)
                             recently_swapped_players[p.steamId] = now_ts
+                            player_team_history[p.steamId] = {
+                                "current_faction": target_key,
+                                "joined_team_at": now_ts,
+                                "switched_voluntarily": False,
+                                "switched_to_overpopulated": False,
+                            }
                             logger.info(f"[50v50 Mode] Rebalanced {p.name} ({p.steamId}, cash=${p.cash or 0}, K/D={p.kills or 0}/{p.deaths or 0}) {donor_name} -> {target_faction}")
                         except Exception as err:
                             logger.error(f"[50v50 Mode] Failed to rebalance {p.steamId} to {target_faction}: {err}")

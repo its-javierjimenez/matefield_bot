@@ -92,7 +92,7 @@ async def test_delete_membership(client: AsyncClient, session: AsyncSession):
 @pytest.mark.asyncio
 async def test_remove_special_role(client: AsyncClient, session: AsyncSession):
     p = Player(steam_id="123")
-    r = Role(name="111222333")
+    r = Role(id="111222333", name="111222333")
     session.add(p)
     session.add(r)
     await session.commit()
