@@ -69,3 +69,14 @@ En `router.py`, el endpoint `get_player_by_steam` calcula el `primary_role` así
 3. El API devuelve `active_role` y `custom_welcome_message`.
 4. Si ambos existen, envía broadcast: `El {active_role} {nombre} se conectó: "{mensaje}"`
 5. Cooldown de 5 minutos para evitar spam en reconexiones/rotaciones de mapa.
+ 
+---
+
+## Motor de Modo 50v50 (`mode_50v50_loop`)
+
+1. Tarea asíncrona permanente en `sync_engine.py` con cadencia de **6 segundos**.
+2. Lee `MODE_50V50_STATE` de `bot_config` (`active` o `pending_disable`).
+3. Transfiere jugadores de Lonestar (Azul) al menor de Valkyra (Rojo) y Manticore (Verde).
+4. Auto-balancea Rojo vs Verde cuando la diferencia $\ge 2$, transfiriendo a los jugadores con menor dinero ($0$ cash primero) y menor actividad.
+5. Sincronizado con el ciclo de vida de mapas de RCON mediante activación y desactivación diferida (`pending_enable` y `pending_disable`).
+

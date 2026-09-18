@@ -45,3 +45,32 @@ El Bot consulta el estado del servidor cada 10 segundos. Si detecta que una part
 
 ### VIP Monitor
 Cada 10 segundos, el Bot revisa la lista de jugadores conectados. Si detecta a un jugador nuevo y este tiene un "Mensaje de Bienvenida" configurado en la BD (beneficio VIP/Admin), el Bot envía ese mensaje en un "Broadcast" general en el juego.
+
+## 5. Modo de Juego 50v50 y Auto-Teambalancing
+
+El sistema cuenta con un motor dedicado (`mode_50v50_loop` en `sync_engine.py`) para convertir la experiencia tripartita estándar (33v33v33) en un enfrentamiento bipartito 50v50: **Valkyra (Rojo)** vs **Manticore (Verde)**, neutralizando la facción **Lonestar (Azul)**.
+
+### A. Integración con RCON ServerSettings (`/v1/config`)
+El juego bloquea por defecto unirse a equipos con exceso de jugadores mediante `bLockOverpopulatedTeamsConfig=true` en `ServerSettings.ini` (`[/Script/WDGame.WDGameStateSession]`).
+- **Al activar 50v50**: El bot edita remotamente el archivo de configuración del servidor RCON fijando `bLockOverpopulatedTeamsConfig=false`. Esto permite que los equipos crezcan hasta 50+ jugadores sin que el motor de juego rechace las uniones ni las transferencias.
+- **Al desactivar 50v50**: El bot restaura en RCON `bLockOverpopulatedTeamsConfig=true` y `OverpopulatedTeamThresholdConfig=1`.
+
+### B. Ciclo de Vida Diferido (`[NEXT MATCH]`)
+Los cambios en `ServerSettings.ini` solo son procesados por el servidor de juego al comenzar una nueva partida o tras un reinicio del servidor (`[NEXT MATCH]`). Por ello, el bot implementa un ciclo de vida de 4 estados en la tabla `bot_config` (`MODE_50V50_STATE`):
+1. `pending_enable`: El admin activa el modo. El RCON ya queda configurado con team balancing desactivado. La automatización espera al siguiente cambio de mapa/reinicio para arrancar.
+2. `active`: La nueva partida inició. El motor de balanceo del bot está activamente balanceando jugadores cada 6 segundos.
+3. `pending_disable`: El admin desactiva el modo mientras hay una partida 50v50 en curso. RCON se restaura a `true`. Para no romper la partida a mitad de juego, la automatización del bot sigue activa hasta que concluya el round.
+4. `inactive`: Modo completamente apagado. Se entra aquí automáticamente al iniciar el siguiente match tras `pending_disable`, o de forma inmediata si se cancela mientras estaba en `pending_enable`.
+
+### C. Algoritmo de Balanceo (cada 6 segundos)
+1. **Detección Dinámica de Facción**: Inspecciona `status.factionScores` en cada ciclo para identificar los nombres exactos en vivo (`Valkyra`, `Manticore`, `Lonestar`).
+2. **Paso 1 - Eliminación de Lonestar**: Todos los jugadores en Azul son transferidos inmediatamente al equipo con menor población entre Rojo y Verde.
+3. **Paso 2 - Auto-Teambalancing Rojo vs Verde**: Como el balanceo interno del juego está desactivado, si la diferencia poblacional entre Rojo y Verde es $\ge 2$:
+   - Se transfieren $\lfloor\text{diferencia}/2\rfloor$ jugadores del equipo mayoritario al minoritario.
+   - **Regla de Jugadores Más Nuevos**: Se priorizan candidatos por:
+     1. Menor `cash` ($0$ cash primero, quienes recién ingresaron al servidor y no tienen vehículos o equipamiento comprado).
+     2. Menor actividad global (`kills + deaths`).
+   - **Protecciones**:
+     - Nunca se tocan jugadores en facción `White` o `None` (espectadores o eligiendo equipo).
+     - Se mantiene un cooldown de 60 segundos por jugador para evitar transferencias de ida y vuelta en bucle (*ping-pong*).
+

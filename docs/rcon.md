@@ -119,8 +119,10 @@ MinimumRequiredPlayers=60
 ScorePeriod=24           ; score tick seconds, 18-30
 
 [/Script/WDGame.WDGameStateSession]
-bLockOverpopulatedTeamsConfig=true
-OverpopulatedTeamThresholdConfig=2
+bLockOverpopulatedTeamsConfig=true  ; When true, blocks joining teams with population advantage (NEXT MATCH)
+OverpopulatedTeamThresholdConfig=1  ; Max player difference allowed before locking (NEXT MATCH)
+; Controlled via PUT /v1/config with header If-Match: "<revision>"
+
 
 [/Script/WDGame.WDServerMapRotationSettings]
 bEnabled=true ; RotationMode=Ordered|Random

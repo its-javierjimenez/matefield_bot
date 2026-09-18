@@ -4,11 +4,19 @@ Este documento enumera todos los comandos disponibles (slash commands) en el bot
 
 ## 🎮 Match (/match) - En Vivo y Partidas Actuales
 Estos comandos consultan e interactúan directamente con el servidor RCON para obtener información en tiempo real de la partida en curso.
-- `/match status`: Muestra el estado actual de la partida, puntajes por equipo, mapa y tiempo restante.
+- `/match status`: Muestra el estado actual de la partida, puntajes por equipo, mapa, tiempo restante y el estado del **Modo 50v50** (🟢 Activo, ⏳ Programado, o ⚪ Inactivo).
 - `/match players`: Muestra a todos los jugadores actualmente en la partida agrupados por equipo.
 - `/match leaderboard`: Muestra el top 10 de jugadores de la partida en curso (ordenados por kills).
 - `/match player [steam_id_o_nombre]`: Muestra información en vivo de un jugador en la partida. **Incluye botones interactivos de administrador** para Kickear, Banear o Cambiar de Facción al instante.
 - `/match logs`: *(Solo Admin)* Muestra los últimos 10 eventos del log de auditoría del servidor de juego.
+- `/match mode50v50 [accion: Activar | Desactivar | Consultar]`: *(Solo Admin)* Administra el Modo 50v50 (Rojo vs Verde).
+  - **Activar**: Desactiva el Team Balancing en RCON y programa el modo para la próxima partida o reinicio.
+  - **Desactivar**: Restaura el Team Balancing en RCON (límite: 1). Si la partida ya está en curso, programa la desactivación para el próximo match (manteniendo el 50v50 actual hasta el final). Si no había iniciado, cancela inmediatamente.
+  - **Consultar**: Muestra el estado detallado (`active`, `pending_enable`, `pending_disable`, `inactive`).
+- `/match mode50v50_enable`: *(Solo Admin)* Acceso directo para activar/programar el modo 50v50.
+- `/match mode50v50_disable`: *(Solo Admin)* Acceso directo para desactivar/cancelar el modo 50v50.
+- `/match mode50v50_status`: Consulta rápida pública del estado del modo 50v50.
+
 
 ## 📊 Database (`/db`) - Estadísticas Históricas y Gestión
 Estos comandos interactúan con la base de datos local y muestran información histórica o permiten administrar cuentas.
