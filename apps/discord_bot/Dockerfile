@@ -6,10 +6,7 @@ WORKDIR /app
 # Instalar dependencias del workspace
 COPY pyproject.toml uv.lock ./
 COPY packages packages
-RUN uv sync --frozen --no-install-project
-
-# Instalar app
-COPY apps/discord_bot apps/discord_bot
+COPY apps apps
 RUN uv sync --frozen
 
 WORKDIR /app/apps/discord_bot
