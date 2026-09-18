@@ -306,9 +306,7 @@ async def poll_rcon():
 
 async def mode_50v50_loop():
     logger.info("Starting 50v50 Mode Engine (Checks every 6 seconds)...")
-    warmup_1m_sent = False
-    warmup_30s_sent = False
-    warmup_10s_sent = False
+    warmup_15s_sent = False
     active_broadcast_sent = False
     last_50v50_match_id = None
 
@@ -335,9 +333,7 @@ async def mode_50v50_loop():
                     last_50v50_match_id = current_match_id
                     player_team_history.clear()
                     recently_swapped_players.clear()
-                    warmup_1m_sent = False
-                    warmup_30s_sent = False
-                    warmup_10s_sent = False
+                    warmup_15s_sent = False
                     active_broadcast_sent = False
 
                 # Purge expired cooldowns (> 120 seconds)
@@ -363,36 +359,20 @@ async def mode_50v50_loop():
                 except Exception as err_status:
                     logger.warning(f"[50v50 Mode] Could not get live faction names from status: {err_status}")
 
-                # Broadcast announcements for warmup (1m, 30s, 10s) and active autobalance
+                # Broadcast announcements for warmup (15s) and active autobalance
                 if match_seconds is not None:
-                    if match_seconds < 30 and not warmup_1m_sent:
+                    if match_seconds < 15 and not warmup_15s_sent:
                         try:
-                            await rcon_client.broadcast("Modo 50v50: 1m antes de autobalance")
-                            warmup_1m_sent = True
-                            logger.info("[50v50 Mode] Broadcast sent: 'Modo 50v50: 1m antes de autobalance'")
+                            await rcon_client.broadcast("Modo 50v50: 15s antes de autobalance")
+                            warmup_15s_sent = True
+                            logger.info("[50v50 Mode] Broadcast sent: 'Modo 50v50: 15s antes de autobalance'")
                         except Exception as err_bc:
-                            logger.warning(f"[50v50 Mode] Could not send 1m warmup broadcast: {err_bc}")
-                    elif 30 <= match_seconds < 50 and not warmup_30s_sent:
-                        try:
-                            await rcon_client.broadcast("Modo 50v50: 30s antes de autobalance")
-                            warmup_30s_sent = True
-                            logger.info("[50v50 Mode] Broadcast sent: 'Modo 50v50: 30s antes de autobalance'")
-                        except Exception as err_bc:
-                            logger.warning(f"[50v50 Mode] Could not send 30s warmup broadcast: {err_bc}")
-                    elif 50 <= match_seconds < 60 and not warmup_10s_sent:
-                        try:
-                            await rcon_client.broadcast("Modo 50v50: 10s antes de autobalance")
-                            warmup_10s_sent = True
-                            logger.info("[50v50 Mode] Broadcast sent: 'Modo 50v50: 10s antes de autobalance'")
-                        except Exception as err_bc:
-                            logger.warning(f"[50v50 Mode] Could not send 10s warmup broadcast: {err_bc}")
-                    elif match_seconds >= 60 and not active_broadcast_sent:
+                            logger.warning(f"[50v50 Mode] Could not send 15s warmup broadcast: {err_bc}")
+                    elif match_seconds >= 15 and not active_broadcast_sent:
                         try:
                             await rcon_client.broadcast("Modo 50v50: Autobalance ACTIVO")
                             active_broadcast_sent = True
-                            warmup_1m_sent = True
-                            warmup_30s_sent = True
-                            warmup_10s_sent = True
+                            warmup_15s_sent = True
                             logger.info("[50v50 Mode] Broadcast sent: 'Modo 50v50: Autobalance ACTIVO'")
                         except Exception as err_bc:
                             logger.warning(f"[50v50 Mode] Could not send active broadcast: {err_bc}")
@@ -472,6 +452,12 @@ async def mode_50v50_loop():
                         if existing_hist and existing_hist.get("assigned_faction") in ("valkyra", "manticore"):
                             target_key = existing_hist["assigned_faction"]
                             target_faction = red_name if target_key == "valkyra" else green_name
+                        elif len(red_players) >= 50 and len(green_players) < 50:
+                            target_faction = green_name
+                            target_key = "manticore"
+                        elif len(green_players) >= 50 and len(red_players) < 50:
+                            target_faction = red_name
+                            target_key = "valkyra"
                         elif len(red_players) <= len(green_players):
                             target_faction = red_name
                             target_key = "valkyra"
@@ -501,12 +487,62 @@ async def mode_50v50_loop():
                             logger.error(f"[50v50 Mode] Failed to move {p.steamId} to {target_faction}: {err}")
 
                 # Step 2: Process new entrants joining Valkyra or Manticore
-                is_warmup = (match_seconds is not None and match_seconds < 60)
+                is_warmup = (match_seconds is not None and match_seconds < 15)
                 for p, f_canonical in new_entrants:
                     if not p.steamId:
                         continue
-                    if is_warmup:
-                        # 1-minute warmup grace period: Free selection for squads/friends
+
+                    if f_canonical == "valkyra":
+                        chosen_count = len(red_players)
+                        opposite_count = len(green_players)
+                        target_faction = green_name
+                        target_key = "manticore"
+                    else:
+                        chosen_count = len(green_players)
+                        opposite_count = len(red_players)
+                        target_faction = red_name
+                        target_key = "valkyra"
+
+                    should_redirect = False
+                    redirect_reason = ""
+
+                    # Rule 1: Hard-cap of 50 players per team
+                    if chosen_count >= 50:
+                        should_redirect = True
+                        redirect_reason = f"Equipo {f_canonical} lleno (50 jugadores)"
+                    elif is_warmup:
+                        # Rule 2: Warmup (< 15s) allows freedom up to 6 players difference
+                        if (chosen_count - opposite_count) >= 6:
+                            should_redirect = True
+                            redirect_reason = f"Diferencia máxima superada en calentamiento ({chosen_count} vs {opposite_count})"
+                    else:
+                        # Rule 3: Post-warmup (>= 15s) Gatekeeper redirects if choosing overpopulated team
+                        if chosen_count > opposite_count:
+                            should_redirect = True
+                            redirect_reason = f"Equipo sobrepoblado ({chosen_count} vs {opposite_count})"
+
+                    if should_redirect and opposite_count < 50:
+                        logger.info(f"[50v50 Mode] Gatekeeper: Redirecting {p.name} ({p.steamId}) from {f_canonical} -> {target_faction} [{redirect_reason}]")
+                        try:
+                            await rcon_client.switch_faction(p.steamId, target_faction)
+                            recently_swapped_players[p.steamId] = now_ts
+                            player_team_history[p.steamId] = {
+                                "current_faction": target_key,
+                                "assigned_faction": target_key,
+                                "joined_team_at": now_ts,
+                            }
+                            if target_key == "valkyra":
+                                red_players.append(p)
+                            else:
+                                green_players.append(p)
+                            try:
+                                await rcon_client.send_player_message(p.steamId, f"Se te ha asignado al equipo {target_faction} para balancear la partida.")
+                            except Exception:
+                                pass
+                        except Exception as err:
+                            logger.error(f"[50v50 Mode] Failed to redirect {p.steamId} to {target_faction}: {err}")
+                    else:
+                        # Entrant accepted into chosen team
                         player_team_history[p.steamId] = {
                             "current_faction": f_canonical,
                             "assigned_faction": f_canonical,
@@ -516,52 +552,7 @@ async def mode_50v50_loop():
                             red_players.append(p)
                         else:
                             green_players.append(p)
-                        logger.info(f"[50v50 Mode] Warmup entrant {p.name} ({p.steamId}) joined {f_canonical} (R:{len(red_players)}, G:{len(green_players)})")
-                    else:
-                        # Post-warmup (matchSeconds >= 60): Overpopulation Gatekeeper
-                        # If entrant chooses a team that already has more players than the other, redirect and lock!
-                        is_overpopulating = False
-                        if f_canonical == "valkyra" and len(red_players) > len(green_players):
-                            is_overpopulating = True
-                            target_faction = green_name
-                            target_key = "manticore"
-                        elif f_canonical == "manticore" and len(green_players) > len(red_players):
-                            is_overpopulating = True
-                            target_faction = red_name
-                            target_key = "valkyra"
-
-                        if is_overpopulating:
-                            logger.info(f"[50v50 Mode] Overpopulation Gatekeeper: {p.name} ({p.steamId}) tried to join {f_canonical} (R:{len(red_players)} vs G:{len(green_players)}). Redirecting to {target_faction}!")
-                            try:
-                                await rcon_client.switch_faction(p.steamId, target_faction)
-                                recently_swapped_players[p.steamId] = now_ts
-                                player_team_history[p.steamId] = {
-                                    "current_faction": target_key,
-                                    "assigned_faction": target_key,
-                                    "joined_team_at": now_ts,
-                                }
-                                if target_key == "valkyra":
-                                    red_players.append(p)
-                                else:
-                                    green_players.append(p)
-                                try:
-                                    await rcon_client.send_player_message(p.steamId, f"Se te ha asignado al equipo {target_faction} para balancear la partida.")
-                                except Exception:
-                                    pass
-                            except Exception as err:
-                                logger.error(f"[50v50 Mode] Failed to redirect {p.steamId} to {target_faction}: {err}")
-                        else:
-                            # Entrant picked smaller or equal team
-                            player_team_history[p.steamId] = {
-                                "current_faction": f_canonical,
-                                "assigned_faction": f_canonical,
-                                "joined_team_at": now_ts,
-                            }
-                            if f_canonical == "valkyra":
-                                red_players.append(p)
-                            else:
-                                green_players.append(p)
-                            logger.info(f"[50v50 Mode] Entrant {p.name} ({p.steamId}) accepted into {f_canonical} (R:{len(red_players)}, G:{len(green_players)})")
+                        logger.info(f"[50v50 Mode] Entrant {p.name} ({p.steamId}) accepted into {f_canonical} (R:{len(red_players)}, G:{len(green_players)})")
 
         except Exception as e:
             logger.error(f"[50v50 Mode] Error in 50v50 loop: {e}")

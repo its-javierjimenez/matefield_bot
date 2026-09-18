@@ -71,27 +71,25 @@ Los cambios en `ServerSettings.ini` solo son procesados por el servidor de juego
      > *"Cambio de equipo no permitido durante la partida."*
    - Aplica un cooldown de 15 segundos al jugador para evitar bucles de reversión.
 3. **Anuncios Globales por Chat (Broadcast - `POST /v1/broadcast`)**:
-   - Al iniciar la partida (`matchSeconds < 30`): Emite una sola vez el anuncio a todo el servidor:
-     > `Modo 50v50: 1m antes de autobalance`
-   - A los 30 segundos (`30 <= matchSeconds < 50`): Emite una sola vez el anuncio a todo el servidor:
-     > `Modo 50v50: 30s antes de autobalance`
-   - A los 50 segundos (`50 <= matchSeconds < 60`): Emite una sola vez el anuncio a todo el servidor:
-     > `Modo 50v50: 10s antes de autobalance`
-   - Al cumplirse el primer minuto (`matchSeconds >= 60`): Emite una sola vez el anuncio a todo el servidor:
+   - Al iniciar la partida (`matchSeconds < 15`): Emite una sola vez el anuncio a todo el servidor:
+     > `Modo 50v50: 15s antes de autobalance`
+   - Al cumplirse el segundo 15 (`matchSeconds >= 15`): Emite una sola vez el anuncio a todo el servidor:
      > `Modo 50v50: Autobalance ACTIVO`
 4. **Paso 1 - Eliminación y Asimilación de Lonestar (Azul)**:
-   - Todos los jugadores detectados en facción Lonestar son transferidos inmediatamente al equipo con menor población entre Rojo y Verde (o devueltos a su equipo si ya tenían uno asignado).
+   - Todos los jugadores detectados en facción Lonestar son transferidos inmediatamente al equipo con menor población entre Rojo y Verde (o devueltos a su equipo si ya tenían uno asignado), respetando el techo máximo de 50 jugadores.
    - **Whisper de Asignación**: Se le envía un mensaje privado por RCON informándole:
      > *"Se te ha asignado al equipo {target_faction}."*
    - Quedan registrados como miembros oficiales de esa facción en `player_team_history`. Si intentan cambiarse al otro equipo, el sellado ARMA los bloquea y revierte.
 5. **Paso 2 - Portero Global en Entrada (Overpopulation Gatekeeper)**:
-   - **Calentamiento Inicial (Primeros 60 segundos)**: Durante `matchSeconds < 60`, los jugadores pueden conectarse y elegir equipo con total libertad. Amigos, clanes y escuadras pueden unirse al mismo bando sin que el bot los separe por diferencias en tiempos de carga entre SSD y HDD.
+   - **Calentamiento Inicial (Primeros 15 segundos con tope de seguridad)**: Durante `matchSeconds < 15`, los jugadores pueden conectarse y elegir equipo libremente con sus escuadras, sujeto a dos frenos automáticos:
+     - **Techo de 50**: Ningún equipo puede superar los 50 jugadores bajo ninguna circunstancia.
+     - **Límite de Diferencia (Máx 6)**: Si un equipo supera al otro por 6 o más jugadores (ej. 18 vs 12), el portero frena y redirige a los nuevos ingresantes hacia el bando menor.
    - **Inmunidad Total para Jugadores Existentes**: Todo jugador que ya esté jugando en un equipo (`p.steamId in player_team_history`) es **100% INMUNE** y **NUNCA se le mueve de bando**.
      - ¿Compró un tanque en base? **Protegido.**
      - ¿Está esperando 2 minutos a que llegue un helicóptero? **Protegido.**
      - ¿Gasta dinero en terminales de armas o vehículos? **Protegido.**
-     - Se elimina por completo cualquier temporizador de novato o cálculo de segundos en base: la inmunidad de quien ya está adentro es absoluta.
-   - **Portero de Sobrepoblación en la Entrada**: A partir del minuto 1:00 (`matchSeconds >= 60`), cuando un **NUEVO jugador** conecta al servidor:
+     - El abandono de partida (*ragequit*) no mueve a los que siguen jugando; los administradores pueden intervenir manualmente si es necesario.
+   - **Portero de Sobrepoblación en la Entrada**: A partir del segundo 15 (`matchSeconds >= 15`), cuando un **NUEVO jugador** conecta al servidor:
      - Si intenta entrar al equipo que ya tiene más jugadores (sobrepopulador): El bot lo intercepta de inmediato, lo transfiere al equipo menor mediante `switch_faction`, lo bloquea allí en `player_team_history` y le envía un whisper:
        > *"Se te ha asignado al equipo {target_faction} para balancear la partida."*
      - Si entra al equipo menor o empatado: Es aceptado inmediatamente sin alteración.

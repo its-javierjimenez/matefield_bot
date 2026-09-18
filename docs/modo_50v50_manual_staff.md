@@ -25,22 +25,22 @@ El **Modo 50v50** elimina por completo al equipo **Azul** y convierte la partida
 
 Imaginate que el servidor es un **boliche (discoteca)** con dos salas: **Sala Roja (Valkyra)** y **Sala Verde (Manticore)**:
 
-1. **La Puerta Libre (Primer minuto):**
-   * Durante el primer minuto de la partida, la puerta está abierta de par en par.
-   * Vos y tus 4 amigos entran juntos a la Sala Roja sin que nadie les rompa las bolas.
-   * En el chat de todo el servidor van saliendo los avisos progresivos:  
-     > 📢 `Modo 50v50: 1m antes de autobalance`  
-     > 📢 `Modo 50v50: 30s antes de autobalance`  
-     > 📢 `Modo 50v50: 10s antes de autobalance`  
+1. **La Puerta Libre (Primeros 15 segundos con tope de seguridad):**
+   * Durante los primeros 15 segundos de la partida, la puerta está abierta para entrar con amigos y escuadras.
+   * **Frenos de Seguridad Automáticos:**
+     * **Techo Máximo de 50:** Ningún equipo puede superar los 50 jugadores jamás. Si una sala llega a 50, se cierra de inmediato.
+     * **Diferencia Máxima de 6:** Si una sala le saca 6 o más jugadores de ventaja a la otra (ej: 18 vs 12), el portero se despierta y frena a los nuevos para que no rompan la partida.
+   * En el chat de todo el servidor sale el aviso:  
+     > 📢 `Modo 50v50: 15s antes de autobalance`  
 
 2. **Nadie que esté adentro se mueve (Regla de Oro):**
    * Si ya entraste a una sala, **el bot NUNCA te va a sacar**.
    * ¿Compraste un tanque? **Tu tanque está a salvo.**
    * ¿Estás esperando 2 minutos en la base a que llegue tu helicóptero? **Tu helicóptero está a salvo.**
-   * ¿El otro equipo se quedó sin gente porque son malos y se fueron (ragequit)? **A vos NO te pasa nadie.** Seguís jugando en tu equipo.
+   * ¿El otro equipo se quedó sin gente porque son malos y se fueron (ragequit)? **A vos NO te pasa nadie.** El ragequit lo resuelven los admins manualmente si hace falta.
 
-3. **El Portero en la Entrada (Pasado el primer minuto):**
-   * Al cumplirse el minuto 1 sale el aviso definitivo:  
+3. **El Portero en la Entrada (Del segundo 15 en adelante):**
+   * Al cumplirse el segundo 15 sale el aviso definitivo:  
      > 📢 `Modo 50v50: Autobalance ACTIVO`
    * A partir de ahí, el bot se para de **patovica/portero** en la entrada:
      * Si la Sala Roja tiene 30 personas y la Verde tiene 20, y cae un **jugador nuevo** que intenta meterse a la Roja...
@@ -103,12 +103,8 @@ Aquí tenés exactamente lo que pasa en cada situación para que no tengas miedo
 
 ### B. Avisos de Calentamiento / Autobalance:
 * 📢 **Segundo 0 (Inicio de partida):**  
-  `Modo 50v50: 1m antes de autobalance`
-* 📢 **Segundo 30:**  
-  `Modo 50v50: 30s antes de autobalance`
-* 📢 **Segundo 50:**  
-  `Modo 50v50: 10s antes de autobalance`
-* 📢 **Segundo 60 (Autobalance Activo):**  
+  `Modo 50v50: 15s antes de autobalance`
+* 📢 **Segundo 15 (Autobalance Activo):**  
   `Modo 50v50: Autobalance ACTIVO`
 
 ### C. Mensajes Privados (Susurros):

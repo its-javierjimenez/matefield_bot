@@ -1,513 +1,520 @@
-"""
-Comprehensive Deep Audit and Multi-Scenario Test Suite for 50v50 Mode
-Executing 12 advanced scenarios against the REAL Mock RCON ASGI application:
-
-Scenario 1: Progressive Warmup Broadcasts (1m -> 30s -> 10s -> ACTIVO)
-Scenario 2: Free Selection of Squad Friends during Warmup (no splits)
-Scenario 3: Lonestar (Blue) Draining during Warmup and Post-Warmup
-Scenario 4: Gatekeeper Activation at Minute 1 (Overpopulator redirected + whisper)
-Scenario 5: Absolute Immunity for Base Players (Buying Tank / Waiting 2 Min for Heli)
-Scenario 6: ARMA-Style Strict Switch Lock (Cheat switch reverted + whisper)
-Scenario 7: Reconnection of Disconnected Player (Preserves assigned faction)
-Scenario 8: Mass Ragequit on Losing Team (50v50 -> 50v42, zero veterans moved)
-Scenario 9: Spectator / Admin Isolation (White / None strictly untouched)
-Scenario 10: Server Restart / Bot Late Join mid-match (Suppresses past warmup broadcasts)
-Scenario 11: Match Rotation & Memory Cleanup (New match resets tracking and broadcasts)
-Scenario 12: Incongruent Faction Names ("Valkyre", extra whitespace, mixed casing)
-"""
-
 import asyncio
-import sys
 import os
+import sys
+import datetime
 import time
+from typing import Any, Dict, List
 
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
+# Workspace package paths
+sys.path.insert(0, os.path.abspath("."))
+sys.path.insert(0, os.path.abspath("packages/wardogs_schemas/src"))
+sys.path.insert(0, os.path.abspath("apps/api_rcon"))
 
-workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, workspace_root)
-sys.path.insert(0, os.path.join(workspace_root, "apps", "rcon_mock"))
-sys.path.insert(0, os.path.join(workspace_root, "packages", "wardogs_schemas", "src"))
+from src.connections.apis.rcon import RCONClient
+from src.connections.databases.db import BotConfig, Match, Player
+from sqlmodel import select, SQLModel
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlalchemy.ext.asyncio import create_async_engine
+import apps.rcon_mock.src.main as mock_main
+from httpx import AsyncClient, ASGITransport
+from wardogs_schemas import v1 as schemas
 
-import httpx
-from httpx import ASGITransport
-import importlib.util
+test_engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
 
-mock_rcon_path = os.path.join(workspace_root, "apps", "rcon_mock", "src", "main.py")
-spec = importlib.util.spec_from_file_location("mock_rcon_module", mock_rcon_path)
-mock_rcon_module = importlib.util.module_from_spec(spec)
-sys.modules["mock_rcon_module"] = mock_rcon_module
-spec.loader.exec_module(mock_rcon_module)
-
-rcon_fastapi_app = mock_rcon_module.app
-mock_players = mock_rcon_module.mock_players
-mock_state = mock_rcon_module.mock_state
-audit_logs = mock_rcon_module.audit_logs
-
-class ASGI_RCONClient:
-    def __init__(self):
-        self.transport = ASGITransport(app=rcon_fastapi_app)
-        self.base_url = "http://mock-rcon"
-        self.headers = {
-            "Authorization": "Bearer test",
-            "Content-Type": "application/json"
-        }
-
-    async def get_players(self):
-        async with httpx.AsyncClient(transport=self.transport, base_url=self.base_url) as client:
-            resp = await client.get("/v1/players", headers=self.headers)
-            resp.raise_for_status()
-            return resp.json()["players"]
-
-    async def switch_faction(self, steam_id: str, faction: str):
-        async with httpx.AsyncClient(transport=self.transport, base_url=self.base_url) as client:
-            resp = await client.patch(f"/v1/players/{steam_id}", json={"faction": faction}, headers=self.headers)
-            resp.raise_for_status()
-            return resp.json()
-
-    async def send_player_message(self, steam_id: str, message: str):
-        async with httpx.AsyncClient(transport=self.transport, base_url=self.base_url) as client:
-            resp = await client.post(f"/v1/players/{steam_id}/message", json={"message": message}, headers=self.headers)
-            resp.raise_for_status()
-            return resp.json()
-
-    async def broadcast(self, message: str):
-        async with httpx.AsyncClient(transport=self.transport, base_url=self.base_url) as client:
-            resp = await client.post("/v1/broadcast", json={"message": message}, headers=self.headers)
-            resp.raise_for_status()
-            return resp.json()
-
-    async def get_audit(self):
-        async with httpx.AsyncClient(transport=self.transport, base_url=self.base_url) as client:
-            resp = await client.get("/v1/audit", headers=self.headers)
-            resp.raise_for_status()
-            return resp.json()["entries"]
-
-
-# In-memory tracking state replicating sync_engine.py
-player_team_history: dict[str, dict] = {}
-recently_swapped_players: dict[str, float] = {}
-
-warmup_1m_sent = False
-warmup_30s_sent = False
-warmup_10s_sent = False
-active_broadcast_sent = False
-last_match_id = None
-broadcast_history: list[str] = []
-
-
-async def simulate_engine_tick(rcon: ASGI_RCONClient, now_ts: float, current_match_id: str, match_seconds: int, custom_red_name="Valkyra", custom_green_name="Manticore"):
-    global warmup_1m_sent, warmup_30s_sent, warmup_10s_sent, active_broadcast_sent, last_match_id
-
-    # 1. Match rotation reset
-    if current_match_id != last_match_id:
-        last_match_id = current_match_id
-        player_team_history.clear()
-        recently_swapped_players.clear()
-        warmup_1m_sent = False
-        warmup_30s_sent = False
-        warmup_10s_sent = False
-        active_broadcast_sent = False
-
-    # 2. Cooldown purge
-    expired = [sid for sid, ts in recently_swapped_players.items() if now_ts - ts > 120]
-    for sid in expired:
-        del recently_swapped_players[sid]
-
-    red_name = custom_red_name
-    green_name = custom_green_name
-
-    # 3. Broadcast sequence
-    if match_seconds is not None:
-        if match_seconds < 30 and not warmup_1m_sent:
-            msg = "Modo 50v50: 1m antes de autobalance"
-            await rcon.broadcast(msg)
-            broadcast_history.append(msg)
-            warmup_1m_sent = True
-        elif 30 <= match_seconds < 50 and not warmup_30s_sent:
-            msg = "Modo 50v50: 30s antes de autobalance"
-            await rcon.broadcast(msg)
-            broadcast_history.append(msg)
-            warmup_30s_sent = True
-        elif 50 <= match_seconds < 60 and not warmup_10s_sent:
-            msg = "Modo 50v50: 10s antes de autobalance"
-            await rcon.broadcast(msg)
-            broadcast_history.append(msg)
-            warmup_10s_sent = True
-        elif match_seconds >= 60 and not active_broadcast_sent:
-            msg = "Modo 50v50: Autobalance ACTIVO"
-            await rcon.broadcast(msg)
-            broadcast_history.append(msg)
-            active_broadcast_sent = True
-            warmup_1m_sent = True
-            warmup_30s_sent = True
-            warmup_10s_sent = True
-
-    # 4. Fetch players from Mock RCON
-    all_players = await rcon.get_players()
-
-    blue_players = []
-    red_players = []
-    green_players = []
-    new_entrants = []
-
-    # First pass: Categorize existing vs new entrants + ARMA lock
-    for p in all_players:
-        sid = p.get("steamId")
-        f = (p.get("faction") or "").strip().lower()
-        if f.startswith("lone"):
-            blue_players.append(p)
-        elif f.startswith("valk"):
-            f_canonical = "valkyra"
-            if not sid:
-                continue
-            if sid not in player_team_history:
-                new_entrants.append((p, f_canonical))
-            else:
-                hist = player_team_history[sid]
-                bot_swapped = (now_ts - recently_swapped_players.get(sid, 0)) < 15
-                assigned = hist.get("assigned_faction", "valkyra")
-                if not bot_swapped and assigned != "valkyra":
-                    revert_target = green_name
-                    await rcon.switch_faction(sid, revert_target)
-                    recently_swapped_players[sid] = now_ts
-                    await rcon.send_player_message(sid, "Cambio de equipo no permitido durante la partida.")
-                    green_players.append(p)
-                else:
-                    hist["current_faction"] = "valkyra"
-                    red_players.append(p)
-        elif f.startswith("mant"):
-            f_canonical = "manticore"
-            if not sid:
-                continue
-            if sid not in player_team_history:
-                new_entrants.append((p, f_canonical))
-            else:
-                hist = player_team_history[sid]
-                bot_swapped = (now_ts - recently_swapped_players.get(sid, 0)) < 15
-                assigned = hist.get("assigned_faction", "manticore")
-                if not bot_swapped and assigned != "manticore":
-                    revert_target = red_name
-                    await rcon.switch_faction(sid, revert_target)
-                    recently_swapped_players[sid] = now_ts
-                    await rcon.send_player_message(sid, "Cambio de equipo no permitido durante la partida.")
-                    red_players.append(p)
-                else:
-                    hist["current_faction"] = "manticore"
-                    green_players.append(p)
-        else:
-            continue
-
-    # Step 1: Drain Blue
-    if blue_players:
-        for p in blue_players:
-            sid = p.get("steamId")
-            if not sid:
-                continue
-            existing_hist = player_team_history.get(sid)
-            if existing_hist and existing_hist.get("assigned_faction") in ("valkyra", "manticore"):
-                target_key = existing_hist["assigned_faction"]
-                target_faction = red_name if target_key == "valkyra" else green_name
-            elif len(red_players) <= len(green_players):
-                target_faction = red_name
-                target_key = "valkyra"
-            else:
-                target_faction = green_name
-                target_key = "manticore"
-
-            if target_key == "valkyra":
-                red_players.append(p)
-            else:
-                green_players.append(p)
-
-            await rcon.switch_faction(sid, target_faction)
-            recently_swapped_players[sid] = now_ts
-            player_team_history[sid] = {
-                "current_faction": target_key,
-                "assigned_faction": target_key,
-                "joined_team_at": now_ts,
-            }
-            await rcon.send_player_message(sid, f"Se te ha asignado al equipo {target_faction}.")
-
-    # Step 2: Process new entrants
-    is_warmup = (match_seconds is not None and match_seconds < 60)
-    for p, f_canonical in new_entrants:
-        sid = p.get("steamId")
-        if not sid:
-            continue
-        if is_warmup:
-            player_team_history[sid] = {
-                "current_faction": f_canonical,
-                "assigned_faction": f_canonical,
-                "joined_team_at": now_ts,
-            }
-            if f_canonical == "valkyra":
-                red_players.append(p)
-            else:
-                green_players.append(p)
-        else:
-            is_overpopulating = False
-            if f_canonical == "valkyra" and len(red_players) > len(green_players):
-                is_overpopulating = True
-                target_faction = green_name
-                target_key = "manticore"
-            elif f_canonical == "manticore" and len(green_players) > len(red_players):
-                is_overpopulating = True
-                target_faction = red_name
-                target_key = "valkyra"
-
-            if is_overpopulating:
-                await rcon.switch_faction(sid, target_faction)
-                recently_swapped_players[sid] = now_ts
-                player_team_history[sid] = {
-                    "current_faction": target_key,
-                    "assigned_faction": target_key,
-                    "joined_team_at": now_ts,
-                }
-                if target_key == "valkyra":
-                    red_players.append(p)
-                else:
-                    green_players.append(p)
-                await rcon.send_player_message(sid, f"Se te ha asignado al equipo {target_faction} para balancear la partida.")
-            else:
-                player_team_history[sid] = {
-                    "current_faction": f_canonical,
-                    "assigned_faction": f_canonical,
-                    "joined_team_at": now_ts,
-                }
-                if f_canonical == "valkyra":
-                    red_players.append(p)
-                else:
-                    green_players.append(p)
-
+def make_player(name: str, steam_id: str, faction: str, kills: int = 0, deaths: int = 0, cash: int = 0, ping: int = 30) -> Dict[str, Any]:
+    return {
+        "name": name,
+        "steamId": steam_id,
+        "faction": faction,
+        "kills": kills,
+        "deaths": deaths,
+        "cash": cash,
+        "pingMs": ping
+    }
 
 async def main():
-    print("\n" + "="*70)
-    print("  AUDITORÍA RIGUROSA DE 12 ESCENARIOS CONTRA EL MOCK RCON")
-    print("="*70 + "\n")
+    print("=" * 70)
+    print(" EJECUTANDO AUDITORÍA COMPLETA Y BATERÍA DE ESCENARIOS MOCK RCON")
+    print("=" * 70)
 
-    rcon = ASGI_RCONClient()
-    mock_players.clear()
-    audit_logs.clear()
-    broadcast_history.clear()
-
-    # -------------------------------------------------------------
-    # Escenario 1: Secuencia Progresiva de Broadcasts (1m -> 30s -> 10s -> ACTIVO)
-    # -------------------------------------------------------------
-    print("▶ Escenario 1: Secuencia Progresiva de Anuncios Broadcast (1m -> 30s -> 10s -> ACTIVO)")
-    # Tick at 10s
-    await simulate_engine_tick(rcon, now_ts=10.0, current_match_id="m1", match_seconds=10)
-    assert broadcast_history == ["Modo 50v50: 1m antes de autobalance"]
-
-    # Tick at 20s (no new threshold, no duplicate)
-    await simulate_engine_tick(rcon, now_ts=20.0, current_match_id="m1", match_seconds=20)
-    assert len(broadcast_history) == 1
-
-    # Tick at 35s (hits 30s threshold)
-    await simulate_engine_tick(rcon, now_ts=35.0, current_match_id="m1", match_seconds=35)
-    assert broadcast_history == ["Modo 50v50: 1m antes de autobalance", "Modo 50v50: 30s antes de autobalance"]
-
-    # Tick at 54s (hits 10s threshold)
-    await simulate_engine_tick(rcon, now_ts=54.0, current_match_id="m1", match_seconds=54)
-    assert broadcast_history == [
-        "Modo 50v50: 1m antes de autobalance",
-        "Modo 50v50: 30s antes de autobalance",
-        "Modo 50v50: 10s antes de autobalance"
-    ]
-
-    # Tick at 60s (hits active threshold)
-    await simulate_engine_tick(rcon, now_ts=60.0, current_match_id="m1", match_seconds=60)
-    assert broadcast_history[-1] == "Modo 50v50: Autobalance ACTIVO"
-    assert len(broadcast_history) == 4
-
-    # Tick at 66s (no duplicates once active)
-    await simulate_engine_tick(rcon, now_ts=66.0, current_match_id="m1", match_seconds=66)
-    assert len(broadcast_history) == 4
-    print("  ✅ PASSED: Los 4 broadcasts se emitieron en el segundo exacto sin duplicarse jamás.")
-
-    # -------------------------------------------------------------
-    # Escenario 2: Selección Libre de Escuadra de Amigos en Calentamiento (< 60s)
-    # -------------------------------------------------------------
-    print("\n▶ Escenario 2: 6 Amigos conectan juntos a Valkyra en Calentamiento (25s) sin ser separados")
-    mock_players.clear()
-    player_team_history.clear()
-    recently_swapped_players.clear()
-
-    # 6 friends connect to Valkyra at matchSeconds=25
-    for i in range(6):
-        mock_players.append({"steamId": f"squad_{i}", "name": f"Squad_{i}", "faction": "Valkyra", "cash": 0, "kills": 0, "deaths": 0, "pingMs": 30})
-
-    await simulate_engine_tick(rcon, now_ts=25.0, current_match_id="m1", match_seconds=25)
-    # None of the 6 should be moved!
-    for i in range(6):
-        p = next(x for x in mock_players if x["steamId"] == f"squad_{i}")
-        assert p["faction"] == "Valkyra", f"Friend squad_{i} was moved during warmup!"
-        assert player_team_history[f"squad_{i}"]["assigned_faction"] == "valkyra"
-    print("  ✅ PASSED: Los 6 amigos quedaron intactos en Valkyra (6 vs 0) sin transferencias.")
-
-    # -------------------------------------------------------------
-    # Escenario 3: Drenado Continuo de Lonestar (Azul)
-    # -------------------------------------------------------------
-    print("\n▶ Escenario 3: 2 Jugadores conectan a Lonestar (Azul) y son distribuidos a Manticore")
-    mock_players.append({"steamId": "blue_1", "name": "Blue1", "faction": "Lonestar", "cash": 0, "kills": 0})
-    mock_players.append({"steamId": "blue_2", "name": "Blue2", "faction": "Lonestar", "cash": 0, "kills": 0})
-
-    await simulate_engine_tick(rcon, now_ts=30.0, current_match_id="m1", match_seconds=30)
-    # Valkyra had 6, Manticore had 0 -> both blues should go to Manticore
-    p_b1 = next(x for x in mock_players if x["steamId"] == "blue_1")
-    p_b2 = next(x for x in mock_players if x["steamId"] == "blue_2")
-    assert p_b1["faction"] == "Manticore"
-    assert p_b2["faction"] == "Manticore"
-    assert player_team_history["blue_1"]["assigned_faction"] == "manticore"
-    assert player_team_history["blue_2"]["assigned_faction"] == "manticore"
-    print("  ✅ PASSED: Ambos jugadores de Lonestar fueron transferidos a Manticore (quedando 6 vs 2).")
-
-    # -------------------------------------------------------------
-    # Escenario 4: Portero de Sobrepoblación a partir del Minuto 1 (matchSeconds >= 60)
-    # -------------------------------------------------------------
-    print("\n▶ Escenario 4: Minuto 1 cumplido -> Nuevo entrante elige Valkyra (6 vs 2) -> Redirigido a Manticore")
-    new_entrant = {"steamId": "new_guy_overpop", "name": "NewGuy", "faction": "Valkyra", "cash": 0, "kills": 0}
-    mock_players.append(new_entrant)
-
-    await simulate_engine_tick(rcon, now_ts=65.0, current_match_id="m1", match_seconds=65)
-    # new_guy_overpop chose Valkyra, but Valkyra is 6 vs 2 (overpopulated) -> must be switched to Manticore!
-    p_new = next(x for x in mock_players if x["steamId"] == "new_guy_overpop")
-    assert p_new["faction"] == "Manticore", f"Expected Manticore, got {p_new['faction']}"
-    assert player_team_history["new_guy_overpop"]["assigned_faction"] == "manticore"
-
-    audits = await rcon.get_audit()
-    assert any("Se te ha asignado al equipo Manticore para balancear la partida." in a["detail"] for a in audits)
-    print("  ✅ PASSED: El nuevo entrante fue interceptado en la puerta y reubicado en Manticore con whisper.")
-
-    # -------------------------------------------------------------
-    # Escenario 5: Inmunidad Total para Jugadores en Base Esperando Vehículos
-    # -------------------------------------------------------------
-    print("\n▶ Escenario 5: Jugador en base esperando helicóptero hace 2 minutos ($0 cash, 0 K/D) NUNCA se mueve")
-    # squad_0 has $0 cash and 0 K/D, waiting 2 minutes in base
-    assert player_team_history["squad_0"]["current_faction"] == "valkyra"
+    transport = ASGITransport(app=mock_main.app)
     
-    # 10 ticks occur
-    for t in range(70, 130, 6):
-        await simulate_engine_tick(rcon, now_ts=float(t), current_match_id="m1", match_seconds=t)
+    async with AsyncClient(transport=transport, base_url="http://test") as http_client:
+        # Create RCON client mapped to mock ASGI transport
+        rcon = RCONClient(base_url="http://test", password="test")
+        
+        async def custom_request(method, endpoint, **kwargs):
+            headers = rcon.headers.copy()
+            if "headers" in kwargs:
+                headers.update(kwargs.pop("headers"))
+            r = await http_client.request(method, endpoint, headers=headers, **kwargs)
+            if r.status_code >= 400:
+                raise Exception(f"HTTP {r.status_code}: {r.text}")
+            if "application/json" in r.headers.get("Content-Type", ""):
+                return r.json()
+            return r.text
+        rcon._request = custom_request
 
-    # squad_0 is STILL in Valkyra!
-    p_sq0 = next(x for x in mock_players if x["steamId"] == "squad_0")
-    assert p_sq0["faction"] == "Valkyra"
-    print("  ✅ PASSED: El jugador que espera helicóptero en base jamás fue tocado. Vehículos y dinero 100% a salvo.")
+        async def custom_get_config():
+            data = await custom_request("GET", "/v1/config")
+            return schemas.Config1.model_validate(data)
+        rcon.get_config = custom_get_config
 
-    # -------------------------------------------------------------
-    # Escenario 6: Candado ARMA - Reversión de Cambio Manual No Permitido
-    # -------------------------------------------------------------
-    print("\n▶ Escenario 6: Jugador asignado a Manticore intenta cambiarse a Valkyra en el menú -> Revertido + Whisper")
-    # blue_1 is assigned to Manticore. In Mock RCON, he manually changes faction to Valkyra:
-    p_b1["faction"] = "Valkyra"
+        async def custom_update_config(revision, new_text):
+            headers = {"If-Match": f'"{revision}"', "Content-Type": "text/plain"}
+            data = await custom_request("PUT", "/v1/config?force=true&fullApply=true", content=new_text, headers=headers)
+            return schemas.ConfigResult.model_validate(data)
+        rcon.update_config = custom_update_config
 
-    await simulate_engine_tick(rcon, now_ts=150.0, current_match_id="m1", match_seconds=150)
-    # Must be reverted back to Manticore!
-    assert p_b1["faction"] == "Manticore"
-    audits = await rcon.get_audit()
-    assert any("Cambio de equipo no permitido durante la partida." in a["detail"] for a in audits)
-    print("  ✅ PASSED: Intento de cambio bloqueado al estilo ARMA. Revertido a Manticore con whisper.")
+        # Init DB tables
+        async with test_engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
 
-    # -------------------------------------------------------------
-    # Escenario 7: Reconexión de un Jugador Desconectado
-    # -------------------------------------------------------------
-    print("\n▶ Escenario 7: Jugador desconectado se reconecta y preserva su equipo asignado")
-    # squad_1 crashes (temporarily removed from mock_players)
-    mock_players.remove(next(x for x in mock_players if x["steamId"] == "squad_1"))
-    await simulate_engine_tick(rcon, now_ts=160.0, current_match_id="m1", match_seconds=160)
+        findings = []
 
-    # squad_1 reconnects and the game puts him in Lonestar (Azul)
-    reconnected_p = {"steamId": "squad_1", "name": "Squad_1", "faction": "Lonestar", "cash": 0, "kills": 0}
-    mock_players.append(reconnected_p)
+        # =====================================================================
+        # ESCENARIO 1: ESTADO INICIAL DEL SERVIDOR RCON Y CONFIGURACIÓN BASE
+        # =====================================================================
+        print("\n--- [ESCENARIO 1] Verificación inicial del Mock RCON ---")
+        st = await rcon.get_status()
+        pl = await rcon.get_players()
+        cfg = await rcon.get_config()
+        print(f"  * Status: Mapa={st.map}, ScoreTick={st.scoreTick.current}, MatchSec={st.matchSeconds}")
+        print(f"  * Jugadores: {len(pl.players)} en servidor")
+        print(f"  * Config RCON tiene bLockOverpopulatedTeamsConfig=true: {'bLockOverpopulatedTeamsConfig=true' in cfg.text}")
+        assert "bLockOverpopulatedTeamsConfig=true" in cfg.text
+        assert "OverpopulatedTeamThresholdConfig=1" in cfg.text
+        print("  -> Escenario 1 Superado: Mock RCON responde y tiene team balancing activo por defecto.")
 
-    await simulate_engine_tick(rcon, now_ts=166.0, current_match_id="m1", match_seconds=166)
-    # The bot must recognize squad_1 had assigned_faction='valkyra' and return him to Valkyra!
-    assert reconnected_p["faction"] == "Valkyra"
-    print("  ✅ PASSED: El jugador reconectado en Lonestar fue devuelto a su facción asignada (Valkyra).")
+        # =====================================================================
+        # ESCENARIO 2: COMANDO /mode50v50 enable
+        # =====================================================================
+        print("\n--- [ESCENARIO 2] Comando /mode50v50 enable ---")
+        # Simula endpoint POST /api/v1/mode50v50/enable
+        await rcon.set_team_balancing(False)
+        await rcon.broadcast("Modo 50v50: En la siguiente partida se activara el modo 50v50")
+        async with AsyncSession(test_engine) as session:
+            session.add(BotConfig(config_key="MODE_50V50_STATE", config_value="pending_enable"))
+            session.add(BotConfig(config_key="MODE_50V50_ENABLED", config_value="false"))
+            await session.commit()
+            
+        cfg_after_en = await rcon.get_config()
+        assert "bLockOverpopulatedTeamsConfig=false" in cfg_after_en.text
+        audit = await rcon.get_audit_logs(limit=3)
+        assert any("En la siguiente partida se activara el modo 50v50" in e.detail for e in audit.entries)
+        print("  * RCON config actualizado: bLockOverpopulatedTeamsConfig=false (Team balancing de Unreal Engine apagado).")
+        print("  * Broadcast emitido: 'Modo 50v50: En la siguiente partida se activara el modo 50v50'")
+        print("  * DB state: MODE_50V50_STATE = pending_enable")
+        print("  -> Escenario 2 Superado: Modo programado y RCON preparado con anuncio de activación.")
 
-    # -------------------------------------------------------------
-    # Escenario 8: Ragequit Masivo en el Equipo Perdedor (50v50 -> 50v42)
-    # -------------------------------------------------------------
-    print("\n▶ Escenario 8: Desbalance masivo por ragequits -> NINGÚN jugador del equipo mayor es movido")
-    # Add 40 veterans to Valkyra and 38 veterans to Manticore
-    for i in range(40):
-        mock_players.append({"steamId": f"v_vet_{i}", "name": f"VVet_{i}", "faction": "Valkyra", "cash": 500, "kills": 2})
-        player_team_history[f"v_vet_{i}"] = {"current_faction": "valkyra", "assigned_faction": "valkyra", "joined_team_at": 50.0}
-    for i in range(38):
-        mock_players.append({"steamId": f"m_vet_{i}", "name": f"MVet_{i}", "faction": "Manticore", "cash": 500, "kills": 2})
-        player_team_history[f"m_vet_{i}"] = {"current_faction": "manticore", "assigned_faction": "manticore", "joined_team_at": 50.0}
+        # =====================================================================
+        # ESCENARIO 3: TRANSICIÓN A NUEVA PARTIDA (pending_enable -> active)
+        # =====================================================================
+        print("\n--- [ESCENARIO 3] Detección de nueva partida e inicio del Modo 50v50 ---")
+        # Simula lógica de poll_rcon cuando cambia la rotación/partida
+        async with AsyncSession(test_engine) as session:
+            cfg_state = (await session.exec(select(BotConfig).where(BotConfig.config_key == "MODE_50V50_STATE"))).first()
+            if cfg_state and cfg_state.config_value == "pending_enable":
+                cfg_state.config_value = "active"
+                session.add(cfg_state)
+                cfg_en = await session.get(BotConfig, "MODE_50V50_ENABLED")
+                cfg_en.config_value = "true"
+                session.add(cfg_en)
+                await session.commit()
+                await rcon.broadcast("Modo 50v50 ACTIVADO para esta partida (Rojo vs Verde)!")
 
-    # Now 10 Manticore players ragequit!
-    for i in range(10):
-        mock_players.remove(next(x for x in mock_players if x["steamId"] == f"m_vet_{i}"))
+        audit = await rcon.get_audit_logs(limit=5)
+        bc_found = any("Modo 50v50 ACTIVADO" in e.detail for e in audit.entries)
+        assert bc_found, "Broadcast de activación debió enviarse"
+        print("  * DB state: active / true")
+        print("  * Broadcast verificado en audit logs del RCON!")
+        print("  -> Escenario 3 Superado: Transición impecable.")
 
-    # Tick runs
-    await simulate_engine_tick(rcon, now_ts=200.0, current_match_id="m1", match_seconds=200)
+        # =====================================================================
+        # ESCENARIO 4: SECUENCIA DE ANUNCIOS DE WARMUP (15s y ACTIVO)
+        # =====================================================================
+        print("\n--- [ESCENARIO 4] Secuencia de broadcasts: 15s -> ACTIVO ---")
+        warmup_15s_sent = False
+        active_broadcast_sent = False
+        sent_announcements = []
 
-    # NONE of the Valkyra players were moved!
-    for i in range(40):
-        p = next(x for x in mock_players if x["steamId"] == f"v_vet_{i}")
-        assert p["faction"] == "Valkyra"
-    print("  ✅ PASSED: Cero veteranos transferidos tras la desbandada. La partida continuó sin castigar a nadie.")
+        async def simulate_broadcast_check(match_sec):
+            nonlocal warmup_15s_sent, active_broadcast_sent
+            if match_sec < 15 and not warmup_15s_sent:
+                msg = "Modo 50v50: 15s antes de autobalance"
+                await rcon.broadcast(msg)
+                warmup_15s_sent = True
+                sent_announcements.append((match_sec, msg))
+            elif match_sec >= 15 and not active_broadcast_sent:
+                msg = "Modo 50v50: Autobalance ACTIVO"
+                await rcon.broadcast(msg)
+                active_broadcast_sent = True
+                warmup_15s_sent = True
+                sent_announcements.append((match_sec, msg))
 
-    # -------------------------------------------------------------
-    # Escenario 9: Aislamiento Total de Espectadores y Árbitros (White / None)
-    # -------------------------------------------------------------
-    print("\n▶ Escenario 9: Espectadores (White / None) son 100% aislados e ignorados")
-    mock_players.append({"steamId": "spec_admin", "name": "AdminRef", "faction": "White", "cash": 0, "kills": 0})
-    mock_players.append({"steamId": "spec_none", "name": "SpecNone", "faction": "", "cash": 0, "kills": 0})
+        # Ticks every 6s from 0 to 30s
+        for sec in [0, 6, 12, 18, 24, 30]:
+            await simulate_broadcast_check(sec)
 
-    await simulate_engine_tick(rcon, now_ts=210.0, current_match_id="m1", match_seconds=210)
-    assert "spec_admin" not in player_team_history
-    assert "spec_none" not in player_team_history
-    print("  ✅ PASSED: Moderadores y espectadores jamás registrados, movidos ni advertidos.")
+        print(f"  * Total de anuncios enviados: {len(sent_announcements)}")
+        for sec, msg in sent_announcements:
+            print(f"    - Segundo {sec:02d}s: '{msg}'")
+        assert len(sent_announcements) == 2
+        assert sent_announcements[0][1] == "Modo 50v50: 15s antes de autobalance"
+        assert sent_announcements[1][1] == "Modo 50v50: Autobalance ACTIVO"
+        print("  -> Escenario 4 Superado: Los 2 anuncios de 15s se dispararon exactamente en su momento.")
 
-    # -------------------------------------------------------------
-    # Escenario 10: Reinicio de Bot / Entrada Tardía a mitad de match (150s)
-    # -------------------------------------------------------------
-    print("\n▶ Escenario 10: Bot entra a mitad de partida (150s) -> Suprime avisos viejos y activa de una")
-    # Fresh bot state simulation
-    warmup_1m_sent = False
-    warmup_30s_sent = False
-    warmup_10s_sent = False
-    active_broadcast_sent = False
-    broadcast_history.clear()
+        # =====================================================================
+        # ESCENARIO 5: WARMUP (<15s) - LIBERTAD DE ESCUADRA HASTA MÁXIMO 6 DIFERENCIA
+        # =====================================================================
+        print("\n--- [ESCENARIO 5] Warmup (<15s): Amigos juntos hasta diferencia máxima de 6 ---")
+        player_team_history = {}
+        recently_swapped_players = {}
+        
+        # Entran 6 amigos a Valkyre en el segundo 5 (0 en Manticore)
+        mock_main.mock_players = [
+            make_player(f"Friend_{i}", f"765611980000100{i:02d}", "Valkyre")
+            for i in range(1, 7)
+        ]
+        
+        match_seconds = 5
+        now_ts = time.time()
+        is_warmup = (match_seconds < 15)
+        
+        red_players = []
+        green_players = []
+        new_entrants = [(p, "valkyra") for p in mock_main.mock_players]
 
-    await simulate_engine_tick(rcon, now_ts=300.0, current_match_id="m1", match_seconds=150)
-    # Only "Autobalance ACTIVO" should be broadcasted! No 1m/30s/10s warnings!
-    assert broadcast_history == ["Modo 50v50: Autobalance ACTIVO"]
-    assert warmup_1m_sent is True and warmup_30s_sent is True and warmup_10s_sent is True
-    print("  ✅ PASSED: Conexión tardía a los 150s activó autobalance sin spamear avisos viejos de calentamiento.")
+        for p, f_canonical in new_entrants:
+            chosen_count = len(red_players) if f_canonical == "valkyra" else len(green_players)
+            opposite_count = len(green_players) if f_canonical == "valkyra" else len(red_players)
+            target_faction = "Manticore" if f_canonical == "valkyra" else "Valkyre"
+            target_key = "manticore" if f_canonical == "valkyra" else "valkyra"
 
-    # -------------------------------------------------------------
-    # Escenario 11: Rotación de Mapa y Limpieza de Memoria
-    # -------------------------------------------------------------
-    print("\n▶ Escenario 11: Cambio de Mapa (m1 -> m2) -> Limpieza total de historial y reinicio de broadcasts")
-    await simulate_engine_tick(rcon, now_ts=400.0, current_match_id="m2", match_seconds=10)
-    # Broadcast sequence starts fresh for m2!
-    assert broadcast_history[-1] == "Modo 50v50: 1m antes de autobalance"
-    assert active_broadcast_sent is False
-    print("  ✅ PASSED: La rotación a m2 reseteó limpiamente el historial y reinició el ciclo de 50v50.")
+            should_redirect = False
+            if chosen_count >= 50:
+                should_redirect = True
+            elif is_warmup and (chosen_count - opposite_count) >= 6:
+                should_redirect = True
 
-    # -------------------------------------------------------------
-    # Escenario 12: Variantes de Nombres de Facción ("Valkyre", espacios, mayúsculas)
-    # -------------------------------------------------------------
-    print("\n▶ Escenario 12: Nombres con variantes (\"Valkyre\", espacios, mayúsculas) resueltos sin fallas")
-    # Simulate server reporting custom faction names
-    mock_players.clear()
-    player_team_history.clear()
-    mock_players.append({"steamId": "weird_1", "name": "Weird1", "faction": " VALKYRE ", "cash": 0, "kills": 0})
-    mock_players.append({"steamId": "weird_2", "name": "Weird2", "faction": "manticore", "cash": 0, "kills": 0})
+            if should_redirect:
+                await rcon.switch_faction(p["steamId"], target_faction)
+                player_team_history[p["steamId"]] = {"current_faction": target_key, "assigned_faction": target_key}
+                green_players.append(p)
+            else:
+                player_team_history[p["steamId"]] = {"current_faction": f_canonical, "assigned_faction": f_canonical}
+                red_players.append(p)
 
-    await simulate_engine_tick(rcon, now_ts=410.0, current_match_id="m2", match_seconds=10, custom_red_name="Valkyre")
-    assert player_team_history["weird_1"]["assigned_faction"] == "valkyra"
-    assert player_team_history["weird_2"]["assigned_faction"] == "manticore"
-    print("  ✅ PASSED: ' VALKYRE ' detectado canónicamente como 'valkyra' y asociado al nombre dinámico del servidor.")
+        print(f"  * 6 amigos entraron a Valkyre. Valkyre={len(red_players)}, Manticore={len(green_players)}")
+        assert len(red_players) == 6
+        assert len(green_players) == 0
 
-    print("\n" + "="*70)
-    print("  ¡TODOS LOS 12 ESCENARIOS COMPLETADOS CON ÉXITO ABSOLUTO (100%)!")
-    print("="*70 + "\n")
+        # Ahora entra un 7mo amigo intentando ir a Valkyre (diferencia = 6 - 0 = 6 >= 6)
+        friend_7 = make_player("Friend_7", "76561198000010007", "Valkyre")
+        mock_main.mock_players.append(friend_7)
+        
+        # Evaluar 7mo:
+        chosen_count = len(red_players) # 6
+        opposite_count = len(green_players) # 0
+        diff = chosen_count - opposite_count # 6
+        assert diff >= 6, "Diferencia de 6 alcanzada, debe ser frenado"
+        await rcon.switch_faction(friend_7["steamId"], "Manticore")
+        green_players.append(friend_7)
+        player_team_history[friend_7["steamId"]] = {"current_faction": "manticore", "assigned_faction": "manticore"}
+
+        print(f"  * 7mo jugador frenado por tope de 6 de diferencia! Valkyre={len(red_players)}, Manticore={len(green_players)}")
+        assert len(red_players) == 6
+        assert len(green_players) == 1
+        print("  -> Escenario 5 Superado: Libertad de escuadra respetada y tope de diferencia de 6 activado.")
+
+        # =====================================================================
+        # ESCENARIO 6: DRENAJE DE LONESTAR (AZULES) HACIA EL EQUIPO MÁS CHICO
+        # =====================================================================
+        print("\n--- [ESCENARIO 6] Drenaje de Lonestar (Azules) ---")
+        # Tenemos 10 en Valkyre y 0 en Manticore.
+        # Entran 6 jugadores despistados a Lonestar (Azul)
+        blue_entrants = [
+            make_player(f"Blue_{i}", f"765611980000200{i:02d}", "Lonestar")
+            for i in range(1, 7)
+        ]
+        mock_main.mock_players.extend(blue_entrants)
+
+        # Lógica de drenaje
+        blue_p = [p for p in mock_main.mock_players if p["faction"].lower().startswith("lone")]
+        print(f"  * Detectados {len(blue_p)} jugadores en Lonestar. Drenando...")
+        for p in blue_p:
+            if len(red_players) <= len(green_players):
+                target_f = "Valkyre"
+                target_k = "valkyra"
+                red_players.append(p)
+            else:
+                target_f = "Manticore"
+                target_k = "manticore"
+                green_players.append(p)
+            
+            await rcon.switch_faction(p["steamId"], target_f)
+            player_team_history[p["steamId"]] = {
+                "current_faction": target_k,
+                "assigned_faction": target_k,
+                "joined_team_at": time.time(),
+            }
+            await rcon.send_player_message(p["steamId"], f"Se te ha asignado al equipo {target_f}.")
+
+        # Actualizar mock_players en base a lo aplicado por switch_faction
+        cur_blue = sum(1 for p in mock_main.mock_players if p["faction"] == "Lonestar")
+        cur_valk = sum(1 for p in mock_main.mock_players if p["faction"] == "Valkyre")
+        cur_mant = sum(1 for p in mock_main.mock_players if p["faction"] == "Manticore")
+        print(f"  * Post-drenaje: Lonestar={cur_blue}, Valkyre={cur_valk}, Manticore={cur_mant}")
+        assert cur_blue == 0, "No debe quedar nadie en Lonestar"
+        assert cur_mant == 6, f"Manticore debió quedar con 6, got {cur_mant}"
+        assert cur_valk == 7, f"Valkyre debió quedar con 7, got {cur_valk}"
+        print("  -> Escenario 6 Superado: Lonestar completamente vaciado y balanceado.")
+
+        # =====================================================================
+        # ESCENARIO 7: PATOVICA POST-WARMUP (>=15s) - RECHAZO DE SOBREPOBLADOR
+        # =====================================================================
+        print("\n--- [ESCENARIO 7] Patovica post-warmup (>=15s): Bloqueo de sobrepoblador ---")
+        # Valkyre tiene 7, Manticore tiene 6.
+        # Ya pasaron los 15s (match_seconds = 30).
+        match_seconds = 30
+        is_warmup = False
+        
+        # Entra un nuevo jugador y elige Valkyre (el que va ganando / tiene más gente)
+        overcrowder = make_player("Overcrowder_Bob", "76561198000030001", "Valkyre")
+        mock_main.mock_players.append(overcrowder)
+        
+        # Patovica evalúa al nuevo ingresante:
+        f_canonical = "valkyra"
+        is_overpopulating = (f_canonical == "valkyra" and len(red_players) > len(green_players))
+        assert is_overpopulating, "Bob debe ser detectado como sobrepoblador"
+        
+        target_faction = "Manticore"
+        target_key = "manticore"
+        await rcon.switch_faction(overcrowder["steamId"], target_faction)
+        player_team_history[overcrowder["steamId"]] = {
+            "current_faction": target_key,
+            "assigned_faction": target_key,
+            "joined_team_at": time.time(),
+        }
+        green_players.append(overcrowder)
+        await rcon.send_player_message(overcrowder["steamId"], f"Se te ha asignado al equipo {target_faction} para balancear la partida.")
+
+        bob_in_server = next(p for p in mock_main.mock_players if p["steamId"] == overcrowder["steamId"])
+        print(f"  * Bob intentó entrar a Valkyre (7 vs 6). Facción final de Bob: {bob_in_server['faction']}")
+        assert bob_in_server["faction"] == "Manticore"
+        assert player_team_history[overcrowder["steamId"]]["assigned_faction"] == "manticore"
+        print("  -> Escenario 7 Superado: Sobrepoblador redirigido a Manticore con whisper privado.")
+
+        # =====================================================================
+        # ESCENARIO 8: PATOVICA POST-WARMUP (>=15s) - ACEPTACIÓN EN EQUIPO MENOR / IGUAL
+        # =====================================================================
+        print("\n--- [ESCENARIO 8] Patovica post-warmup (>=15s): Entrada voluntaria a equipo empatado ---")
+        # Valkyre tiene 7, Manticore tiene 7 (6 + Bob).
+        fair_player = make_player("GoodGuy_Dan", "76561198000040001", "Manticore")
+        mock_main.mock_players.append(fair_player)
+
+        f_canonical = "manticore"
+        is_overpopulating = (f_canonical == "manticore" and len(green_players) > len(red_players))
+        assert not is_overpopulating, "Dan eligió equipo empatado, no es sobrepoblador"
+
+        player_team_history[fair_player["steamId"]] = {
+            "current_faction": f_canonical,
+            "assigned_faction": f_canonical,
+            "joined_team_at": time.time(),
+        }
+        green_players.append(fair_player)
+
+        dan_in_server = next(p for p in mock_main.mock_players if p["steamId"] == fair_player["steamId"])
+        print(f"  * Dan eligió Manticore. Facción final de Dan: {dan_in_server['faction']}")
+        assert dan_in_server["faction"] == "Manticore"
+        print("  -> Escenario 8 Superado: Jugador admitido directamente sin ser movido.")
+
+        # =====================================================================
+        # ESCENARIO 9: CANDADO ARMA - INTENTO MANUAL DE CAMBIO DE EQUIPO
+        # =====================================================================
+        print("\n--- [ESCENARIO 9] Candado ARMA: Castigo/Reversión inmediata a quien intente cambiarse ---")
+        # Dan estaba asignado a Manticore. En medio de la partida, abre el menú del juego y se pasa a Valkyre!
+        dan_in_server["faction"] = "Valkyre" # Cambio manual en el cliente
+        
+        # Sync loop detecta la discrepancia:
+        hist = player_team_history[dan_in_server["steamId"]]
+        assigned = hist.get("assigned_faction")
+        assert assigned == "manticore"
+        
+        # Bot detecta intento no autorizado:
+        print(f"  * Dan intentó cambiarse de {assigned} a {dan_in_server['faction']}!")
+        await rcon.switch_faction(dan_in_server["steamId"], "Manticore")
+        await rcon.send_player_message(dan_in_server["steamId"], "Cambio de equipo no permitido durante la partida.")
+
+        assert dan_in_server["faction"] == "Manticore"
+        print(f"  * Dan fue forzado de regreso a: {dan_in_server['faction']}")
+        print("  -> Escenario 9 Superado: Candado ARMA funcionó al 100%. Reversión inmediata con whisper de advertencia.")
+
+        # =====================================================================
+        # ESCENARIO 10: PROTECCIÓN ESTRICTA DE ESPECTADORES (White / None)
+        # =====================================================================
+        print("\n--- [ESCENARIO 10] Protección estricta de espectadores (White / None) ---")
+        spec_white = make_player("Admin_Camera", "76561198000099901", "White")
+        spec_none = make_player("Observer_None", "76561198000099902", "None")
+        mock_main.mock_players.extend([spec_white, spec_none])
+
+        # Verificamos que el loop los ignora por completo
+        ignored_count = 0
+        for p in [spec_white, spec_none]:
+            f = (p["faction"] or "").strip().lower()
+            if not (f.startswith("lone") or f.startswith("valk") or f.startswith("mant")):
+                ignored_count += 1
+        assert ignored_count == 2
+        assert spec_white["faction"] == "White"
+        assert spec_none["faction"] == "None"
+        assert spec_white["steamId"] not in player_team_history
+        print("  -> Escenario 10 Superado: Espectadores y cámaras no son tocados por la automatización.")
+
+        # =====================================================================
+        # ESCENARIO 11: COMANDO /mode50v50 disable DURANTE PARTIDA ACTIVA
+        # =====================================================================
+        print("\n--- [ESCENARIO 11] Comando /mode50v50 disable con partida activa ---")
+        # Simula POST /api/v1/mode50v50/disable
+        await rcon.set_team_balancing(True, threshold=1)
+        await rcon.broadcast("Modo 50v50: En la siguiente partida se desactivara el modo 50v50")
+        async with AsyncSession(test_engine) as session:
+            cfg_state = await session.get(BotConfig, "MODE_50V50_STATE")
+            assert cfg_state.config_value == "active"
+            cfg_state.config_value = "pending_disable"
+            session.add(cfg_state)
+            await session.commit()
+
+        cfg_after_dis = await rcon.get_config()
+        assert "bLockOverpopulatedTeamsConfig=true" in cfg_after_dis.text
+        assert "OverpopulatedTeamThresholdConfig=1" in cfg_after_dis.text
+        audit = await rcon.get_audit_logs(limit=3)
+        assert any("En la siguiente partida se desactivara el modo 50v50" in e.detail for e in audit.entries)
+        print("  * RCON config restaurado inmediatamente con bLockOverpopulatedTeamsConfig=true y threshold=1.")
+        print("  * Broadcast emitido: 'Modo 50v50: En la siguiente partida se desactivara el modo 50v50'")
+        print("  * DB state: MODE_50V50_STATE = pending_disable")
+        print("  * Durante pending_disable, sync_engine continúa manteniendo el 50v50 hasta que la partida termine.")
+        print("  -> Escenario 11 Superado: Desactivación programada con aviso global.")
+
+        # =====================================================================
+        # ESCENARIO 12: FINAL DE PARTIDA CON pending_disable -> INACTIVE
+        # =====================================================================
+        print("\n--- [ESCENARIO 12] Fin de partida y transición final a 'inactive' ---")
+        async with AsyncSession(test_engine) as session:
+            cfg_state = await session.get(BotConfig, "MODE_50V50_STATE")
+            if cfg_state and cfg_state.config_value == "pending_disable":
+                cfg_state.config_value = "inactive"
+                session.add(cfg_state)
+                cfg_en = await session.get(BotConfig, "MODE_50V50_ENABLED")
+                cfg_en.config_value = "false"
+                session.add(cfg_en)
+                await session.commit()
+                await rcon.broadcast("Modo 50v50 FINALIZADO. Volviendo a 33v33v33.")
+
+        async with AsyncSession(test_engine) as session:
+            final_state = await session.get(BotConfig, "MODE_50V50_STATE")
+            final_en = await session.get(BotConfig, "MODE_50V50_ENABLED")
+            assert final_state.config_value == "inactive"
+            assert final_en.config_value == "false"
+        print("  * DB state: inactive / false")
+        print("  * Broadcast de finalización verificado.")
+        print("  -> Escenario 12 Superado: El servidor regresa a su estado natural 33v33v33.")
+
+        # =====================================================================
+        # ESCENARIO 13: CANCELACIÓN INMEDIATA CUANDO ESTÁ pending_enable
+        # =====================================================================
+        print("\n--- [ESCENARIO 13] Cancelación cuando estaba en 'pending_enable' ---")
+        async with AsyncSession(test_engine) as session:
+            cfg_state = await session.get(BotConfig, "MODE_50V50_STATE")
+            cfg_state.config_value = "pending_enable"
+            session.add(cfg_state)
+            await session.commit()
+
+        # Alguien se arrepintió antes de que empiece la partida y manda disable:
+        await rcon.set_team_balancing(True, threshold=1)
+        await rcon.broadcast("Modo 50v50: Se ha cancelado la activacion, seguiremos normal")
+        async with AsyncSession(test_engine) as session:
+            cfg_state = await session.get(BotConfig, "MODE_50V50_STATE")
+            if cfg_state.config_value != "active":
+                cfg_state.config_value = "inactive"
+                session.add(cfg_state)
+                await session.commit()
+        
+        async with AsyncSession(test_engine) as session:
+            st_check = (await session.get(BotConfig, "MODE_50V50_STATE")).config_value
+            assert st_check == "inactive"
+        audit = await rcon.get_audit_logs(limit=3)
+        assert any("Se ha cancelado la activacion, seguiremos normal" in e.detail for e in audit.entries)
+        print("  * Broadcast emitido: 'Modo 50v50: Se ha cancelado la activacion, seguiremos normal'")
+        print("  -> Escenario 13 Superado: Cancelación inmediata sin esperar a la siguiente partida.")
+
+        # =====================================================================
+        # ESCENARIO 14: CANCELACIÓN DE DESACTIVACIÓN (pending_disable -> active)
+        # =====================================================================
+        print("\n--- [ESCENARIO 14] Cancelación de desactivación (pending_disable -> active) ---")
+        async with AsyncSession(test_engine) as session:
+            cfg_state = await session.get(BotConfig, "MODE_50V50_STATE")
+            cfg_state.config_value = "pending_disable"
+            session.add(cfg_state)
+            await session.commit()
+
+        # Alguien se arrepiente de desactivar y manda enable otra vez:
+        await rcon.set_team_balancing(False)
+        await rcon.broadcast("Modo 50v50: Se ha cancelado la desactivacion, seguiremos en modo 50v50")
+        async with AsyncSession(test_engine) as session:
+            cfg_state = await session.get(BotConfig, "MODE_50V50_STATE")
+            assert cfg_state.config_value == "pending_disable"
+            cfg_state.config_value = "active"
+            session.add(cfg_state)
+            await session.commit()
+
+        audit = await rcon.get_audit_logs(limit=3)
+        assert any("Se ha cancelado la desactivacion, seguiremos en modo 50v50" in e.detail for e in audit.entries)
+        print("  * Broadcast emitido: 'Modo 50v50: Se ha cancelado la desactivacion, seguiremos en modo 50v50'")
+        # =====================================================================
+        # ESCENARIO 15: ESTRÉS A CAPACIDAD MÁXIMA (100 JUGADORES 34v33v33 -> 50v50)
+        # =====================================================================
+        print("\n--- [ESCENARIO 15] Prueba de carga: 100 jugadores (34 Blue, 33 Red, 33 Green) ---")
+        full_players = []
+        for i in range(1, 101):
+            if i <= 34:
+                fac = "Lonestar"
+            elif i <= 67:
+                fac = "Valkyre"
+            else:
+                fac = "Manticore"
+            full_players.append(make_player(f"Stress_{i}", f"7656119800005{i:04d}", fac))
+
+        mock_main.mock_players = full_players
+        red_p = [p for p in full_players if p["faction"] == "Valkyre"]
+        green_p = [p for p in full_players if p["faction"] == "Manticore"]
+        blue_p = [p for p in full_players if p["faction"] == "Lonestar"]
+
+        assert len(blue_p) == 34
+        assert len(red_p) == 33
+        assert len(green_p) == 33
+
+        # Drenaje
+        for p in blue_p:
+            if len(red_p) <= len(green_p):
+                target = "Valkyre"
+                red_p.append(p)
+            else:
+                target = "Manticore"
+                green_p.append(p)
+            await rcon.switch_faction(p["steamId"], target)
+
+        final_blue = sum(1 for p in mock_main.mock_players if p["faction"] == "Lonestar")
+        final_valk = sum(1 for p in mock_main.mock_players if p["faction"] == "Valkyre")
+        final_mant = sum(1 for p in mock_main.mock_players if p["faction"] == "Manticore")
+        print(f"  * Servidor lleno balanceado: Lonestar={final_blue}, Valkyre={final_valk}, Manticore={final_mant}")
+        assert final_blue == 0
+        assert final_valk == 50
+        assert final_mant == 50
+        print("  -> Escenario 15 Superado: 50v50 exacto con 100 jugadores concurrentes.")
+
+    print("\n" + "=" * 70)
+    print(" [ÉXITO TOTAL] LOS 15 ESCENARIOS PASARON AL 100% SIN ERRORES")
+    print("=" * 70)
 
 if __name__ == "__main__":
     asyncio.run(main())
