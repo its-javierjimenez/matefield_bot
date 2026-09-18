@@ -67,7 +67,7 @@ async def poll_rcon():
                 current_match_id is None
                 or (rotation_index is not None and rotation_index != current_rotation_index)
                 or (current_map is not None and map_name != current_map)
-                or (last_match_seconds is not None and match_seconds < (last_match_seconds - 30))
+                or (last_match_seconds is not None and (match_seconds < (last_match_seconds - 5) or (match_seconds <= 15 and last_match_seconds > 20)))
                 or server_was_reconnected
             )
             server_was_reconnected = False
@@ -124,6 +124,7 @@ async def poll_rcon():
                                 session.add(cfg_en)
                             else:
                                 session.add(BotConfig(config_key="MODE_50V50_ENABLED", config_value="true"))
+                            await session.commit()
                             logger.info("[50v50 Mode] New match started! 50v50 Mode is now ACTIVE.")
                             try:
                                 await rcon_client.broadcast("Modo 50v50 ACTIVADO para esta partida (Rojo vs Verde)!")
@@ -138,6 +139,7 @@ async def poll_rcon():
                                 session.add(cfg_en)
                             else:
                                 session.add(BotConfig(config_key="MODE_50V50_ENABLED", config_value="false"))
+                            await session.commit()
                             logger.info("[50v50 Mode] New match started! 50v50 Mode is now INACTIVE.")
                             try:
                                 await rcon_client.broadcast("Modo 50v50 FINALIZADO. Volviendo a 33v33v33.")
@@ -337,7 +339,21 @@ async def mode_50v50_loop():
                 stmt_state = select(BotConfig).where(BotConfig.config_key == "MODE_50V50_STATE")
                 config_state = (await session.exec(stmt_state)).first()
                 if config_state and config_state.config_value:
-                    is_enabled = config_state.config_value.strip().lower() in ("active", "pending_disable")
+                    st = config_state.config_value.strip().lower()
+                    if st == "pending_enable":
+                        # Auto-promote pending_enable to active so server doesn't get stuck
+                        config_state.config_value = "active"
+                        session.add(config_state)
+                        cfg_en = await session.get(BotConfig, "MODE_50V50_ENABLED")
+                        if cfg_en:
+                            cfg_en.config_value = "true"
+                            session.add(cfg_en)
+                        else:
+                            session.add(BotConfig(config_key="MODE_50V50_ENABLED", config_value="true"))
+                        await session.commit()
+                        is_enabled = True
+                    else:
+                        is_enabled = st in ("active", "pending_disable")
                 else:
                     stmt = select(BotConfig).where(BotConfig.config_key == "MODE_50V50_ENABLED")
                     config = (await session.exec(stmt)).first()
@@ -351,6 +367,13 @@ async def mode_50v50_loop():
                 if current_match_id != last_50v50_match_id:
                     logger.info(f"[50v50 Mode] New match detected ({current_match_id}). Resetting team tracking & broadcasts.")
                     last_50v50_match_id = current_match_id
+                    player_team_history.clear()
+                    recently_swapped_players.clear()
+                    warmup_15s_sent = False
+                    active_broadcast_sent = False
+                elif match_seconds is not None and match_seconds < 15 and active_broadcast_sent:
+                    # In-place match restart on same match/map
+                    logger.info("[50v50 Mode] In-place match restart detected. Resetting team tracking & broadcasts.")
                     player_team_history.clear()
                     recently_swapped_players.clear()
                     warmup_15s_sent = False
@@ -469,9 +492,14 @@ async def mode_50v50_loop():
                         if not p.steamId:
                             continue
                         existing_hist = player_team_history.get(p.steamId)
-                        if existing_hist and existing_hist.get("assigned_faction") in ("valkyra", "manticore"):
-                            target_key = existing_hist["assigned_faction"]
-                            target_faction = red_name if target_key == "valkyra" else green_name
+                        assigned = existing_hist.get("assigned_faction") if existing_hist else None
+
+                        if assigned == "valkyra" and len(red_players) < 50:
+                            target_key = "valkyra"
+                            target_faction = red_name
+                        elif assigned == "manticore" and len(green_players) < 50:
+                            target_key = "manticore"
+                            target_faction = green_name
                         elif len(red_players) >= 50 and len(green_players) < 50:
                             target_faction = green_name
                             target_key = "manticore"
@@ -573,6 +601,116 @@ async def mode_50v50_loop():
                         else:
                             green_players.append(p)
                         logger.info(f"[50v50 Mode] Entrant {p.name} ({p.steamId}) accepted into {f_canonical} (R:{len(red_players)}, G:{len(green_players)})")
+
+                # Step 3: Active Rebalancing (Hard cap of 50 per team & Max 6 difference)
+                def get_rebalance_candidates(player_list):
+                    candidates = []
+                    for pl in player_list:
+                        if not pl.steamId:
+                            continue
+                        # Protect players swapped in the last 30s
+                        if (now_ts - recently_swapped_players.get(pl.steamId, 0)) < 30:
+                            continue
+                        candidates.append(pl)
+                    # Least disruptive: sort by cash ascending, kills ascending
+                    candidates.sort(key=lambda x: (x.cash or 0, x.kills or 0))
+                    return candidates
+
+                # 3A. Hard-cap enforcement: strictly enforce max 50 players per team (e.g. 70 vs 30)
+                if len(green_players) > 50 and len(red_players) < 50:
+                    needed = min(len(green_players) - 50, 50 - len(red_players))
+                    candidates = get_rebalance_candidates(green_players)
+                    for pl in candidates[:needed]:
+                        logger.info(f"[50v50 Mode] Cap Enforcement: Moving {pl.name} ({pl.steamId}) from {green_name} -> {red_name} (Green had {len(green_players)})")
+                        try:
+                            await rcon_client.switch_faction(pl.steamId, red_name)
+                            recently_swapped_players[pl.steamId] = now_ts
+                            player_team_history[pl.steamId] = {
+                                "current_faction": "valkyra",
+                                "assigned_faction": "valkyra",
+                                "joined_team_at": now_ts,
+                            }
+                            red_players.append(pl)
+                            if pl in green_players:
+                                green_players.remove(pl)
+                            try:
+                                await rcon_client.send_player_message(pl.steamId, f"Has sido transferido a {red_name} por balance de equipos (límite 50 jugadores).")
+                            except Exception:
+                                pass
+                        except Exception as err:
+                            logger.error(f"[50v50 Mode] Failed to cap-balance {pl.steamId}: {err}")
+
+                elif len(red_players) > 50 and len(green_players) < 50:
+                    needed = min(len(red_players) - 50, 50 - len(green_players))
+                    candidates = get_rebalance_candidates(red_players)
+                    for pl in candidates[:needed]:
+                        logger.info(f"[50v50 Mode] Cap Enforcement: Moving {pl.name} ({pl.steamId}) from {red_name} -> {green_name} (Red had {len(red_players)})")
+                        try:
+                            await rcon_client.switch_faction(pl.steamId, green_name)
+                            recently_swapped_players[pl.steamId] = now_ts
+                            player_team_history[pl.steamId] = {
+                                "current_faction": "manticore",
+                                "assigned_faction": "manticore",
+                                "joined_team_at": now_ts,
+                            }
+                            green_players.append(pl)
+                            if pl in red_players:
+                                red_players.remove(pl)
+                            try:
+                                await rcon_client.send_player_message(pl.steamId, f"Has sido transferido a {green_name} por balance de equipos (límite 50 jugadores).")
+                            except Exception:
+                                pass
+                        except Exception as err:
+                            logger.error(f"[50v50 Mode] Failed to cap-balance {pl.steamId}: {err}")
+
+                # 3B. Difference enforcement: max 6 players difference between teams
+                diff = len(green_players) - len(red_players)
+                if diff > 6 and len(red_players) < 50:
+                    transfer_count = min(diff // 2, 50 - len(red_players))
+                    candidates = get_rebalance_candidates(green_players)
+                    for pl in candidates[:transfer_count]:
+                        logger.info(f"[50v50 Mode] Diff Enforcement: Moving {pl.name} ({pl.steamId}) from {green_name} -> {red_name} (Diff was {diff})")
+                        try:
+                            await rcon_client.switch_faction(pl.steamId, red_name)
+                            recently_swapped_players[pl.steamId] = now_ts
+                            player_team_history[pl.steamId] = {
+                                "current_faction": "valkyra",
+                                "assigned_faction": "valkyra",
+                                "joined_team_at": now_ts,
+                            }
+                            red_players.append(pl)
+                            if pl in green_players:
+                                green_players.remove(pl)
+                            try:
+                                await rcon_client.send_player_message(pl.steamId, f"Has sido transferido a {red_name} para equilibrar la cantidad de jugadores.")
+                            except Exception:
+                                pass
+                        except Exception as err:
+                            logger.error(f"[50v50 Mode] Failed to diff-balance {pl.steamId}: {err}")
+
+                elif diff < -6 and len(green_players) < 50:
+                    diff_abs = abs(diff)
+                    transfer_count = min(diff_abs // 2, 50 - len(green_players))
+                    candidates = get_rebalance_candidates(red_players)
+                    for pl in candidates[:transfer_count]:
+                        logger.info(f"[50v50 Mode] Diff Enforcement: Moving {pl.name} ({pl.steamId}) from {red_name} -> {green_name} (Diff was {diff_abs})")
+                        try:
+                            await rcon_client.switch_faction(pl.steamId, green_name)
+                            recently_swapped_players[pl.steamId] = now_ts
+                            player_team_history[pl.steamId] = {
+                                "current_faction": "manticore",
+                                "assigned_faction": "manticore",
+                                "joined_team_at": now_ts,
+                            }
+                            green_players.append(pl)
+                            if pl in red_players:
+                                red_players.remove(pl)
+                            try:
+                                await rcon_client.send_player_message(pl.steamId, f"Has sido transferido a {green_name} para equilibrar la cantidad de jugadores.")
+                            except Exception:
+                                pass
+                        except Exception as err:
+                            logger.error(f"[50v50 Mode] Failed to diff-balance {pl.steamId}: {err}")
 
         except Exception as e:
             logger.error(f"[50v50 Mode] Error in 50v50 loop: {e}")

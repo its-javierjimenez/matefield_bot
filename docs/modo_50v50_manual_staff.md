@@ -60,17 +60,16 @@ Imaginate que el servidor es un **boliche (discoteca)** con dos salas: **Sala Ro
 
 Aquí tenés exactamente lo que pasa en cada situación para que no tengas miedo de meter la pata:
 
-### 🔹 "¿Qué pasa si tiro `/mode50v50 enable` en mitad de una partida?"
-> **Respuesta:** **NO PASA NADA MALO. No se corta la partida.**  
-> El bot es inteligente: deja la configuración lista en el servidor y espera pacientemente a que termine la partida actual. En cuanto termine la ronda y cambie el mapa... **¡PUM!** La nueva partida arranca automáticamente en 50v50.
+### 🔹 "¿Qué pasa si tiro `/mode50v50 enable`?"
+> **Respuesta:** **SE ACTIVA DE INMEDIATO.**  
+> El bot apaga el autobalance nativo del servidor y toma el control total en tiempo real.  
+> * Los jugadores en Azul (Lonestar) son transferidos a Rojo o Verde.  
+> * Si un equipo supera los 50 jugadores (techo máximo) o la diferencia supera 6, el bot rebalancea para que queden parejos (50v50).  
+> * Al reiniciar la partida o cambiar mapa, el modo sigue activo con sus 15s de calentamiento.
 
-### 🔹 "¿Qué pasa si me equivoqué y tiré `/mode50v50 enable` por error?"
-> **Respuesta:** No te preocupes. Antes de que termine el mapa tirás `/mode50v50 disable`.  
-> El bot cancela la orden de inmediato y la próxima partida arrancará normal en 33v33v33.
-
-### 🔹 "¿Qué pasa si ya estamos jugando en 50v50 y tiro `/mode50v50 disable`?"
-> **Respuesta:** **Tampoco rompe nada.**  
-> El bot deja que la partida en curso termine en paz en 50v50 hasta el final. Cuando termine el mapa y cambie de ronda, el servidor vuelve solo al modo normal de 3 facciones.
+### 🔹 "¿Qué pasa si tiro `/mode50v50 disable`?"
+> **Respuesta:** **SE DESACTIVA DE INMEDIATO.**  
+> El bot restaura el team balancing del servidor (límite 1) y el servidor vuelve al esquema estándar de 3 equipos (33v33v33).
 
 ### 🔹 "¿Cómo sé en qué estado está el servidor ahora mismo?"
 > **Respuesta:** Tirás el comando:
@@ -78,28 +77,20 @@ Aquí tenés exactamente lo que pasa en cada situación para que no tengas miedo
 > /mode50v50 status
 > ```
 > El bot te va a responder clarito:
-> * ⚪ `inactive`: El modo está apagado (partida normal 33v33v33).
-> * 🟡 `pending_enable`: Esperando a que termine el mapa actual para activar 50v50.
 > * 🟢 `active`: ¡El modo 50v50 está jugando y balanceando ahora mismo!
-> * 🟠 `pending_disable`: El 50v50 actual terminará y el próximo mapa será normal.
+> * ⚪ `inactive`: El modo está apagado (partida normal 33v33v33).
 
 ---
 
 ## 4. Resumen de Mensajes que ven los Jugadores 💬
 
-### A. Avisos de Estado (cuando el Staff usa los comandos):
-* 📢 **Al programar activación:**  
-  `Modo 50v50: En la siguiente partida se activara el modo 50v50`
-* 📢 **Al cancelar activación:**  
-  `Modo 50v50: Se ha cancelado la activacion, seguiremos normal`
-* 📢 **Al programar desactivación en plena partida:**  
-  `Modo 50v50: En la siguiente partida se desactivara el modo 50v50`
-* 📢 **Al cancelar desactivación (seguir en 50v50):**  
-  `Modo 50v50: Se ha cancelado la desactivacion, seguiremos en modo 50v50`
-* 📢 **Al iniciar la partida 50v50:**  
+### A. Avisos de Estado:
+* 📢 **Al activar el modo:**  
+  `Modo 50v50 ACTIVADO (Rojo vs Verde)! Team balancing automatizado por el bot.`
+* 📢 **Al desactivar el modo:**  
+  `Modo 50v50 DESACTIVADO. Volviendo al esquema estandar (33v33v33).`
+* 📢 **Al reiniciar partida con 50v50 activo:**  
   `Modo 50v50 ACTIVADO para esta partida (Rojo vs Verde)!`
-* 📢 **Al finalizar la partida 50v50:**  
-  `Modo 50v50 FINALIZADO. Volviendo a 33v33v33.`
 
 ### B. Avisos de Calentamiento / Autobalance:
 * 📢 **Segundo 0 (Inicio de partida):**  
@@ -114,6 +105,8 @@ Aquí tenés exactamente lo que pasa en cada situación para que no tengas miedo
   `Se te ha asignado al equipo Valkyra/Manticore.`
 * 💬 **Al nuevo que intentó entrar al equipo lleno:**  
   `Se te ha asignado al equipo Valkyra/Manticore para balancear la partida.`
+* 💬 **Al rebalanceado por techo de 50 o diferencia > 6:**  
+  `Has sido transferido a Valkyra/Manticore por balance de equipos.`
 * 🛡️ **A los Moderadores / Espectadores (White):**  
   *Silencio total.* El bot no los toca, no los mueve y no les manda mensajes.
 
@@ -124,13 +117,14 @@ Aquí tenés exactamente lo que pasa en cada situación para que no tengas miedo
 ```text
 SITUACIÓN DEL JUGADOR                          ¿EL BOT PUEDE MOVERLO?
 ─────────────────────────────────────────────────────────────────────────────
-Jugador que ya está jugando (cualquier tiempo) ❌ NUNCA (100% Inmune)
-Comprando en base o esperando helicóptero      ❌ NUNCA (Vehículos a salvo)
+Equipo con más de 50 jugadores (ej: 70v30)     ⛔ REBALANCEADO (Techo estricto 50v50)
+Diferencia mayor a 6 jugadores                 ⛔ REBALANCEADO (Mínimo impacto, menor score)
+Jugador entrando a Lonestar (Azul)             ⛔ MOVIDO a Rojo o Verde
 Amigos entrando al inicio (< 15s)              ✅ LIBRES (Tope 50 y máx 6 dif)
 Nuevo jugador entrando al equipo lleno         ⛔ REDIRIGIDO al equipo menor
 Nuevo jugador entrando al equipo con menos     ✅ ENTRA directo a su equipo
-Jugador que intenta cambiarse en el menú       ⛔ REVERTIDO a su equipo
-Moderador / Admin en Espectador (White)        ❌ INTOCABLE (Ignorado)
+Jugador que intenta cambiarse en el menú       ⛔ REVERTIDO a su equipo original
+Moderador / Admin en Espectador (White)        ❌ INTOCABLE (Ignorado 100%)
 ```
 
 ---

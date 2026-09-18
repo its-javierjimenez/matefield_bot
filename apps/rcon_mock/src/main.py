@@ -302,3 +302,9 @@ async def reset_players():
     ]
     return {"ok": True, "total": len(mock_players)}
 
+@app.post("/mock/set_players")
+async def set_players(players: list[dict]):
+    global mock_players
+    mock_players = players
+    return {"ok": True, "total": len(mock_players)}
+
