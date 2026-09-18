@@ -30,7 +30,7 @@ load_dotenv()
 
 bot = hikari.GatewayBot(
     os.environ["DISCORD_TOKEN"],
-    intents=hikari.Intents.ALL_UNPRIVILEGED | hikari.Intents.GUILD_MEMBERS
+    intents=hikari.Intents.ALL_UNPRIVILEGED
 )
 model = Model()
 client = crescent.Client(bot, model)

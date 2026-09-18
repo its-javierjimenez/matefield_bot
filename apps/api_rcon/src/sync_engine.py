@@ -1,5 +1,5 @@
 import asyncio
-from sqlmodel import select
+from sqlmodel import select, col
 from typing import Optional
 
 from src.connections.databases.db import engine, Player, Match, MatchPlayerStats, PlayerSession, Team, MatchTeamStats
@@ -58,7 +58,7 @@ async def poll_rcon():
                         if old_match and old_match.end_time is None:
                             old_match.end_time = datetime.datetime.now(datetime.timezone.utc)
                             # Determine winning team from last known MatchTeamStats
-                            winner_stmt = select(MatchTeamStats).where(MatchTeamStats.match_id == current_match_id).order_by(MatchTeamStats.score.desc())
+                            winner_stmt = select(MatchTeamStats).where(MatchTeamStats.match_id == current_match_id).order_by(col(MatchTeamStats.score).desc())
                             winner_stat = (await session.exec(winner_stmt)).first()
                             if winner_stat:
                                 old_match.winning_team_id = winner_stat.team_id

@@ -1,0 +1,117 @@
+import io
+import csv
+from typing import Any, Dict, List, Optional
+from fastapi import HTTPException
+from fastapi.responses import StreamingResponse
+from sqlmodel import select, func, col
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from src.connections.databases.db import (
+    BotConfig, MembershipTypeConfig, Membership, Player, Role,
+    PlayerRole, Team, Match, MatchTeamStats, MatchPlayerStats
+)
+from src.modules.v1.schemas.dtos import SetBotConfigRequest, QuotaUpdateRequest
+
+class ConfigService:
+    @staticmethod
+    async def get_bot_config(key: str, session: AsyncSession) -> Dict[str, Any]:
+        config = await session.get(BotConfig, key)
+        if not config:
+            raise HTTPException(status_code=404, detail="Config key not found")
+        return {"key": config.config_key, "value": config.config_value}
+
+    @staticmethod
+    async def set_bot_config(req: SetBotConfigRequest, session: AsyncSession) -> Dict[str, Any]:
+        config = await session.get(BotConfig, req.key)
+        if not config:
+            config = BotConfig(config_key=req.key, config_value=req.value)
+            session.add(config)
+        else:
+            config.config_value = req.value
+        await session.commit()
+        return {"ok": True, "message": "Config updated"}
+
+    @staticmethod
+    async def delete_bot_config(key: str, session: AsyncSession) -> Dict[str, Any]:
+        config = await session.get(BotConfig, key)
+        if config:
+            await session.delete(config)
+            await session.commit()
+        return {"ok": True, "message": "Config deleted"}
+
+    @staticmethod
+    async def get_all_bot_configs(session: AsyncSession) -> Dict[str, Any]:
+        configs = (await session.exec(select(BotConfig))).all()
+        return {"configs": {c.config_key: c.config_value for c in configs}}
+
+    @staticmethod
+    async def get_quotas(session: AsyncSession) -> Dict[str, Any]:
+        configs = (await session.exec(select(MembershipTypeConfig))).all()
+        
+        usage_stmt = select(Membership.membership_type, func.count(col(Membership.id))).where(Membership.is_active == True).group_by(Membership.membership_type)
+        usage = (await session.exec(usage_stmt)).all()
+        usage_dict = {t: c for t, c in usage}
+        
+        result = []
+        for c in configs:
+            result.append({
+                "membership_type": c.membership_type,
+                "max_quota": c.max_quota,
+                "current_usage": usage_dict.get(c.membership_type, 0)
+            })
+            
+        return {"quotas": result}
+
+    @staticmethod
+    async def update_quota(membership_type: str, max_quota: Optional[int], session: AsyncSession) -> Dict[str, Any]:
+        normalized_type = membership_type.strip().upper()
+        config = (await session.exec(select(MembershipTypeConfig).where(MembershipTypeConfig.membership_type == normalized_type))).first()
+        
+        if not config:
+            config = MembershipTypeConfig(membership_type=normalized_type, max_quota=max_quota)
+            session.add(config)
+        else:
+            config.max_quota = max_quota
+            session.add(config)
+            
+        await session.commit()
+        return {"success": True, "membership_type": normalized_type, "max_quota": max_quota}
+
+    @staticmethod
+    async def export_table_csv(table_name: str, session: AsyncSession) -> StreamingResponse:
+        table_map = {
+            "players": Player,
+            "roles": Role,
+            "player_roles": PlayerRole,
+            "memberships": Membership,
+            "teams": Team,
+            "matches": Match,
+            "match_team_stats": MatchTeamStats,
+            "match_player_stats": MatchPlayerStats
+        }
+        
+        if table_name not in table_map:
+            raise HTTPException(status_code=404, detail=f"Table '{table_name}' not found")
+            
+        model = table_map[table_name]
+        records = (await session.exec(select(model))).all()
+        
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        if not records:
+            headers = list(model.model_fields.keys())
+            writer.writerow(headers)
+        else:
+            headers = list(records[0].model_dump().keys())
+            writer.writerow(headers)
+            for record in records:
+                writer.writerow(list(record.model_dump().values()))
+                
+        output.seek(0)
+        
+        return StreamingResponse(
+            output, 
+            media_type="text/csv", 
+            headers={"Content-Disposition": f'attachment; filename="{table_name}.csv"'}
+        )

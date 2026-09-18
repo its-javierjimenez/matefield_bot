@@ -33,8 +33,11 @@ services:
       context: .
       dockerfile: apps/api_rcon/Dockerfile
     container_name: api_rcon_local
+    working_dir: /app/apps/api_rcon
     env_file: .env.local
-    command: sh -c "uv run alembic upgrade head && uv run uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload"
+    environment:
+      - UV_PROJECT_ENVIRONMENT=/app/.venv_api
+    command: sh -c "uv cache clean && uv sync && uv run alembic upgrade head && uv run uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload"
     ports:
       - "8000:8000"
     networks:
@@ -42,8 +45,21 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    volumes:
-      - ./apps/api_rcon:/app
+
+  discord_bot:
+    build:
+      context: .
+      dockerfile: apps/discord_bot/Dockerfile
+    container_name: discord_bot_local
+    env_file: .env.local
+    environment:
+      - UV_PROJECT_ENVIRONMENT=/app/.venv_api
+    working_dir: /app/apps/discord_bot
+    command: sh -c "uv cache clean && uv sync && uv run python -m src.main"
+    networks:
+      - matefield_local_net
+    depends_on:
+      - api_rcon
 
 networks:
   matefield_local_net:

@@ -19,33 +19,43 @@ class ConfigChannel:
         await ctx.respond(f"✅ Canal de anuncios configurado a <#{self.channel.id}>")
 
 
+async def autocomplete_role_type(
+    ctx: crescent.AutocompleteContext, option: hikari.AutocompleteInteractionOption
+) -> list[tuple[str, str]]:
+    standard_types = ["SYSTEM", "VIP", "SPECIAL", "PUBLIC"]
+    val = str(option.value or "").strip().upper()
+    results = []
+    if val and val not in standard_types:
+        results.append((f"Personalizado: {val}", val))
+    for t in standard_types:
+        if not val or val in t:
+            results.append((f"{t} (Estándar)", t))
+    return results[:25]
+
+
 @plugin.include
 @crescent.hook(admin_only)
 @roles_group.child
 @crescent.command(name="register", description="Registra o actualiza un rol en la Base de Datos (DDD)")
 class RegisterRole:
-    code = crescent.option(str, "Cdigo nico del Rol (ej. VIP_EXPRESS, SUPERADMIN)")
+    code = crescent.option(str, "Código único del Rol (ej. VIP_EXPRESS, MASTERCHEF)")
     name = crescent.option(str, "Nombre descriptivo del Rol")
-    role_type = crescent.option(str, "Tipo de rol", choices=(
-        ("SYSTEM (Admins/Owners)", "SYSTEM"),
-        ("VIP (Membresas)", "VIP"),
-        ("SPECIAL (Staff/Eventos)", "SPECIAL"),
-        ("PUBLIC (Comunes)", "PUBLIC")
-    ))
+    role_type = crescent.option(str, "Tipo de rol (estándar o personalizado)", autocomplete=autocomplete_role_type)
     discord_role = crescent.option(hikari.Role, "Rol de Discord a asociar")
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
         try:
+            norm_type = self.role_type.strip().upper()
             await plugin.model.api.register_role(
                 code=self.code.upper(),
                 name=self.name,
-                role_type=self.role_type,
+                role_type=norm_type,
                 discord_role_id=str(self.discord_role.id)
             )
-            await ctx.respond(f"? Rol `{self.code.upper()}` registrado como `{self.role_type}` y asociado a <@&{self.discord_role.id}>.")
+            await ctx.respond(f"✅ Rol `{self.code.upper()}` registrado como `{norm_type}` y asociado a <@&{self.discord_role.id}>.")
         except Exception as e:
-            await ctx.respond(f"? Error al registrar rol: {e}")
+            await ctx.respond(f"❌ Error al registrar rol: {e}")
 
 @plugin.include
 @crescent.hook(admin_only)
@@ -60,11 +70,9 @@ class ListRoles:
                 await ctx.respond("No hay roles registrados.")
                 return
             
-            msg = "**Roles Registrados (DDD):**
-"
+            msg = "**Roles Registrados (DDD):**\n"
             for r in roles:
-                msg += f"- `{r.get('code')}` ({r.get('role_type')}): {r.get('name')} -> <@&{r.get('discord_role_id')}>
-"
+                msg += f"- `{r.get('code')}` ({r.get('role_type')}): {r.get('name')} -> <@&{r.get('discord_role_id')}>\n"
             await ctx.respond(msg)
         except Exception as e:
             await ctx.respond(f"? Error al listar roles: {e}")

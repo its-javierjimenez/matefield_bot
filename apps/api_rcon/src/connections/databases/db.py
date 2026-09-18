@@ -13,6 +13,7 @@ class RoleType(str, Enum):
     VIP = "VIP"
     PUNISHMENT = "PUNISHMENT"
     PUBLIC = "PUBLIC"
+    SPECIAL = "SPECIAL"
 
 # --- Intermediary Tables ---
 
@@ -29,7 +30,7 @@ class Role(SQLModel, table=True):
     code: str = Field(unique=True, index=True)
     name: str
     discord_role_id: Optional[str] = Field(default=None, index=True)
-    role_type: RoleType = Field(index=True)
+    role_type: str = Field(index=True)
     
     # Relationships
     players: List["Player"] = Relationship(back_populates="roles", link_model=PlayerRole)

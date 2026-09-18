@@ -72,37 +72,23 @@ async def get_status(auth: str = Depends(verify_auth)):
 
 from typing import Any, Dict, List
 
-mock_players: List[Dict[str, Any]] = [
-    {
-        "name": "PlayerOne",
-        "steamId": "76561198000000001",
-        "faction": "Lonestar",
-        "kills": 15,
-        "deaths": 2,
-        "cash": 1500,
-        "pingMs": 45
-    },
-    {
-        "name": "PlayerTwo",
-        "steamId": "76561198000000002",
-        "faction": "Manticore",
-        "kills": 3,
-        "deaths": 5,
-        "cash": 300,
-        "pingMs": 60
-    },
-    {
-        "name": "PlayerThree",
-        "steamId": "76561198000000003",
-        "faction": "Valkyre",
-        "kills": 8,
-        "deaths": 1,
-        "cash": 800,
-        "pingMs": 30
-    }
-]
-
 import random
+mock_players: List[Dict[str, Any]] = []
+def populate_mock_players(count: int = 80):
+    global mock_players
+    factions = ['Lonestar', 'Manticore', 'Valkyre']
+    mock_players = []
+    for i in range(1, count + 1):
+        mock_players.append({
+            'name': f'Soldier_{i:03d}',
+            'steamId': f'7656119800000{i:04d}',
+            'faction': factions[i % len(factions)],
+            'kills': random.randint(0, 30),
+            'deaths': random.randint(0, 18),
+            'cash': random.randint(200, 4500),
+            'pingMs': random.randint(15, 85)
+        })
+populate_mock_players(80)
 
 @app.get("/v1/players", response_model=schemas.Players1)
 async def get_players(auth: str = Depends(verify_auth)):
@@ -188,9 +174,14 @@ async def get_config(auth: str = Depends(verify_auth)):
     }
 
 @app.put("/v1/config", response_model=schemas.ConfigResult)
-async def update_config(req: dict, auth: str = Depends(verify_auth)):
+async def update_config(req: Request, force: bool = False, fullApply: bool = False, auth: str = Depends(verify_auth)):
     add_audit_log("ConfigUpdate", "Configuration was updated")
     return {
         "success": True,
         "newRevision": "rev124"
     }
+
+@app.post("/v1/mock/populate")
+async def populate(count: int = 80):
+    populate_mock_players(count)
+    return {"ok": True, "count": len(mock_players)}

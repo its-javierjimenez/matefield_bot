@@ -1,36 +1,31 @@
-# Sistema de Baneos
+# Sistema de Baneos y Moderación
 
-El sistema de baneos de Matefield permite a los administradores expulsar y vetar temporal o permanentemente a jugadores tanto del servidor de Discord (vía roles) como del servidor de juego de manera sincronizada.
+El sistema de moderación y sanciones de Matefield permite expulsar y vetar a infractores de forma coordinada tanto en el servidor de juego (vía RCON) como en la comunidad de Discord (mediante roles de castigo).
 
-## Flujo de Sanción (Baneo)
+## Flujo de Sanción (`/ban add`)
 
-1. **Ejecución desde Discord**: Un Administrador utiliza el comando `/admin ban` indicando el usuario de Discord, el motivo del baneo, y la duración (Temporal o Permanente).
-2. **Resolución de Perfil**: El bot busca en la base de datos el `steam_id` asociado a la cuenta de Discord del infractor.
-3. **Registro en Base de Datos**: Se crea un nuevo registro en la tabla `PlayerBan` con:
-   - `steam_id` del jugador.
-   - `reason` (Motivo provisto por el admin).
-   - `banned_by` (ID de Discord del administrador que emitió la orden).
+1. **Ejecución desde Discord**: Un Administrador utiliza el comando `/ban add` indicando el `steam_id` del jugador, la duración en días (0 para permanente) y el motivo.
+2. **Registro en Base de Datos**: Se crea un nuevo registro en la tabla `PlayerBan` con:
+   - `steam_id`: Identificador Steam del sancionado.
+   - `reason`: Motivo provisto por el administrador.
+   - `banned_by`: ID de Discord del administrador actuante.
    - `start_time` y `end_time` (si es temporal).
-   - `is_active` establecido en `True`.
-4. **Ejecución RCON**: La API envía inmediatamente el comando de baneo al servidor de juego mediante el socket RCON (`AdminBan <SteamID> <Duración> <Motivo>`).
-5. **Asignación de Roles de Castigo**: 
-   - El sistema lee las configuraciones de baneo (ej: `BAN_ROLE_PERMANENT` o `BAN_ROLE_TEMPORARY`) para buscar los IDs de los roles de castigo.
-   - El bot de Discord le asigna automáticamente el rol de baneo al usuario, lo que típicamente le retira permisos de ver o hablar en el servidor.
-6. **Notificación Pública**: Se envía un mensaje embed al canal público de baneos documentando la infracción, el jugador y el administrador responsable.
+   - `is_active = True`.
+3. **Ejecución RCON**: La API envía la orden de veto al servidor de juego mediante el comando nativo `AdminBan <SteamID> <Duración> <Motivo>`.
+4. **Asignación de Roles de Castigo en Discord**: 
+   - El bot busca si el jugador sancionado está vinculado a una cuenta de Discord.
+   - Si está vinculado, consulta los mapeos configurados con `/ban_role map` para la duración asignada y aplica automáticamente el rol de castigo correspondiente al usuario en Discord.
 
-## Mapeos de Duración de Baneo (Ban Roles)
+## Mapeos de Roles de Castigo (`/ban_role`)
 
-Para manejar distintos niveles de castigo visual en Discord (ej: "Baneado Permanente" vs "Suspendido 3 Días"), el bot permite configurar mapeos de duración a roles.
+Para diferenciar visualmente las sanciones en Discord (ej: "Baneado Permanente" vs "Suspendido 3 Días"):
+- `/ban_role map <dias> <rol>`: Vincula una duración en días con un rol específico de Discord.
+- `/ban_role unmap <dias>`: Desvincula el rol asociado a una duración.
+- `/ban_role list`: Muestra la configuración actual de roles de sanción.
 
-- Los comandos `/config ban map` y `/config ban unmap` permiten vincular duraciones específicas (en días) con un Rol de Discord en particular.
-- Si un usuario es baneado por 30 días, el sistema buscará si existe una configuración de baneo para 30 días, y de ser así, le otorgará ese rol de castigo específico.
-- Para baneos permanentes, se utiliza la duración `0` o `-1`.
+## Desbaneo y Perdón (`/ban remove`)
 
-## Perdones y Expiración (Pardons)
-
-### Expiración Automática
-- Cuando el `end_time` de un baneo temporal es alcanzado, el registro `PlayerBan` podría ser procesado por una tarea programada para marcarlo como `is_active = False` y retirar el rol de baneo de Discord. (Nota: En servidores de juego, los baneos temporales suelen expirar automáticamente en el propio motor del juego).
-
-### Perdón Manual (Unban)
-- Un Administrador puede ejecutar el comando `/admin pardon` sobre un usuario.
-- El bot ejecuta el comando de desbaneo por RCON, cambia el estado del registro `PlayerBan` a `is_active = False`, y le retira el rol de castigo de Discord, restaurando sus permisos habituales.
+1. Un administrador ejecuta el comando `/ban remove <steam_id> <motivo>`.
+2. La API envía el comando de desbloqueo al servidor de juego por RCON.
+3. El registro en la base de datos se actualiza a `is_active = False`.
+4. El bot de Discord retira cualquier rol de castigo asociado a la cuenta de Discord vinculada al Steam ID.

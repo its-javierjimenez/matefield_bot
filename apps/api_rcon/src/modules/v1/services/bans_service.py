@@ -1,0 +1,115 @@
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Optional
+from fastapi import HTTPException
+from sqlmodel import select, col
+from sqlmodel.ext.asyncio.session import AsyncSession
+from wardogs_schemas import v1 as schemas
+
+from src.connections.databases.db import Ban, Player
+from src.connections.apis.rcon import rcon_client as rcon
+from src.connections.apis.steam import get_player_summary
+
+class BansService:
+    @staticmethod
+    async def sync_bans(session: AsyncSession) -> Dict[str, Any]:
+        try:
+            rcon_bans_resp = await rcon.get_bans()
+            rcon_steam_ids = set(rcon_bans_resp)
+            
+            stmt = select(Ban).where(Ban.is_active == True)
+            active_bans = (await session.exec(stmt)).all()
+            db_steam_ids = set([b.steam_id for b in active_bans])
+            
+            # 1. RCON to DB (Absorb missing bans)
+            missing_in_db = rcon_steam_ids - db_steam_ids
+            for sid in missing_in_db:
+                player = await session.get(Player, sid)
+                if not player:
+                    new_player = Player(steam_id=sid)
+                    session.add(new_player)
+                    await session.flush()
+                    
+                new_ban = Ban(steam_id=sid, reason="", is_active=True, rcon_sync_status="SUCCESS")
+                session.add(new_ban)
+                db_steam_ids.add(sid)
+                
+            # 2. DB to RCON (Push our full combined list)
+            active_steam_ids = list(db_steam_ids)
+            await rcon.sync_banned_slots(active_steam_ids)
+            
+            # Mark pending DB bans as SUCCESS
+            for b in active_bans:
+                if b.rcon_sync_status != "SUCCESS":
+                    b.rcon_sync_status = "SUCCESS"
+                    session.add(b)
+                    
+            await session.commit()
+            
+            return {"ok": True, "message": f"Bans synchronized successfully. Absorbed {len(missing_in_db)} from RCON."}
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @staticmethod
+    async def ban_player(steam_id: str, req: schemas.ReasonRequest, session: AsyncSession) -> Dict[str, Any]:
+        reason = req.reason or "No reason provided"
+        
+        expires_at = None
+        if req.duration_days and req.duration_days > 0:
+            expires_at = datetime.now(timezone.utc) + timedelta(days=req.duration_days)
+
+        player = await session.get(Player, steam_id)
+        if not player:
+            summary = await get_player_summary(steam_id)
+            in_game_name = summary.get("personaname") if summary else "Unknown"
+            avatar_url = summary.get("avatarfull") if summary else None
+            
+            player = Player(steam_id=steam_id, in_game_name=in_game_name, avatar_url=avatar_url)
+            session.add(player)
+            await session.flush()
+            
+        ban_entry = Ban(steam_id=steam_id, reason=reason, is_active=True, rcon_sync_status="PENDING", expires_at=expires_at)
+        session.add(ban_entry)
+        await session.commit()
+        
+        try:
+            await rcon.ban_player(steam_id, reason)
+        except Exception as e:
+            print(f"Failed to execute real-time ban: {e}")
+        
+        await BansService.sync_bans(session)
+        return {"ok": True}
+
+    @staticmethod
+    async def unban_player(steam_id: str, session: AsyncSession) -> Dict[str, Any]:
+        stmt = select(Ban).where(Ban.steam_id == steam_id, Ban.is_active == True)
+        active_bans = (await session.exec(stmt)).all()
+        for b in active_bans:
+            b.is_active = False
+            session.add(b)
+        await session.commit()
+        
+        await BansService.sync_bans(session)
+        return {"ok": True}
+
+    @staticmethod
+    async def get_bans(steam_id: Optional[str], session: AsyncSession) -> schemas.DbBansResponse:
+        stmt = select(Ban).where(Ban.is_active == True)
+        if steam_id:
+            stmt = stmt.where(Ban.steam_id == steam_id)
+            
+        bans = (await session.exec(stmt)).all()
+        
+        result = []
+        for b in bans:
+            result.append(schemas.DbBan(
+                id=b.id or 0,
+                steam_id=b.steam_id,
+                reason=b.reason,
+                is_active=b.is_active,
+                banned_at=b.banned_at.isoformat() if b.banned_at else "",
+                expires_at=b.expires_at.isoformat() if b.expires_at else None
+            ))
+            
+        return schemas.DbBansResponse(bans=result)
