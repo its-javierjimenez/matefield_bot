@@ -13,8 +13,8 @@ El **Modo 50v50** elimina por completo al equipo **Azul** y convierte la partida
 [JUGADORES ENTRANDO AL SERVIDOR]
  ├── ¿Eligen Azul? ──► El bot los manda directo al equipo con menos gente.
  └── ¿Eligen Rojo o Verde?
-      ├── Minuto 0:00 a 1:00 ──► Entran LIBRES con sus amigos (nadie los separa).
-      └── Pasado el Minuto 1:00:
+      ├── Primeros 15 segundos ──► Entran con amigos (tope 50 y máx 6 de dif).
+      └── Pasado el segundo 15:
            ├── ¿Ya estás jugando adentro? ──► NADIE te toca. Sos intocable.
            └── ¿Sos NUEVO y elegís el equipo lleno? ──► El bot te manda al otro equipo.
 ```
@@ -126,7 +126,7 @@ SITUACIÓN DEL JUGADOR                          ¿EL BOT PUEDE MOVERLO?
 ─────────────────────────────────────────────────────────────────────────────
 Jugador que ya está jugando (cualquier tiempo) ❌ NUNCA (100% Inmune)
 Comprando en base o esperando helicóptero      ❌ NUNCA (Vehículos a salvo)
-Amigos entrando en el primer minuto (< 60s)    ✅ LIBRES (Eligen bando juntos)
+Amigos entrando al inicio (< 15s)              ✅ LIBRES (Tope 50 y máx 6 dif)
 Nuevo jugador entrando al equipo lleno         ⛔ REDIRIGIDO al equipo menor
 Nuevo jugador entrando al equipo con menos     ✅ ENTRA directo a su equipo
 Jugador que intenta cambiarse en el menú       ⛔ REVERTIDO a su equipo
