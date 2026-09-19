@@ -74,8 +74,9 @@ class MatchMode50v50:
         str,
         "Acción a realizar",
         choices=(
-            ("Activar Modo 50v50", "enable"),
-            ("Desactivar Modo 50v50", "disable"),
+            ("Activar Modo 50v50 (Próxima Partida)", "enable"),
+            ("Desactivar Modo 50v50 (Próxima Partida)", "disable"),
+            ("Cancelar Programación", "cancel"),
             ("Consultar Estado", "status")
         ),
         default="status"
@@ -85,29 +86,64 @@ class MatchMode50v50:
         await ctx.defer(ephemeral=True)
         try:
             if self.action == "enable":
-                await plugin.model.api.set_mode_50v50(True)
-                await ctx.respond(
-                    "🟢 **Modo 50v50 ACTIVADO**.\n"
-                    "• Team balancing del servidor delegado a la automatización del bot.\n"
-                    "• Lonestar (Azul) cerrado: jugadores reasignados a Valkyra o Manticore.\n"
-                    "• Techo máximo de 50 jugadores por equipo y límite de 6 de diferencia."
-                )
+                res = await plugin.model.api.set_mode_50v50(True)
+                state = res.get("state", "pending_enable")
+                if state == "active":
+                    await ctx.respond(
+                        "🟢 **Desactivación CANCELADA**.\n"
+                        "• El Modo 50v50 continuará activo en las siguientes partidas."
+                    )
+                elif state == "pending_enable":
+                    await ctx.respond(
+                        "⏳ **Modo 50v50 PROGRAMADO para la siguiente partida**.\n"
+                        "• Team balancing desactivado en la configuración RCON del servidor.\n"
+                        "• Se aplicará automáticamente al iniciar la próxima partida o reiniciar el servidor."
+                    )
+                else:
+                    await ctx.respond(res.get("message", "Operación completada."))
             elif self.action == "disable":
-                await plugin.model.api.set_mode_50v50(False)
-                await ctx.respond(
-                    "⚪ **Modo 50v50 DESACTIVADO**.\n"
-                    "• Team balancing nativo restaurado con límite 1 en el servidor.\n"
-                    "• El servidor vuelve al esquema estándar 33v33v33."
-                )
+                res = await plugin.model.api.set_mode_50v50(False)
+                state = res.get("state", "inactive")
+                if state == "pending_disable":
+                    await ctx.respond(
+                        "⏳ **Desactivación PROGRAMADA para la siguiente partida**.\n"
+                        "• La automatización 50v50 continuará activa durante la partida actual.\n"
+                        "• La próxima partida iniciará en 33v33v33 con el team balancing del servidor activo."
+                    )
+                elif state == "inactive":
+                    await ctx.respond(
+                        "⚪ **Modo 50v50 CANCELADO / DESACTIVADO**.\n"
+                        "• Team balancing restaurado con límite 1 en el servidor.\n"
+                        "• El servidor continuará en el esquema estándar 33v33v33."
+                    )
+                else:
+                    await ctx.respond(res.get("message", "Operación completada."))
+            elif self.action == "cancel":
+                res = await plugin.model.api.cancel_mode_50v50()
+                state = res.get("state", "inactive")
+                if state == "inactive":
+                    await ctx.respond(
+                        "⚪ **Activación CANCELADA**.\n"
+                        "• Se canceló la activación para la siguiente partida.\n"
+                        "• El servidor continuará en modo normal 33v33v33."
+                    )
+                elif state == "active":
+                    await ctx.respond(
+                        "🟢 **Desactivación CANCELADA**.\n"
+                        "• Se canceló la desactivación.\n"
+                        "• El Modo 50v50 continuará activo en las siguientes partidas."
+                    )
+                else:
+                    await ctx.respond(f"ℹ️ {res.get('message', 'No hay ninguna programación pendiente para cancelar.')}")
             else:
                 status_50v50 = await plugin.model.api.get_mode_50v50_status()
                 st = status_50v50.get("state", "inactive")
                 if st == "active":
                     await ctx.respond("🟢 El Modo 50v50 está **ACTIVO** (Rojo vs Verde, techo 50, máx 6 de diferencia, Lonestar cerrado).")
                 elif st == "pending_enable":
-                    await ctx.respond("⏳ El Modo 50v50 está **PROGRAMADO** para la siguiente partida.")
+                    await ctx.respond("⏳ El Modo 50v50 está **PROGRAMADO** para la siguiente partida (el team balancing ya fue desactivado en RCON).")
                 elif st == "pending_disable":
-                    await ctx.respond("⏳ El Modo 50v50 tiene **DESACTIVACIÓN PROGRAMADA**.")
+                    await ctx.respond("⏳ El Modo 50v50 tiene **DESACTIVACIÓN PROGRAMADA** para la siguiente partida.")
                 else:
                     await ctx.respond("⚪ El Modo 50v50 está actualmente **INACTIVO** (33v33v33 normal con balanceo de equipos activo).")
         except Exception as e:
@@ -117,18 +153,26 @@ class MatchMode50v50:
 @plugin.include
 @crescent.hook(admin_only)
 @match_group.child
-@crescent.command(name="mode50v50_enable", description="Activa el modo 50v50 (Rojo vs Verde)")
+@crescent.command(name="mode50v50_enable", description="Programa la activación del modo 50v50 para la siguiente partida")
 class MatchMode50v50Enable:
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
         try:
-            await plugin.model.api.set_mode_50v50(True)
-            await ctx.respond(
-                "🟢 **Modo 50v50 ACTIVADO**.\n"
-                "• Team balancing del servidor delegado a la automatización del bot.\n"
-                "• Lonestar (Azul) cerrado: jugadores reasignados a Valkyra o Manticore.\n"
-                "• Techo máximo de 50 jugadores por equipo y límite de 6 de diferencia."
-            )
+            res = await plugin.model.api.set_mode_50v50(True)
+            state = res.get("state", "pending_enable")
+            if state == "active":
+                await ctx.respond(
+                    "🟢 **Desactivación CANCELADA**.\n"
+                    "• El Modo 50v50 continuará activo en las siguientes partidas."
+                )
+            elif state == "pending_enable":
+                await ctx.respond(
+                    "⏳ **Modo 50v50 PROGRAMADO para la siguiente partida**.\n"
+                    "• Team balancing desactivado en la configuración RCON del servidor.\n"
+                    "• Se aplicará automáticamente al iniciar la próxima partida o reiniciar el servidor."
+                )
+            else:
+                await ctx.respond(res.get("message", "Operación completada."))
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
 
@@ -136,25 +180,62 @@ class MatchMode50v50Enable:
 @plugin.include
 @crescent.hook(admin_only)
 @match_group.child
-@crescent.command(name="mode50v50_disable", description="Desactiva el modo 50v50")
+@crescent.command(name="mode50v50_disable", description="Programa la desactivación del modo 50v50 para la siguiente partida")
 class MatchMode50v50Disable:
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
         try:
-            await plugin.model.api.set_mode_50v50(False)
-            await ctx.respond(
-                "⚪ **Modo 50v50 DESACTIVADO**.\n"
-                "• Team balancing nativo restaurado con límite 1 en el servidor.\n"
-                "• El servidor vuelve al esquema estándar 33v33v33."
-            )
+            res = await plugin.model.api.set_mode_50v50(False)
+            state = res.get("state", "inactive")
+            if state == "pending_disable":
+                await ctx.respond(
+                    "⏳ **Desactivación PROGRAMADA para la siguiente partida**.\n"
+                    "• La automatización 50v50 continuará activa durante la partida actual.\n"
+                    "• La próxima partida iniciará en 33v33v33 con el team balancing del servidor activo."
+                )
+            elif state == "inactive":
+                await ctx.respond(
+                    "⚪ **Modo 50v50 CANCELADO / DESACTIVADO**.\n"
+                    "• Team balancing restaurado con límite 1 en el servidor.\n"
+                    "• El servidor continuará en el esquema estándar 33v33v33."
+                )
+            else:
+                await ctx.respond(res.get("message", "Operación completada."))
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
 
 
+@plugin.include
+@crescent.hook(admin_only)
+@match_group.child
+@crescent.command(name="mode50v50_cancel", description="Cancela la activación o desactivación programada del modo 50v50")
+class MatchMode50v50Cancel:
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer(ephemeral=True)
+        try:
+            res = await plugin.model.api.cancel_mode_50v50()
+            state = res.get("state", "inactive")
+            if state == "inactive":
+                await ctx.respond(
+                    "⚪ **Activación CANCELADA**.\n"
+                    "• Se canceló la activación para la siguiente partida.\n"
+                    "• El servidor continuará en modo normal 33v33v33."
+                )
+            elif state == "active":
+                await ctx.respond(
+                    "🟢 **Desactivación CANCELADA**.\n"
+                    "• Se canceló la desactivación.\n"
+                    "• El Modo 50v50 continuará activo en las siguientes partidas."
+                )
+            else:
+                await ctx.respond(f"ℹ️ {res.get('message', 'No hay ninguna programación pendiente para cancelar.')}")
+        except Exception as e:
+            await ctx.respond(f"❌ Error: {e}")
+
 
 @plugin.include
 @match_group.child
-@crescent.command(name="mode50v50_status", description="Consulta si el modo 50v50 está activo")
+@crescent.command(name="mode50v50_status", description="Consulta si el modo 50v50 está activo o programado")
 class MatchMode50v50Status:
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)

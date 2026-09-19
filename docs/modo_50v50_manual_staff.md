@@ -60,16 +60,23 @@ Imaginate que el servidor es un **boliche (discoteca)** con dos salas: **Sala Ro
 
 Aquí tenés exactamente lo que pasa en cada situación para que no tengas miedo de meter la pata:
 
-### 🔹 "¿Qué pasa si tiro `/mode50v50 enable`?"
-> **Respuesta:** **SE ACTIVA DE INMEDIATO.**  
-> El bot apaga el autobalance nativo del servidor y toma el control total en tiempo real.  
-> * Los jugadores en Azul (Lonestar) son transferidos a Rojo o Verde.  
-> * Si un equipo supera los 50 jugadores (techo máximo) o la diferencia supera 6, el bot rebalancea para que queden parejos (50v50).  
-> * Al reiniciar la partida o cambiar mapa, el modo sigue activo con sus 10s de calentamiento.
+### 🔹 "¿Qué pasa si tiro `/mode50v50 enable` en mitad de una partida?"
+> **Respuesta:** **NO SE INTERRUMPE LA PARTIDA ACTUAL.**  
+> El bot deja la configuración lista en el servidor (`bLockOverpopulatedTeamsConfig=false`) y entra en estado `pending_enable`.  
+> Espera pacientemente a que termine la partida actual. En cuanto termine la ronda y comience la nueva partida... **¡PUM!** La nueva partida arranca automáticamente en 50v50.
 
-### 🔹 "¿Qué pasa si tiro `/mode50v50 disable`?"
-> **Respuesta:** **SE DESACTIVA DE INMEDIATO.**  
-> El bot restaura el team balancing del servidor (límite 1) y el servidor vuelve al esquema estándar de 3 equipos (33v33v33).
+### 🔹 "¿Qué pasa si me equivoqué y tiré `/mode50v50 enable` por error?"
+> **Respuesta:** No te preocupes. Antes de que termine el mapa tirás `/mode50v50 cancel` (o `/mode50v50 disable`).  
+> El bot cancela la activación de inmediato, restaura el autobalance nativo del servidor y la próxima partida arrancará normal en 33v33v33.
+
+### 🔹 "¿Qué pasa si ya estamos jugando en 50v50 y tiro `/mode50v50 disable`?"
+> **Respuesta:** **Tampoco rompe nada ni interrumpe la partida.**  
+> El bot entra en `pending_disable` y deja que la partida en curso termine en paz en 50v50 hasta el final.  
+> Cuando termine el mapa y cambie de ronda, el servidor vuelve solo al modo normal de 3 facciones (33v33v33).
+
+### 🔹 "¿Qué pasa si me arrepentí de desactivarlo y quiero seguir en 50v50?"
+> **Respuesta:** Tirás `/mode50v50 cancel` (o `/mode50v50 enable`).  
+> El bot cancela la desactivación programada y las siguientes partidas continuarán en Modo 50v50 sin problemas.
 
 ### 🔹 "¿Cómo sé en qué estado está el servidor ahora mismo?"
 > **Respuesta:** Tirás el comando:
@@ -77,20 +84,28 @@ Aquí tenés exactamente lo que pasa en cada situación para que no tengas miedo
 > /mode50v50 status
 > ```
 > El bot te va a responder clarito:
-> * 🟢 `active`: ¡El modo 50v50 está jugando y balanceando ahora mismo!
 > * ⚪ `inactive`: El modo está apagado (partida normal 33v33v33).
+> * 🟡 `pending_enable`: Esperando a que termine el mapa actual para activar 50v50.
+> * 🟢 `active`: ¡El modo 50v50 está jugando y balanceando ahora mismo!
+> * 🟠 `pending_disable`: El 50v50 actual terminará y el próximo mapa será normal.
 
 ---
 
 ## 4. Resumen de Mensajes que ven los Jugadores 💬
 
-### A. Avisos de Estado:
-* 📢 **Al activar el modo:**  
-  `Modo 50v50 ACTIVADO (Rojo vs Verde)! Team balancing automatizado por el bot.`
-* 📢 **Al desactivar el modo:**  
-  `Modo 50v50 DESACTIVADO. Volviendo al esquema estandar (33v33v33).`
-* 📢 **Al reiniciar partida con 50v50 activo:**  
+### A. Avisos de Estado (cuando el Staff usa los comandos):
+* 📢 **Al programar activación:**  
+  `Modo 50v50: En la siguiente partida se activara el modo 50v50`
+* 📢 **Al cancelar activación:**  
+  `Modo 50v50: Se ha cancelado la activacion, seguiremos normal`
+* 📢 **Al programar desactivación en plena partida:**  
+  `Modo 50v50: En la siguiente partida se desactivara el modo 50v50`
+* 📢 **Al cancelar desactivación (seguir en 50v50):**  
+  `Modo 50v50: Se ha cancelado la desactivacion, seguiremos en modo 50v50`
+* 📢 **Al iniciar la partida 50v50:**  
   `Modo 50v50 ACTIVADO para esta partida (Rojo vs Verde)!`
+* 📢 **Al finalizar la partida 50v50:**  
+  `Modo 50v50 FINALIZADO. Volviendo a 33v33v33.`
 
 ### B. Avisos de Calentamiento / Autobalance:
 * 📢 **Segundo 0 (Inicio de partida):**  

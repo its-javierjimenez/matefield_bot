@@ -127,6 +127,10 @@ async def poll_rcon():
                             await session.commit()
                             logger.info("[50v50 Mode] New match started! 50v50 Mode is now ACTIVE.")
                             try:
+                                await rcon_client.set_team_balancing(False)
+                            except Exception:
+                                pass
+                            try:
                                 await rcon_client.broadcast("Modo 50v50 ACTIVADO para esta partida (Rojo vs Verde)!")
                             except Exception:
                                 pass
@@ -142,7 +146,16 @@ async def poll_rcon():
                             await session.commit()
                             logger.info("[50v50 Mode] New match started! 50v50 Mode is now INACTIVE.")
                             try:
+                                await rcon_client.set_team_balancing(True, threshold=1)
+                            except Exception:
+                                pass
+                            try:
                                 await rcon_client.broadcast("Modo 50v50 FINALIZADO. Volviendo a 33v33v33.")
+                            except Exception:
+                                pass
+                        elif cur_state == "active":
+                            try:
+                                await rcon_client.broadcast("Modo 50v50 ACTIVADO para esta partida (Rojo vs Verde)!")
                             except Exception:
                                 pass
                 
@@ -340,20 +353,7 @@ async def mode_50v50_loop():
                 config_state = (await session.exec(stmt_state)).first()
                 if config_state and config_state.config_value:
                     st = config_state.config_value.strip().lower()
-                    if st == "pending_enable":
-                        # Auto-promote pending_enable to active so server doesn't get stuck
-                        config_state.config_value = "active"
-                        session.add(config_state)
-                        cfg_en = await session.get(BotConfig, "MODE_50V50_ENABLED")
-                        if cfg_en:
-                            cfg_en.config_value = "true"
-                            session.add(cfg_en)
-                        else:
-                            session.add(BotConfig(config_key="MODE_50V50_ENABLED", config_value="true"))
-                        await session.commit()
-                        is_enabled = True
-                    else:
-                        is_enabled = st in ("active", "pending_disable")
+                    is_enabled = st in ("active", "pending_disable")
                 else:
                     stmt = select(BotConfig).where(BotConfig.config_key == "MODE_50V50_ENABLED")
                     config = (await session.exec(stmt)).first()

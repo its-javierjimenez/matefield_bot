@@ -71,9 +71,9 @@ Los cambios en `ServerSettings.ini` solo son procesados por el servidor de juego
      > *"Cambio de equipo no permitido durante la partida."*
    - Aplica un cooldown de 15 segundos al jugador para evitar bucles de reversión.
 3. **Anuncios Globales por Chat (Broadcast - `POST /v1/broadcast`)**:
-   - Al iniciar la partida (`matchSeconds < 15`): Emite una sola vez el anuncio a todo el servidor:
-     > `Modo 50v50: 15s antes de autobalance`
-   - Al cumplirse el segundo 15 (`matchSeconds >= 15`): Emite una sola vez el anuncio a todo el servidor:
+   - Al iniciar la partida (`matchSeconds < 10`): Emite una sola vez el anuncio a todo el servidor:
+     > `Modo 50v50: 10s antes de autobalance`
+   - Al cumplirse el segundo 10 (`matchSeconds >= 10`): Emite una sola vez el anuncio a todo el servidor:
      > `Modo 50v50: Autobalance ACTIVO`
 4. **Paso 1 - Eliminación y Asimilación de Lonestar (Azul)**:
    - Todos los jugadores detectados en facción Lonestar son transferidos inmediatamente al equipo con menor población entre Rojo y Verde (o devueltos a su equipo si ya tenían uno asignado), respetando el techo máximo de 50 jugadores.
@@ -81,7 +81,7 @@ Los cambios en `ServerSettings.ini` solo son procesados por el servidor de juego
      > *"Se te ha asignado al equipo {target_faction}."*
    - Quedan registrados como miembros oficiales de esa facción en `player_team_history`. Si intentan cambiarse al otro equipo, el sellado ARMA los bloquea y revierte.
 5. **Paso 2 - Portero Global en Entrada (Overpopulation Gatekeeper)**:
-   - **Calentamiento Inicial (Primeros 15 segundos con tope de seguridad)**: Durante `matchSeconds < 15`, los jugadores pueden conectarse y elegir equipo libremente con sus escuadras, sujeto a dos frenos automáticos:
+   - **Calentamiento Inicial (Primeros 10 segundos con tope de seguridad)**: Durante `matchSeconds < 10`, los jugadores pueden conectarse y elegir equipo libremente con sus escuadras, sujeto a dos frenos automáticos:
      - **Techo de 50**: Ningún equipo puede superar los 50 jugadores bajo ninguna circunstancia.
      - **Límite de Diferencia (Máx 6)**: Si un equipo supera al otro por 6 o más jugadores (ej. 18 vs 12), el portero frena y redirige a los nuevos ingresantes hacia el bando menor.
    - **Inmunidad Total para Jugadores Existentes**: Todo jugador que ya esté jugando en un equipo (`p.steamId in player_team_history`) es **100% INMUNE** y **NUNCA se le mueve de bando**.
@@ -89,7 +89,7 @@ Los cambios en `ServerSettings.ini` solo son procesados por el servidor de juego
      - ¿Está esperando 2 minutos a que llegue un helicóptero? **Protegido.**
      - ¿Gasta dinero en terminales de armas o vehículos? **Protegido.**
      - El abandono de partida (*ragequit*) no mueve a los que siguen jugando; los administradores pueden intervenir manualmente si es necesario.
-   - **Portero de Sobrepoblación en la Entrada**: A partir del segundo 15 (`matchSeconds >= 15`), cuando un **NUEVO jugador** conecta al servidor:
+   - **Portero de Sobrepoblación en la Entrada**: A partir del segundo 10 (`matchSeconds >= 10`), cuando un **NUEVO jugador** conecta al servidor:
      - Si intenta entrar al equipo que ya tiene más jugadores (sobrepopulador): El bot lo intercepta de inmediato, lo transfiere al equipo menor mediante `switch_faction`, lo bloquea allí en `player_team_history` y le envía un whisper:
        > *"Se te ha asignado al equipo {target_faction} para balancear la partida."*
      - Si entra al equipo menor o empatado: Es aceptado inmediatamente sin alteración.

@@ -311,4 +311,11 @@ async def set_match_seconds(seconds: int = 0):
     mock_state["match_seconds"] = seconds
     return {"ok": True, "match_seconds": mock_state["match_seconds"]}
 
+@app.post("/mock/next_match")
+async def next_match():
+    mock_state["rotation"] = (mock_state["rotation"] + 1) % len(mock_state["maps"])
+    mock_state["match_seconds"] = 0
+    mock_state["score"] = 0
+    return {"ok": True, "rotation": mock_state["rotation"], "map": mock_state["maps"][mock_state["rotation"]]}
+
 

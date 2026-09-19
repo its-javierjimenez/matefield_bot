@@ -1056,82 +1056,263 @@ async def get_mode_50v50(session: AsyncSession = Depends(get_session)):
 
 @router.post("/mode50v50/enable", dependencies=[Depends(verify_api_key_guard)])
 async def enable_mode_50v50(session: AsyncSession = Depends(get_session)):
-    # 1. Update RCON server config to disable team balancing
-    try:
-        await rcon.set_team_balancing(False)
-    except Exception as e:
-        pass
-
-    # 2. Activate 50v50 immediately in database
+    # 1. Check current state in database
     cfg_state = await session.get(BotConfig, "MODE_50V50_STATE")
-    if not cfg_state:
-        cfg_state = BotConfig(config_key="MODE_50V50_STATE", config_value="active")
-        session.add(cfg_state)
-    else:
+    current_state = cfg_state.config_value.strip().lower() if cfg_state and cfg_state.config_value else "inactive"
+
+    if current_state == "pending_disable":
+        # Was scheduled to be disabled: cancel deactivation and keep 50v50 active!
+        try:
+            await rcon.set_team_balancing(False)
+        except Exception:
+            pass
+
         cfg_state.config_value = "active"
         session.add(cfg_state)
 
-    cfg_enabled = await session.get(BotConfig, "MODE_50V50_ENABLED")
-    if not cfg_enabled:
-        cfg_enabled = BotConfig(config_key="MODE_50V50_ENABLED", config_value="true")
-        session.add(cfg_enabled)
+        cfg_enabled = await session.get(BotConfig, "MODE_50V50_ENABLED")
+        if not cfg_enabled:
+            cfg_enabled = BotConfig(config_key="MODE_50V50_ENABLED", config_value="true")
+            session.add(cfg_enabled)
+        else:
+            cfg_enabled.config_value = "true"
+            session.add(cfg_enabled)
+
+        await session.commit()
+
+        try:
+            await rcon.broadcast("Modo 50v50: Se ha cancelado la desactivacion, seguiremos en modo 50v50")
+        except Exception:
+            pass
+
+        return {
+            "ok": True,
+            "state": "active",
+            "enabled": True,
+            "message": "Desactivación CANCELADA. El Modo 50v50 continuará en las siguientes partidas."
+        }
+    elif current_state == "active":
+        return {
+            "ok": True,
+            "state": "active",
+            "enabled": True,
+            "message": "El Modo 50v50 ya se encuentra ACTIVO en la partida actual."
+        }
+    elif current_state == "pending_enable":
+        return {
+            "ok": True,
+            "state": "pending_enable",
+            "enabled": False,
+            "message": "El Modo 50v50 ya se encuentra PROGRAMADO para la siguiente partida."
+        }
     else:
-        cfg_enabled.config_value = "true"
-        session.add(cfg_enabled)
+        # Was inactive: update RCON config and schedule activation for next match
+        try:
+            await rcon.set_team_balancing(False)
+        except Exception:
+            pass
 
-    await session.commit()
+        if not cfg_state:
+            cfg_state = BotConfig(config_key="MODE_50V50_STATE", config_value="pending_enable")
+            session.add(cfg_state)
+        else:
+            cfg_state.config_value = "pending_enable"
+            session.add(cfg_state)
 
-    try:
-        await rcon.broadcast("Modo 50v50 ACTIVADO (Rojo vs Verde)! Team balancing automatizado por el bot.")
-    except Exception:
-        pass
+        cfg_enabled = await session.get(BotConfig, "MODE_50V50_ENABLED")
+        if not cfg_enabled:
+            cfg_enabled = BotConfig(config_key="MODE_50V50_ENABLED", config_value="false")
+            session.add(cfg_enabled)
+        else:
+            cfg_enabled.config_value = "false"
+            session.add(cfg_enabled)
 
-    return {
-        "ok": True,
-        "state": "active",
-        "enabled": True,
-        "message": "Modo 50v50 ACTIVADO. Team balancing desactivado en el servidor y bot gestionando 50v50."
-    }
+        await session.commit()
+
+        try:
+            await rcon.broadcast("Modo 50v50: En la siguiente partida se activara el modo 50v50")
+        except Exception:
+            pass
+
+        return {
+            "ok": True,
+            "state": "pending_enable",
+            "enabled": False,
+            "message": "Modo 50v50 PROGRAMADO para la siguiente partida. Team balancing desactivado en el servidor."
+        }
 
 
 @router.post("/mode50v50/disable", dependencies=[Depends(verify_api_key_guard)])
 async def disable_mode_50v50(session: AsyncSession = Depends(get_session)):
-    # 1. Restore team balancing in RCON config with threshold 1
-    try:
-        await rcon.set_team_balancing(True, threshold=1)
-    except Exception as e:
-        pass
-
-    # 2. Deactivate 50v50 immediately in database
+    # 1. Check current state in database
     cfg_state = await session.get(BotConfig, "MODE_50V50_STATE")
-    if not cfg_state:
-        cfg_state = BotConfig(config_key="MODE_50V50_STATE", config_value="inactive")
+    current_state = cfg_state.config_value.strip().lower() if cfg_state and cfg_state.config_value else "inactive"
+
+    if current_state == "active":
+        # 50v50 match is currently in progress: schedule deactivation for next match
+        try:
+            await rcon.set_team_balancing(True, threshold=1)
+        except Exception:
+            pass
+
+        cfg_state.config_value = "pending_disable"
         session.add(cfg_state)
-    else:
+        # Keep MODE_50V50_ENABLED = "true" so current round finishes smoothly as 50v50
+        await session.commit()
+
+        try:
+            await rcon.broadcast("Modo 50v50: En la siguiente partida se desactivara el modo 50v50")
+        except Exception:
+            pass
+
+        return {
+            "ok": True,
+            "state": "pending_disable",
+            "enabled": True,
+            "message": "Desactivación PROGRAMADA para la siguiente partida. El modo continuará hasta terminar la partida actual."
+        }
+    elif current_state == "pending_enable":
+        # Was pending_enable (cancel activation before next match starts!)
+        try:
+            await rcon.set_team_balancing(True, threshold=1)
+        except Exception:
+            pass
+
         cfg_state.config_value = "inactive"
         session.add(cfg_state)
 
-    cfg_enabled = await session.get(BotConfig, "MODE_50V50_ENABLED")
-    if not cfg_enabled:
-        cfg_enabled = BotConfig(config_key="MODE_50V50_ENABLED", config_value="false")
-        session.add(cfg_enabled)
+        cfg_enabled = await session.get(BotConfig, "MODE_50V50_ENABLED")
+        if not cfg_enabled:
+            cfg_enabled = BotConfig(config_key="MODE_50V50_ENABLED", config_value="false")
+            session.add(cfg_enabled)
+        else:
+            cfg_enabled.config_value = "false"
+            session.add(cfg_enabled)
+
+        await session.commit()
+
+        try:
+            await rcon.broadcast("Modo 50v50: Se ha cancelado la activacion, seguiremos normal")
+        except Exception:
+            pass
+
+        return {
+            "ok": True,
+            "state": "inactive",
+            "enabled": False,
+            "message": "Modo 50v50 CANCELADO. Team balancing restaurado con límite 1 en el servidor."
+        }
+    elif current_state == "pending_disable":
+        return {
+            "ok": True,
+            "state": "pending_disable",
+            "enabled": True,
+            "message": "La desactivación del Modo 50v50 ya está programada para la siguiente partida."
+        }
     else:
-        cfg_enabled.config_value = "false"
-        session.add(cfg_enabled)
+        # Already inactive
+        try:
+            await rcon.set_team_balancing(True, threshold=1)
+        except Exception:
+            pass
 
-    await session.commit()
+        if not cfg_state:
+            cfg_state = BotConfig(config_key="MODE_50V50_STATE", config_value="inactive")
+            session.add(cfg_state)
+        else:
+            cfg_state.config_value = "inactive"
+            session.add(cfg_state)
 
-    try:
-        await rcon.broadcast("Modo 50v50 DESACTIVADO. Volviendo al esquema estandar (33v33v33).")
-    except Exception:
-        pass
+        cfg_enabled = await session.get(BotConfig, "MODE_50V50_ENABLED")
+        if not cfg_enabled:
+            cfg_enabled = BotConfig(config_key="MODE_50V50_ENABLED", config_value="false")
+            session.add(cfg_enabled)
+        else:
+            cfg_enabled.config_value = "false"
+            session.add(cfg_enabled)
 
-    return {
-        "ok": True,
-        "state": "inactive",
-        "enabled": False,
-        "message": "Modo 50v50 DESACTIVADO. Team balancing restaurado con límite 1 en el servidor."
-    }
+        await session.commit()
+
+        return {
+            "ok": True,
+            "state": "inactive",
+            "enabled": False,
+            "message": "El Modo 50v50 ya se encuentra INACTIVO."
+        }
+
+
+@router.post("/mode50v50/cancel", dependencies=[Depends(verify_api_key_guard)])
+async def cancel_mode_50v50(session: AsyncSession = Depends(get_session)):
+    cfg_state = await session.get(BotConfig, "MODE_50V50_STATE")
+    current_state = cfg_state.config_value.strip().lower() if cfg_state and cfg_state.config_value else "inactive"
+
+    if current_state == "pending_enable":
+        try:
+            await rcon.set_team_balancing(True, threshold=1)
+        except Exception:
+            pass
+
+        cfg_state.config_value = "inactive"
+        session.add(cfg_state)
+
+        cfg_enabled = await session.get(BotConfig, "MODE_50V50_ENABLED")
+        if not cfg_enabled:
+            cfg_enabled = BotConfig(config_key="MODE_50V50_ENABLED", config_value="false")
+            session.add(cfg_enabled)
+        else:
+            cfg_enabled.config_value = "false"
+            session.add(cfg_enabled)
+
+        await session.commit()
+
+        try:
+            await rcon.broadcast("Modo 50v50: Se ha cancelado la activacion, seguiremos normal")
+        except Exception:
+            pass
+
+        return {
+            "ok": True,
+            "state": "inactive",
+            "enabled": False,
+            "message": "Activación CANCELADA. El servidor continuará en modo normal 33v33v33."
+        }
+    elif current_state == "pending_disable":
+        try:
+            await rcon.set_team_balancing(False)
+        except Exception:
+            pass
+
+        cfg_state.config_value = "active"
+        session.add(cfg_state)
+
+        cfg_enabled = await session.get(BotConfig, "MODE_50V50_ENABLED")
+        if not cfg_enabled:
+            cfg_enabled = BotConfig(config_key="MODE_50V50_ENABLED", config_value="true")
+            session.add(cfg_enabled)
+        else:
+            cfg_enabled.config_value = "true"
+            session.add(cfg_enabled)
+
+        await session.commit()
+
+        try:
+            await rcon.broadcast("Modo 50v50: Se ha cancelado la desactivacion, seguiremos en modo 50v50")
+        except Exception:
+            pass
+
+        return {
+            "ok": True,
+            "state": "active",
+            "enabled": True,
+            "message": "Desactivación CANCELADA. El Modo 50v50 continuará activo en las siguientes partidas."
+        }
+    else:
+        return {
+            "ok": False,
+            "state": current_state,
+            "enabled": (current_state == "active"),
+            "message": f"No hay ninguna programación pendiente para cancelar (estado actual: {current_state})."
+        }
 
 
 

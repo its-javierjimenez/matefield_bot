@@ -231,4 +231,7 @@ class APIClient:
         endpoint = "/api/v1/mode50v50/enable" if enabled else "/api/v1/mode50v50/disable"
         return await self._request("POST", endpoint)
 
+    async def cancel_mode_50v50(self) -> Dict[str, Any]:
+        return await self._request("POST", "/api/v1/mode50v50/cancel")
+
 
