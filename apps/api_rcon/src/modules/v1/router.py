@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Header
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import Any, Optional
+from typing import Any, Optional, List
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy import func, desc, text
@@ -8,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from wardogs_schemas import v1 as schemas
 
+from src.config import ENVIRONMENT_SETTINGS
 from src.security.guard import verify_api_key_guard
 from src.connections.databases.db import (
     Player, Role, PlayerRole, Membership, PlayerSession, Ban, 
@@ -15,6 +17,10 @@ from src.connections.databases.db import (
     get_session
 )
 from src.connections.apis.rcon import rcon_client as rcon
+from src.modules.v1.services.backup_service import (
+    create_database_backup, get_available_backups,
+    generate_download_token, verify_download_token, get_backup_dir
+)
 
 router = APIRouter(prefix="/v1", tags=["v1"])
 
@@ -1313,6 +1319,114 @@ async def cancel_mode_50v50(session: AsyncSession = Depends(get_session)):
             "enabled": (current_state == "active"),
             "message": f"No hay ninguna programación pendiente para cancelar (estado actual: {current_state})."
         }
+
+
+# --- Database Backup Endpoints ---
+
+class BackupLinkRequest(BaseModel):
+    format: str = "sql"  # "sql" or "csv"
+    filename: Optional[str] = None
+
+@router.post("/db/backups/create", dependencies=[Depends(verify_api_key_guard)])
+async def create_backup_endpoint(session: AsyncSession = Depends(get_session)):
+    try:
+        sql_file, csv_zip_file = await create_database_backup(session)
+        return {
+            "ok": True,
+            "sql_file": sql_file.name,
+            "csv_zip_file": csv_zip_file.name,
+            "message": "Database backup created successfully on disk"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create backup: {e}")
+
+@router.get("/db/backups", dependencies=[Depends(verify_api_key_guard)])
+async def list_backups_endpoint():
+    backups = get_available_backups()
+    return {"backups": backups}
+
+@router.post("/db/backups/link", dependencies=[Depends(verify_api_key_guard)])
+async def get_backup_link_endpoint(
+    req: BackupLinkRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session)
+):
+    req_format = req.format.lower().strip()
+    if req_format not in ("sql", "csv"):
+        raise HTTPException(status_code=400, detail="Invalid format. Supported formats: 'sql', 'csv'")
+
+    backup_dir = get_backup_dir()
+    target_filename = req.filename
+
+    if not target_filename:
+        preferred_name = "latest.sql" if req_format == "sql" else "latest_csv.zip"
+        if (backup_dir / preferred_name).is_file():
+            target_filename = preferred_name
+        else:
+            candidates = [b for b in get_available_backups() if b["format"] == req_format and not b["is_latest"]]
+            if candidates:
+                target_filename = candidates[0]["filename"]
+
+    # If no file exists yet, generate backup now
+    if not target_filename or not (backup_dir / target_filename).is_file():
+        await create_database_backup(session)
+        target_filename = "latest.sql" if req_format == "sql" else "latest_csv.zip"
+
+    file_path = (backup_dir / target_filename).resolve()
+    if not file_path.is_file() or not file_path.is_relative_to(backup_dir.resolve()):
+        raise HTTPException(status_code=404, detail="Requested backup file not found")
+
+    expires_in_seconds = 900  # 15 minutes
+    token = generate_download_token(target_filename, expires_in_seconds=expires_in_seconds)
+
+    # Determine base URL for link
+    public_url = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.PUBLIC_API_URL.strip()
+    if public_url:
+        base_url = public_url.rstrip("/")
+    else:
+        base_url = str(request.base_url).rstrip("/")
+
+    download_url = f"{base_url}/api/v1/db/backups/download/{target_filename}?token={token}"
+
+    return {
+        "ok": True,
+        "filename": target_filename,
+        "format": req_format,
+        "size_bytes": file_path.stat().st_size,
+        "download_url": download_url,
+        "expires_in_seconds": expires_in_seconds
+    }
+
+@router.get("/db/backups/download/{filename}")
+async def download_backup_endpoint(
+    filename: str,
+    token: Optional[str] = None,
+    api_key: Optional[str] = None,
+    api_key_header: Optional[str] = Header(None, alias="X-API-Key")
+):
+    master_key = ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY
+    is_authorized = False
+
+    if token and verify_download_token(filename, token):
+        is_authorized = True
+    elif (api_key and api_key == master_key) or (api_key_header and api_key_header == master_key):
+        is_authorized = True
+
+    if not is_authorized:
+        raise HTTPException(status_code=403, detail="Invalid or expired download token / credentials")
+
+    backup_dir = get_backup_dir().resolve()
+    target_file = (backup_dir / filename).resolve()
+
+    if not target_file.is_file() or not target_file.is_relative_to(backup_dir):
+        raise HTTPException(status_code=404, detail="Backup file not found")
+
+    media_type = "application/sql" if filename.endswith(".sql") else "application/zip"
+    return FileResponse(
+        target_file,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
 
 
 

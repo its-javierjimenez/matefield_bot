@@ -8,7 +8,7 @@ from src.model import Model
 from src.hooks import admin_only
 
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
-from src.groups import leaderboard_group, membership_group, player_group, server_group, special_role_group
+from src.groups import leaderboard_group, membership_group, player_group, server_group, special_role_group, db_group
 
 async def autocomplete_tipo(
     ctx: crescent.AutocompleteContext, option: hikari.AutocompleteInteractionOption
@@ -712,5 +712,79 @@ class ExtenderMembresia:
             await ctx.respond(f"✅ Membresía #{self.membership_id} extendida por {self.dias} días exitosamente.")
         except Exception as e:
             await ctx.respond(f"❌ Error al extender membresía: {e}")
+
+
+@plugin.include
+@crescent.hook(admin_only)
+@db_group.child
+@crescent.command(name="backup_download", description="Genera y envía un enlace para descargar el backup de la base de datos")
+class DbBackupDownload:
+    formato = crescent.option(
+        str,
+        "Formato del backup a descargar",
+        choices=(
+            ("SQL (Copia completa del sistema)", "sql"),
+            ("CSV (Archivo ZIP con todas las tablas)", "csv")
+        ),
+        default="sql"
+    )
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer(ephemeral=True)
+        try:
+            res = await plugin.model.api.get_backup_link(format=str(self.formato))
+            filename = res.get("filename", "backup")
+            download_url = res.get("download_url", "")
+            size_bytes = res.get("size_bytes", 0)
+            expires_in_mins = res.get("expires_in_seconds", 900) // 60
+
+            size_mb = size_bytes / (1024 * 1024)
+            size_str = f"{size_mb:.2f} MB" if size_mb >= 1 else f"{size_bytes / 1024:.1f} KB"
+            fmt_title = "SQL (Dump del sistema)" if self.formato == "sql" else "CSV (ZIP de tablas)"
+
+            embed = hikari.Embed(
+                title="💾 Backup de Base de Datos Listo",
+                description=(
+                    f"Se ha preparado el backup solicitado:\n\n"
+                    f"📦 **Archivo:** `{filename}`\n"
+                    f"📁 **Formato:** {fmt_title}\n"
+                    f"⚖️ **Tamaño:** {size_str}\n"
+                    f"⏱️ **Validez:** Expira en **{expires_in_mins} minutos**.\n\n"
+                    f"🔗 [Descargar directamente desde aquí]({download_url})"
+                ),
+                color=0x2ECC71
+            )
+
+            # Interactive action row with link button
+            row = ctx.app.rest.build_message_action_row()
+            row.add_link_button(download_url, label="Descargar Backup", emoji="📥")
+
+            await ctx.respond(embed=embed, component=row, flags=hikari.MessageFlag.EPHEMERAL)
+        except Exception as e:
+            logger.error(f"[DbBackupDownload] Error requesting backup download link: {e}")
+            await ctx.respond(f"❌ Error al generar el enlace de descarga: {e}", flags=hikari.MessageFlag.EPHEMERAL)
+
+
+@plugin.include
+@crescent.hook(admin_only)
+@db_group.child
+@crescent.command(name="backup_create", description="Fuerza la creación inmediata de un backup en disco")
+class DbBackupCreate:
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer(ephemeral=True)
+        try:
+            res = await plugin.model.api.create_backup()
+            sql_file = res.get("sql_file", "backup.sql")
+            csv_file = res.get("csv_zip_file", "backup_csv.zip")
+            await ctx.respond(
+                f"✅ **Backup creado exitosamente en disco:**\n"
+                f"• SQL: `{sql_file}`\n"
+                f"• CSV: `{csv_file}`\n\n"
+                f"Puedes descargarlo en cualquier momento con `/db backup_download`.",
+                flags=hikari.MessageFlag.EPHEMERAL
+            )
+        except Exception as e:
+            logger.error(f"[DbBackupCreate] Error creating backup: {e}")
+            await ctx.respond(f"❌ Error al crear el backup: {e}", flags=hikari.MessageFlag.EPHEMERAL)
 
 

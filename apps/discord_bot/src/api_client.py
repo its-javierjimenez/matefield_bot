@@ -234,4 +234,16 @@ class APIClient:
     async def cancel_mode_50v50(self) -> Dict[str, Any]:
         return await self._request("POST", "/api/v1/mode50v50/cancel")
 
+    async def create_backup(self) -> Dict[str, Any]:
+        return await self._request("POST", "/api/v1/db/backups/create")
+
+    async def list_backups(self) -> Dict[str, Any]:
+        return await self._request("GET", "/api/v1/db/backups")
+
+    async def get_backup_link(self, format: str = "sql", filename: Optional[str] = None) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"format": format}
+        if filename:
+            payload["filename"] = filename
+        return await self._request("POST", "/api/v1/db/backups/link", json=payload)
+
 

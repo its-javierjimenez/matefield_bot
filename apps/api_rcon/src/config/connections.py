@@ -16,6 +16,25 @@ class ConnectionSettings(BaseSettings):
 
     RCON_PASSWORD: str = pydantic.Field(
         default="test",
-        env="RCON_PASSWORD",
         description="Password for the game server RCON API"
+    )
+
+    BACKUP_DIR: str = pydantic.Field(
+        default="backups",
+        description="Directory on disk to store database backups"
+    )
+
+    BACKUP_INTERVAL_HOURS: int = pydantic.Field(
+        default=24,
+        description="Interval in hours between automated backups"
+    )
+
+    BACKUP_RETENTION_DAYS: int = pydantic.Field(
+        default=14,
+        description="Days to retain backup files"
+    )
+
+    PUBLIC_API_URL: str = pydantic.Field(
+        default="",
+        description="Public base URL for external links (e.g. http://localhost:8000)"
     )

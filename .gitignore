@@ -57,3 +57,5 @@ Thumbs.db
 
 # Project specific
 *.csv
+backups/
+apps/api_rcon/backups/
