@@ -40,11 +40,14 @@ async def client_fixture(session: AsyncSession):
     async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
         yield client
 
+import src.connections.apis.rcon as rcon_module
+
 @pytest.fixture(autouse=True)
 def mock_rcon(mocker):
     # Mock the RCON client functions used in the endpoint
-    mocker.patch.object(router_module.rcon, 'get_reserved_slots', return_value=schemas.ReservedSlots(reservedSlots=[]))
-    mocker.patch.object(router_module.rcon, 'sync_reserved_slots', return_value=None)
+    mocker.patch.object(rcon_module.rcon_client, 'get_reserved_slots', return_value=schemas.ReservedSlots(reservedSlots=[]))
+    mocker.patch.object(rcon_module.rcon_client, 'sync_reserved_slots', return_value=None)
+
 
 @pytest.mark.asyncio
 async def test_sync_expires_old_memberships(client: AsyncClient, session: AsyncSession):
@@ -72,7 +75,7 @@ async def test_sync_expires_old_memberships(client: AsyncClient, session: AsyncS
 
 @pytest.mark.asyncio
 async def test_sync_adds_authorized_slots(client: AsyncClient, session: AsyncSession, mocker):
-    mock_add = mocker.patch.object(router_module.rcon, 'sync_reserved_slots')
+    mock_add = mocker.patch.object(rcon_module.rcon_client, 'sync_reserved_slots')
     
     now = datetime.now(timezone.utc)
     p = Player(steam_id="VALID_STEAM_ID", discord_id="456")
@@ -95,9 +98,9 @@ async def test_sync_adds_authorized_slots(client: AsyncClient, session: AsyncSes
 
 @pytest.mark.asyncio
 async def test_sync_removes_unauthorized_slots(client: AsyncClient, session: AsyncSession, mocker):
-    mocker.patch.object(router_module.rcon, 'get_reserved_slots', 
+    mocker.patch.object(rcon_module.rcon_client, 'get_reserved_slots', 
                         return_value=schemas.ReservedSlots(reservedSlots=["UNAUTHORIZED_STEAM"]))
-    mock_remove = mocker.patch.object(router_module.rcon, 'sync_reserved_slots')
+    mock_remove = mocker.patch.object(rcon_module.rcon_client, 'sync_reserved_slots')
     
     response = await client.post("/api/v1/db/sync_memberships")
     assert response.status_code == 200
@@ -120,7 +123,7 @@ async def test_sync_returns_discord_mappings(client: AsyncClient, session: Async
 
 @pytest.mark.asyncio
 async def test_sync_permanent_memberships(client: AsyncClient, session: AsyncSession, mocker):
-    mock_add = mocker.patch.object(router_module.rcon, 'sync_reserved_slots')
+    mock_add = mocker.patch.object(rcon_module.rcon_client, 'sync_reserved_slots')
     
     now = datetime.now(timezone.utc)
     p = Player(steam_id="PERM_STEAM_ID", discord_id="456")
