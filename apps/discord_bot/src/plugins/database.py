@@ -724,7 +724,7 @@ class DbBackupDownload:
         "Formato del backup a descargar",
         choices=(
             ("SQL (Copia completa del sistema)", "sql"),
-            ("CSV (Archivo ZIP con todas las tablas)", "csv")
+            ("CSV (Membresías de vinculados + Fundador)", "csv")
         ),
         default="sql"
     )
@@ -740,7 +740,7 @@ class DbBackupDownload:
 
             size_mb = size_bytes / (1024 * 1024)
             size_str = f"{size_mb:.2f} MB" if size_mb >= 1 else f"{size_bytes / 1024:.1f} KB"
-            fmt_title = "SQL (Dump del sistema)" if self.formato == "sql" else "CSV (ZIP de tablas)"
+            fmt_title = "SQL (Dump del sistema)" if self.formato == "sql" else "CSV (Membresías vinculadas + Fundador)"
 
             embed = hikari.Embed(
                 title="💾 Backup de Base de Datos Listo",
@@ -775,7 +775,7 @@ class DbBackupCreate:
         try:
             res = await plugin.model.api.create_backup()
             sql_file = res.get("sql_file", "backup.sql")
-            csv_file = res.get("csv_zip_file", "backup_csv.zip")
+            csv_file = res.get("csv_file") or res.get("csv_zip_file", "backup.csv")
             await ctx.respond(
                 f"✅ **Backup creado exitosamente en disco:**\n"
                 f"• SQL: `{sql_file}`\n"

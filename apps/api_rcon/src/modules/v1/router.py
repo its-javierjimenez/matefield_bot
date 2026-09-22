@@ -1330,11 +1330,11 @@ class BackupLinkRequest(BaseModel):
 @router.post("/db/backups/create", dependencies=[Depends(verify_api_key_guard)])
 async def create_backup_endpoint(session: AsyncSession = Depends(get_session)):
     try:
-        sql_file, csv_zip_file = await create_database_backup(session)
+        sql_file, csv_file = await create_database_backup(session)
         return {
             "ok": True,
             "sql_file": sql_file.name,
-            "csv_zip_file": csv_zip_file.name,
+            "csv_file": csv_file.name,
             "message": "Database backup created successfully on disk"
         }
     except Exception as e:
@@ -1359,7 +1359,7 @@ async def get_backup_link_endpoint(
     target_filename = req.filename
 
     if not target_filename:
-        preferred_name = "latest.sql" if req_format == "sql" else "latest_csv.zip"
+        preferred_name = "latest.sql" if req_format == "sql" else "latest.csv"
         if (backup_dir / preferred_name).is_file():
             target_filename = preferred_name
         else:
@@ -1370,7 +1370,7 @@ async def get_backup_link_endpoint(
     # If no file exists yet, generate backup now
     if not target_filename or not (backup_dir / target_filename).is_file():
         await create_database_backup(session)
-        target_filename = "latest.sql" if req_format == "sql" else "latest_csv.zip"
+        target_filename = "latest.sql" if req_format == "sql" else "latest.csv"
 
     file_path = (backup_dir / target_filename).resolve()
     if not file_path.is_file() or not file_path.is_relative_to(backup_dir.resolve()):
@@ -1421,7 +1421,13 @@ async def download_backup_endpoint(
     if not target_file.is_file() or not target_file.is_relative_to(backup_dir):
         raise HTTPException(status_code=404, detail="Backup file not found")
 
-    media_type = "application/sql" if filename.endswith(".sql") else "application/zip"
+    if filename.endswith(".sql"):
+        media_type = "application/sql"
+    elif filename.endswith(".csv"):
+        media_type = "text/csv; charset=utf-8"
+    else:
+        media_type = "application/zip"
+
     return FileResponse(
         target_file,
         media_type=media_type,

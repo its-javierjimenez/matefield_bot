@@ -11,10 +11,11 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy import text, select as sa_select
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, select, col
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.config import ENVIRONMENT_SETTINGS
+from src.connections.databases.db import Player, Membership, Role, PlayerRole
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,6 @@ def get_backup_dir(base_dir: Optional[Path | str] = None) -> Path:
         path = Path(ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.BACKUP_DIR)
     
     if not path.is_absolute():
-        # Keep relative paths predictable relative to the current working directory
         path = path.resolve()
     
     path.mkdir(parents=True, exist_ok=True)
@@ -73,7 +73,6 @@ def _escape_sql_value(val: Any) -> str:
         return str(val)
     if isinstance(val, datetime):
         return f"'{val.isoformat()}'"
-    # String or other representation
     val_str = str(val).replace("'", "''")
     return f"'{val_str}'"
 
@@ -85,17 +84,18 @@ async def create_database_backup(
     """
     Dumps the database into two files in backup_dir:
     1. A system-compatible SQL dump file (backup_<timestamp>.sql).
-    2. An exterior-compatible CSV ZIP archive (backup_<timestamp>_csv.zip).
-    Also updates latest.sql and latest_csv.zip convenience copies.
+    2. An exterior-compatible CSV file (backup_<timestamp>.csv) containing
+       only memberships of linked players and their 'Es Fundador' status.
+    Also updates latest.sql and latest.csv convenience copies.
     """
     target_dir = get_backup_dir(backup_dir)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     sql_file = target_dir / f"backup_{timestamp}.sql"
-    csv_zip_file = target_dir / f"backup_{timestamp}_csv.zip"
+    csv_file = target_dir / f"backup_{timestamp}.csv"
 
     sorted_tables = SQLModel.metadata.sorted_tables
     
-    # 1. Generate SQL Backup
+    # 1. Generate Full SQL Backup (All tables)
     sql_lines: List[str] = [
         "-- --------------------------------------------------------",
         f"-- Matefield Database Backup",
@@ -118,19 +118,15 @@ async def create_database_backup(
                 sql_lines.append(f"INSERT INTO alembic_version (version_num) VALUES ({_escape_sql_value(v)});")
             sql_lines.append("")
     except Exception:
-        pass  # alembic_version may not exist in test environments
-
-    csv_data_map: Dict[str, str] = {}
+        pass
 
     for table in sorted_tables:
         table_name = table.name
         columns = [c.name for c in table.columns]
         
-        # Query rows for this table using SQLAlchemy select on table via connection
         query = sa_select(table)
         result = (await conn.execute(query)).fetchall()
         
-        # --- SQL Output for table ---
         sql_lines.append(f"-- Table: {table_name}")
         if result:
             cols_quoted = ", ".join([f'"{col}"' for col in columns])
@@ -141,43 +137,85 @@ async def create_database_backup(
                 sql_lines.append(f"INSERT INTO \"{table_name}\" ({cols_quoted}) VALUES ({vals_escaped});")
         sql_lines.append("")
 
-        # --- CSV Output for table ---
-        csv_buf = io.StringIO()
-        csv_writer = csv.writer(csv_buf)
-        csv_writer.writerow(columns)
-        for row in result:
-            row_map = row._mapping
-            values = [row_map.get(col) for col in columns]
-
-            formatted_vals = []
-            for v in values:
-                if v is None:
-                    formatted_vals.append("")
-                elif isinstance(v, datetime):
-                    formatted_vals.append(v.isoformat())
-                else:
-                    formatted_vals.append(str(v))
-            csv_writer.writerow(formatted_vals)
-        
-        csv_data_map[f"{table_name}.csv"] = csv_buf.getvalue()
-
     sql_lines.append("COMMIT;")
     sql_lines.append("")
-
-    # Write SQL dump
     sql_file.write_text("\n".join(sql_lines), encoding="utf-8")
 
-    # Write CSV ZIP
-    with zipfile.ZipFile(csv_zip_file, mode="w", compression=zipfile.ZIP_DEFLATED) as zipf:
-        for fname, content in csv_data_map.items():
-            zipf.writestr(fname, content)
+    # 2. Generate CSV Backup (Memberships of linked players + Fundador status)
+    role_rows = (await session.exec(select(Role))).all()
+    founder_role_ids = {
+        r.id for r in role_rows
+        if r.id == 1546690312762564648 or (r.name and "fundador" in r.name.lower())
+    }
+
+    founder_steam_ids = set()
+    if founder_role_ids:
+        pr_rows = (await session.exec(
+            select(PlayerRole.steam_id).where(col(PlayerRole.role_id).in_(founder_role_ids))
+        )).all()
+        founder_steam_ids = set(pr_rows)
+
+    # Query memberships with linked players
+    stmt_memberships = (
+        select(Membership, Player)
+        .join(Player, col(Membership.steam_id) == col(Player.steam_id))
+        .where(col(Player.discord_id).is_not(None))
+        .where(col(Player.discord_id) != "")
+        .order_by(col(Membership.is_active).desc(), col(Membership.id).desc())
+    )
+    membership_rows = (await session.exec(stmt_memberships)).all()
+
+    csv_headers = [
+        "ID MEMBRESIA",
+        "USUARIO",
+        "ID DISCORD",
+        "ID STEAM",
+        "TIPO VIP",
+        "ES FUNDADOR",
+        "ACTIVO",
+        "FECHA INICIO",
+        "FECHA FIN",
+        "ESTADO RCON",
+        "OBSERVACIONES"
+    ]
+
+    csv_buf = io.StringIO()
+    csv_writer = csv.writer(csv_buf, lineterminator="\n")
+    csv_writer.writerow(csv_headers)
+
+    for m, p in membership_rows:
+        s_id = str(p.steam_id)
+        t_vip = str(m.membership_type or "")
+        sp_id = m.special_role_id
+
+        is_founder = (
+            s_id in founder_steam_ids
+            or ("fundador" in t_vip.lower())
+            or (sp_id is not None and sp_id in founder_role_ids)
+        )
+
+        csv_writer.writerow([
+            m.id,
+            p.in_game_name or "",
+            p.discord_id or "",
+            s_id,
+            t_vip,
+            "SI" if is_founder else "NO",
+            "SI" if m.is_active else "NO",
+            m.start_time.strftime("%Y-%m-%d %H:%M:%S") if m.start_time else "",
+            m.end_time.strftime("%Y-%m-%d %H:%M:%S") if m.end_time else "PERMANENTE",
+            m.rcon_sync_status or "",
+            p.observations or ""
+        ])
+
+    csv_file.write_text(csv_buf.getvalue(), encoding="utf-8-sig")
 
     # Convenience copies
     latest_sql = target_dir / "latest.sql"
-    latest_csv = target_dir / "latest_csv.zip"
+    latest_csv = target_dir / "latest.csv"
     try:
         shutil.copyfile(sql_file, latest_sql)
-        shutil.copyfile(csv_zip_file, latest_csv)
+        shutil.copyfile(csv_file, latest_csv)
     except Exception as e:
         logger.warning(f"Could not update latest backup copies: {e}")
 
@@ -188,8 +226,8 @@ async def create_database_backup(
         keep_min=10
     )
 
-    logger.info(f"[Backup] Successfully generated backups: {sql_file.name}, {csv_zip_file.name}")
-    return sql_file, csv_zip_file
+    logger.info(f"[Backup] Successfully generated backups: {sql_file.name}, {csv_file.name}")
+    return sql_file, csv_file
 
 
 def get_available_backups(backup_dir: Optional[Path | str] = None) -> List[Dict[str, Any]]:
@@ -200,9 +238,10 @@ def get_available_backups(backup_dir: Optional[Path | str] = None) -> List[Dict[
     for item in target_dir.iterdir():
         if not item.is_file():
             continue
-        # Only return timestamped or latest backups
         if item.name.endswith(".sql"):
             fmt = "sql"
+        elif item.name.endswith(".csv"):
+            fmt = "csv"
         elif item.name.endswith(".zip"):
             fmt = "csv"
         else:
@@ -215,10 +254,9 @@ def get_available_backups(backup_dir: Optional[Path | str] = None) -> List[Dict[
             "format": fmt,
             "size_bytes": stat.st_size,
             "created_at": created_at,
-            "is_latest": item.name in ("latest.sql", "latest_csv.zip")
+            "is_latest": item.name in ("latest.sql", "latest.csv", "latest_csv.zip")
         })
 
-    # Sort descending by creation date (non-latest first, or newest st_mtime)
     backups.sort(key=lambda x: x["created_at"], reverse=True)
     return backups
 
@@ -233,9 +271,8 @@ def cleanup_old_backups(
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=max_days)
 
-    for pattern in ("backup_*.sql", "backup_*_csv.zip"):
+    for pattern in ("backup_*.sql", "backup_*.csv", "backup_*_csv.zip"):
         files = sorted(backup_dir.glob(pattern), key=lambda p: p.stat().st_mtime)
-        # If we have more than keep_min, consider deleting those past cutoff
         while len(files) > keep_min:
             oldest = files[0]
             mtime = datetime.fromtimestamp(oldest.stat().st_mtime, tz=timezone.utc)

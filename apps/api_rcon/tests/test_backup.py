@@ -1,7 +1,7 @@
 import pytest
 import pytest_asyncio
-import zipfile
 import time
+import csv
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from httpx import AsyncClient, ASGITransport
@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from src.main import app
-from src.connections.databases.db import get_session, Player, Membership, BotConfig
+from src.connections.databases.db import get_session, Player, Membership, Role, PlayerRole, BotConfig
 from src.security.guard import verify_api_key_guard
 from src.config import ENVIRONMENT_SETTINGS
 from src.modules.v1.services.backup_service import (
@@ -58,17 +58,36 @@ async def client_fixture(session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_backup_service_generation(session: AsyncSession, tmp_path: Path):
-    # Seed data
-    p = Player(steam_id="76561198000000001", in_game_name="Commander")
-    m = Membership(steam_id="76561198000000001", membership_type="VIP_PERMANENTE")
+    # Setup Roles (Fundador role)
+    role_fundador = Role(id=1546690312762564648, name="Fundador")
+    session.add(role_fundador)
+
+    # 1. Linked Player with Fundador role
+    p1 = Player(steam_id="76561198000000001", discord_id="discord_111", in_game_name="CapitanFundador")
+    m1 = Membership(steam_id="76561198000000001", membership_type="VIP_COMUN", is_active=True)
+    pr1 = PlayerRole(steam_id="76561198000000001", role_id=1546690312762564648)
+    session.add(p1)
+    session.add(m1)
+    session.add(pr1)
+
+    # 2. Linked Player without Fundador role
+    p2 = Player(steam_id="76561198000000002", discord_id="discord_222", in_game_name="SoldadoComun")
+    m2 = Membership(steam_id="76561198000000002", membership_type="VIP_EXPRESS", is_active=True)
+    session.add(p2)
+    session.add(m2)
+
+    # 3. Unlinked Player (discord_id=None)
+    p3 = Player(steam_id="76561198000000003", discord_id=None, in_game_name="FantasmaSinVincular")
+    m3 = Membership(steam_id="76561198000000003", membership_type="VIP_PERMANENTE", is_active=True)
+    session.add(p3)
+    session.add(m3)
+
     cfg = BotConfig(config_key="BACKUP_TEST_KEY", config_value="tested_value")
-    session.add(p)
-    session.add(m)
     session.add(cfg)
     await session.commit()
 
     # Generate backup into temp directory
-    sql_file, csv_zip_file = await create_database_backup(session=session, backup_dir=tmp_path)
+    sql_file, csv_file = await create_database_backup(session=session, backup_dir=tmp_path)
 
     # 1. Validate SQL file
     assert sql_file.is_file()
@@ -77,32 +96,51 @@ async def test_backup_service_generation(session: AsyncSession, tmp_path: Path):
     assert "COMMIT;" in sql_content
     assert 'INSERT INTO "players"' in sql_content
     assert "76561198000000001" in sql_content
-    assert "Commander" in sql_content
+    assert "76561198000000002" in sql_content
+    assert "76561198000000003" in sql_content
 
-    # 2. Validate CSV ZIP
-    assert csv_zip_file.is_file()
-    with zipfile.ZipFile(csv_zip_file, "r") as z:
-        names = z.namelist()
-        assert "players.csv" in names
-        assert "memberships.csv" in names
-        assert "bot_config.csv" in names
-        
-        players_csv = z.read("players.csv").decode("utf-8")
-        assert "steam_id" in players_csv
-        assert "76561198000000001" in players_csv
+    # 2. Validate CSV file (Only linked players + Fundador status)
+    assert csv_file.is_file()
+    assert csv_file.suffix == ".csv"
+    csv_content = csv_file.read_text(encoding="utf-8-sig")
+    lines = list(csv.reader(csv_content.strip().splitlines()))
+    headers = lines[0]
+    assert headers == [
+        "ID MEMBRESIA", "USUARIO", "ID DISCORD", "ID STEAM", "TIPO VIP",
+        "ES FUNDADOR", "ACTIVO", "FECHA INICIO", "FECHA FIN", "ESTADO RCON", "OBSERVACIONES"
+    ]
+
+    rows = lines[1:]
+    # Should only have 2 memberships (p1 and p2), p3 (unlinked) must be excluded
+    assert len(rows) == 2
+
+    row_p1 = next(r for r in rows if r[3] == "76561198000000001")
+    assert row_p1[1] == "CapitanFundador"
+    assert row_p1[2] == "discord_111"
+    assert row_p1[4] == "VIP_COMUN"
+    assert row_p1[5] == "SI"  # ES FUNDADOR
+
+    row_p2 = next(r for r in rows if r[3] == "76561198000000002")
+    assert row_p2[1] == "SoldadoComun"
+    assert row_p2[2] == "discord_222"
+    assert row_p2[4] == "VIP_EXPRESS"
+    assert row_p2[5] == "NO"  # NOT FUNDADOR
+
+    # Ensure unlinked player 3 is NOT in CSV
+    assert not any(r[3] == "76561198000000003" for r in rows)
 
     # 3. Validate latest copies
     assert (tmp_path / "latest.sql").is_file()
-    assert (tmp_path / "latest_csv.zip").is_file()
+    assert (tmp_path / "latest.csv").is_file()
 
 
 def test_download_token_verification():
-    filename = "backup_20260922_000000.sql"
+    filename = "backup_20260922_000000.csv"
     token = generate_download_token(filename, expires_in_seconds=60)
     assert verify_download_token(filename, token) is True
 
     # Token for different file fails
-    assert verify_download_token("other_file.sql", token) is False
+    assert verify_download_token("other_file.csv", token) is False
 
     # Tampered token fails
     assert verify_download_token(filename, token + "tampered") is False
@@ -118,7 +156,10 @@ async def test_backup_api_endpoints(client: AsyncClient, session: AsyncSession, 
     monkeypatch.setattr(ENVIRONMENT_SETTINGS.SECURITY_SETTINGS, "API_KEY", "test-secret-key")
 
     # Seed data
-    session.add(Player(steam_id="76561198000000002", in_game_name="Soldier"))
+    p = Player(steam_id="76561198000000002", discord_id="discord_222", in_game_name="Soldier")
+    m = Membership(steam_id="76561198000000002", membership_type="VIP_EXPRESS")
+    session.add(p)
+    session.add(m)
     await session.commit()
 
     # 1. Create backup via POST /api/v1/db/backups/create
@@ -127,7 +168,8 @@ async def test_backup_api_endpoints(client: AsyncClient, session: AsyncSession, 
     data_create = res_create.json()
     assert data_create["ok"] is True
     assert "sql_file" in data_create
-    assert "csv_zip_file" in data_create
+    assert "csv_file" in data_create
+    assert data_create["csv_file"].endswith(".csv")
 
     # 2. List backups via GET /api/v1/db/backups
     res_list = await client.get("/api/v1/db/backups")
@@ -144,8 +186,7 @@ async def test_backup_api_endpoints(client: AsyncClient, session: AsyncSession, 
     download_url = link_data_sql["download_url"]
     assert "token=" in download_url
 
-    # 4. Download file via link
-    # Extract relative path from download_url
+    # 4. Download SQL file via link
     path_and_query = download_url.split("/api/v1")[-1]
     res_download = await client.get(f"/api/v1{path_and_query}")
     assert res_download.status_code == 200
@@ -157,10 +198,12 @@ async def test_backup_api_endpoints(client: AsyncClient, session: AsyncSession, 
     assert res_link_csv.status_code == 200
     csv_link_data = res_link_csv.json()
     assert csv_link_data["format"] == "csv"
+    assert csv_link_data["filename"].endswith(".csv")
     csv_path_and_query = csv_link_data["download_url"].split("/api/v1")[-1]
     res_csv_download = await client.get(f"/api/v1{csv_path_and_query}")
     assert res_csv_download.status_code == 200
-    assert len(res_csv_download.content) > 0
+    assert "text/csv" in res_csv_download.headers.get("content-type", "")
+    assert "ID MEMBRESIA" in res_csv_download.text
 
     # 6. Unauthorized download attempt
     res_unauth = await client.get(f"/api/v1/db/backups/download/{link_data_sql['filename']}")
