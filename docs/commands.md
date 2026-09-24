@@ -15,14 +15,15 @@ Gestión completa del ciclo de vida de membresías VIP, cupos y sincronizaciones
   - **Descripción**: Añade una membresía VIP a un jugador vinculado.
   - **Parámetros**:
     - `usuario` (Usuario de Discord)
-    - `tipo` (Tipo de membresía: `VIP_COMUN`, `VIP_EXPRESS`, `VIP_PERMANENTE`, etc.)
-    - `dias` (Duración en días. Dejar en 0 o vacío para permanente)
-    - `observacion` *(opcional)*: Nota de auditoría o motivo de compra.
+    - `tipo` (Tipo de membresía: `VIP_COMUN`, `VIP_EXPRESS`, etc.)
+    - `dias` *(opcional)*: Duración en días (0 = permanente, vacío = predeterminado de configuración).
+    - `rol_especial` *(opcional)*: Rol especial adicional a asignar y guardar en base de datos.
+    - `booster` *(opcional)*: Booleano (`True`/`False`). Si se omite, el bot detecta automáticamente si el usuario es Server Booster de Discord (`member.premium_since`).
 - `/membership list` `[Staff / Admin]`
-  - **Descripción**: Muestra la lista paginada e interactiva de todas las membresías activas e históricas en el sistema.
+  - **Descripción**: Muestra la lista paginada e interactiva de todas las membresías activas e históricas, incluyendo tags de estado (`🟢 Activa` / `🔴 Inactiva`), roles especiales asignados y si es `⚡ Booster`.
 - `/membership edit` `[Staff / Admin]`
-  - **Descripción**: Edita los detalles de una membresía existente (tipo, fecha de expiración, estado activo/inactivo).
-  - **Parámetros**: `id_membresia`, `nuevo_tipo` *(opcional)*, `dias_adicionales` *(opcional)*, `activo` *(opcional)*.
+  - **Descripción**: Edita los detalles de una membresía existente (duración, tipo, estado activo/inactivo o condición de booster).
+  - **Parámetros**: `id_membresia`, `dias` *(opcional)*, `tipo` *(opcional)*, `activa` *(opcional)*, `booster` *(opcional)*.
 - `/membership remove` `[Staff / Admin]`
   - **Descripción**: Elimina una membresía permanentemente de la base de datos por su ID.
   - **Parámetros**: `id_membresia`.
@@ -34,6 +35,9 @@ Gestión completa del ciclo de vida de membresías VIP, cupos y sincronizaciones
 - `/membership extend` `[Staff / Admin]`
   - **Descripción**: Extiende una membresía individual específica por ID.
   - **Parámetros**: `id_membresia`, `dias`.
+- `/membership export` `[Staff / Admin]`
+  - **Descripción**: Genera bajo demanda un archivo CSV descargable con todas las membresías existentes y cuentas vinculadas (Discord ID, Steam ID, nickname, roles vinculados, tipo VIP, booster, fundador, vigencia y observaciones).
+  - **Entrega**: Envía un Embed interactivo con botón de descarga directa servido desde la API (enlace firmado con token temporal válido por 30 minutos) para no sobrecargar Discord con archivos pesados.
 
 ---
 
@@ -187,3 +191,26 @@ Protege cuentas para que el sincronizador de Discord nunca les remueva roles.
   - **Parámetros**: `canal`.
 - `/config list` `[Staff / Admin]`
   - **Descripción**: Muestra un resumen general de todas las variables y canales configurados en la base de datos.
+
+---
+
+## 📡 Servidores RCON (`/rcon`)
+Gestión dinámica y conexión simultánea a múltiples servidores RCON en base de datos.
+
+- `/rcon list` `[Staff / Admin]`
+  - **Descripción**: Muestra todos los servidores RCON registrados, con su estado (`🟢 Activo` / `🔴 Inactivo`), dirección HTTP/HTTPS, ID y si es el servidor predeterminado (`⭐`). Si la base de datos no tiene servidores registrados, muestra el fallback de `.env`.
+- `/rcon add` `[Staff / Admin]`
+  - **Descripción**: Registra un nuevo servidor RCON en la base de datos. Si no se especifica nombre, se conecta al servidor y autocompleta el nombre obtenido desde su status.
+  - **Parámetros**: `ip`, `puerto`, `password`, `nombre` *(opcional)*, `esquema` *(http/https, default: http)*, `activo` *(default: True)*, `default` *(default: False)*.
+- `/rcon test` `[Staff / Admin]`
+  - **Descripción**: Ejecuta un diagnóstico en tiempo real contra un servidor RCON específico por ID: verifica conectividad, latencia en ms, mapa actual y jugadores conectados.
+  - **Parámetros**: `server_id`.
+- `/rcon edit` `[Staff / Admin]`
+  - **Descripción**: Actualiza los parámetros de un servidor RCON (nombre, IP, puerto, contraseña, esquema, estado activo o predeterminado).
+  - **Parámetros**: `server_id`, `nombre` *(opcional)*, `ip` *(opcional)*, `puerto` *(opcional)*, `password` *(opcional)*, `esquema` *(opcional)*, `activo` *(opcional)*, `default` *(opcional)*.
+- `/rcon remove` `[Staff / Admin]`
+  - **Descripción**: Elimina permanentemente un servidor RCON de la base de datos.
+  - **Parámetros**: `server_id`.
+- `/rcon sync_all` `[Staff / Admin]`
+  - **Descripción**: Fuerza la sincronización inmediata de slots VIP y listas de baneos en todos los servidores RCON activos de forma distribuida y tolerante a fallos.
+

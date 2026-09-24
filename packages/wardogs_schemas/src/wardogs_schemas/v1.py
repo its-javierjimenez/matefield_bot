@@ -212,3 +212,30 @@ class DbBan(BaseModel):
 
 class DbBansResponse(BaseModel):
     bans: list[DbBan]
+
+from wardogs_schemas.dtos import (
+    ConfigUpdateRequest,
+    LinkAccountRequest,
+    UnlinkAccountRequest,
+    EditPlayerRequest,
+    AddMembershipRequest,
+    EditMembershipRequest,
+    CompensateRequest,
+    SetBotConfigRequest,
+    QuotaUpdateRequest,
+    RoleRegisterRequest,
+    PlayerBanRequest,
+    UnbanRequest,
+    CreateRconServerRequest,
+    UpdateRconServerRequest,
+    CreateMembershipTypeRequest,
+    UpdateMembershipTypeRequest,
+    MembershipTypeItem,
+    MembershipTypeActionResponse,
+    RconServerItem,
+    RconServerActionResponse,
+    RconServerTestResponse,
+    RconServerSyncResultItem,
+    RconServersSyncAllResponse,
+    ExportMembershipsResponse,
+)

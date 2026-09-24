@@ -10,6 +10,9 @@ from src.modules.v1.routers import (
     matches_router,
     bans_router,
     config_router,
+    rcon_servers_router,
+    membership_types_router,
+    webhooks_router,
 )
 
 router = APIRouter(prefix="/v1", tags=["v1"])
@@ -22,6 +25,9 @@ router.include_router(roles_router)
 router.include_router(matches_router)
 router.include_router(bans_router)
 router.include_router(config_router)
+router.include_router(rcon_servers_router)
+router.include_router(membership_types_router)
+router.include_router(webhooks_router)
 
 # Compatibility exports for background maintenance tasks and external callers
 async def sync_memberships(session: AsyncSession = Depends(get_session)):

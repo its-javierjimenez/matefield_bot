@@ -1,10 +1,33 @@
 import aiohttp
 import time
 import asyncio
-from typing import Any
-
+from typing import Any, Optional, Dict, Tuple
 from wardogs_schemas import v1 as schemas
 from src.config import ENVIRONMENT_SETTINGS
+
+
+def _update_ini_array(text: str, section: str, key_prefix: str, items: list[str]) -> str:
+    """Updates an Unreal Engine INI array under the specified section cleanly without duplicating headers or corrupting formatting."""
+    lines = text.split('\n')
+    new_lines = [line for line in lines if key_prefix not in line]
+
+    insert_idx = -1
+    for i, line in enumerate(new_lines):
+        if line.strip() == section:
+            insert_idx = i
+            break
+
+    if insert_idx == -1:
+        new_lines.extend(['', section])
+        insert_idx = len(new_lines) - 1
+
+    slot_lines = [f'!{key_prefix}=ClearArray']
+    for item in items:
+        slot_lines.append(f'.{key_prefix}={item}')
+
+    result_lines = new_lines[:insert_idx + 1] + slot_lines + new_lines[insert_idx + 1:]
+    return '\n'.join(result_lines)
+
 
 class RCONClient:
     def __init__(self, base_url: str, password: str):
@@ -17,6 +40,18 @@ class RCONClient:
         self._cache = {}
         self._cache_lock = asyncio.Lock()
         self._cache_ttl = 3.0
+        self._session: Optional[aiohttp.ClientSession] = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            connector = aiohttp.TCPConnector(ssl=False)
+            self._session = aiohttp.ClientSession(headers=self.headers, connector=connector)
+        return self._session
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     async def _get_cached(self, key: str, fetcher_coro) -> Any:
         async with self._cache_lock:
@@ -33,14 +68,12 @@ class RCONClient:
 
     async def _request(self, method: str, endpoint: str, **kwargs) -> Any:
         url = f"{self.base_url}{endpoint}"
-        
-        connector = aiohttp.TCPConnector(ssl=False)
-        async with aiohttp.ClientSession(headers=self.headers, connector=connector) as session:
-            async with session.request(method, url, **kwargs) as response:
-                response.raise_for_status()
-                if "application/json" in response.headers.get("Content-Type", ""):
-                    return await response.json()
-                return await response.text()
+        session = await self._get_session()
+        async with session.request(method, url, **kwargs) as response:
+            response.raise_for_status()
+            if "application/json" in response.headers.get("Content-Type", ""):
+                return await response.json()
+            return await response.text()
 
     async def get_status(self) -> schemas.Status:
         async def fetch():
@@ -54,7 +87,6 @@ class RCONClient:
             return schemas.Players1.model_validate(data)
         return await self._get_cached("players", fetch)
 
-
     async def get_audit_logs(self, limit: int = 50) -> schemas.Audit:
         data = await self._request("GET", f"/v1/audit?limit={limit}")
         return schemas.Audit.model_validate(data)
@@ -67,36 +99,8 @@ class RCONClient:
         config = await self.get_config()
         text = config.text or ""
         revision = config.revision or ""
-        lines = text.split('\n')
-        
-        new_lines = []
-        for line in lines:
-            if 'DefaultReservedPlayerIds' not in line:
-                new_lines.append(line)
-                
-        insert_idx = -1
-        for i, line in enumerate(new_lines):
-            if line.strip() == '[/Script/WDGame.WDGameSession]':
-                insert_idx = i
-                break
-                
-        if insert_idx == -1:
-            new_lines.append('')
-            new_lines.append('[/Script/WDGame.WDGameSession]')
-            insert_idx = len(new_lines) - 1
-            
-        if insert_idx == -1:
-            new_lines.append('')
-            new_lines.append('[/Script/WDGame.WDGameSession]')
-            insert_idx = len(new_lines) - 1
-            
-        if insert_idx != -1:
-            slot_lines = ['!DefaultReservedPlayerIds=ClearArray']
-            for sid in steam_ids:
-                slot_lines.append(f'.DefaultReservedPlayerIds={sid}')
-            new_lines = new_lines[:insert_idx+1] + slot_lines + new_lines[insert_idx+1:]
-            new_text = '\n'.join(new_lines)
-            await self.update_config(revision, new_text)
+        new_text = _update_ini_array(text, '[/Script/WDGame.WDGameSession]', 'DefaultReservedPlayerIds', steam_ids)
+        await self.update_config(revision, new_text)
 
     async def get_bans(self) -> list[str]:
         config = await self.get_config()
@@ -119,36 +123,8 @@ class RCONClient:
         config = await self.get_config()
         text = config.text or ""
         revision = config.revision or ""
-        lines = text.split('\n')
-        
-        new_lines = []
-        for line in lines:
-            if 'DefaultBannedPlayerIds' not in line:
-                new_lines.append(line)
-                
-        insert_idx = -1
-        for i, line in enumerate(new_lines):
-            if line.strip() == '[/Script/WDGame.WDGameSession]':
-                insert_idx = i
-                break
-                
-        if insert_idx == -1:
-            new_lines.append('')
-            new_lines.append('[/Script/WDGame.WDGameSession]')
-            insert_idx = len(new_lines) - 1
-            
-        if insert_idx == -1:
-            new_lines.append('')
-            new_lines.append('[/Script/WDGame.WDGameSession]')
-            insert_idx = len(new_lines) - 1
-            
-        if insert_idx != -1:
-            slot_lines = ['!DefaultBannedPlayerIds=ClearArray']
-            for sid in steam_ids:
-                slot_lines.append(f'.DefaultBannedPlayerIds={sid}')
-            new_lines = new_lines[:insert_idx+1] + slot_lines + new_lines[insert_idx+1:]
-            new_text = '\n'.join(new_lines)
-            await self.update_config(revision, new_text)
+        new_text = _update_ini_array(text, '[/Script/WDGame.WDGameSession]', 'DefaultBannedPlayerIds', steam_ids)
+        await self.update_config(revision, new_text)
 
     async def broadcast(self, message: str) -> None:
         await self._request("POST", "/v1/broadcast", json={"message": message})
@@ -157,21 +133,22 @@ class RCONClient:
         await self._request("POST", f"/v1/players/{steam_id}/message", json={"message": message})
 
     async def get_config(self) -> schemas.Config1:
-        async with aiohttp.ClientSession(headers=self.headers) as session:
-            async with session.get(f"{self.base_url}/v1/config") as response:
-                response.raise_for_status()
-                data = await response.json()
-                return schemas.Config1.model_validate(data)
+        data = await self._request("GET", "/v1/config")
+        if isinstance(data, str):
+            import json
+            data = json.loads(data)
+        return schemas.Config1.model_validate(data)
+
     async def update_config(self, revision: str, new_text: str) -> schemas.ConfigResult:
-        headers = self.headers.copy()
-        headers["If-Match"] = f'"{revision}"'
-        headers["Content-Type"] = "text/plain"
-        
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.put(f"{self.base_url}/v1/config?force=true&fullApply=true", data=new_text) as response:
-                response.raise_for_status()
-                data = await response.json()
-                return schemas.ConfigResult.model_validate(data)
+        headers = {
+            "If-Match": f'"{revision}"',
+            "Content-Type": "text/plain"
+        }
+        data = await self._request("PUT", "/v1/config?force=true&fullApply=true", headers=headers, data=new_text)
+        if isinstance(data, str):
+            import json
+            data = json.loads(data)
+        return schemas.ConfigResult.model_validate(data)
         
     async def kick_player(self, steam_id: str, reason: str) -> None:
         payload = {"reason": reason}
@@ -185,9 +162,115 @@ class RCONClient:
         payload = {"faction": faction}
         await self._request("POST", f"/v1/players/{steam_id}/faction", json=payload)
 
-# Instance to be imported by the router
+# Instance to be imported by legacy callers
 rcon_client = RCONClient(
     base_url=ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_URL,
     password=ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_PASSWORD
 )
+
+
+class RCONManager:
+    """Manages connection pooling and routing for multiple RCON servers."""
+    _clients: dict[tuple[str, str], RCONClient] = {}
+
+    @classmethod
+    def _ensure_default_registered(cls) -> None:
+        default_key = (
+            ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_URL.rstrip("/"),
+            ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_PASSWORD
+        )
+        if default_key not in cls._clients:
+            cls._clients[default_key] = rcon_client
+
+    @classmethod
+    def get_client(cls, base_url: str, password: str) -> RCONClient:
+        cls._ensure_default_registered()
+        key = (base_url.rstrip("/"), password)
+        if key not in cls._clients:
+            cls._clients[key] = RCONClient(base_url=base_url, password=password)
+        return cls._clients[key]
+
+    @classmethod
+    def register_client(cls, base_url: str, password: str, client: RCONClient) -> None:
+        """Explicitly register or mock a client instance for testing or custom routing."""
+        key = (base_url.rstrip("/"), password)
+        cls._clients[key] = client
+
+    @classmethod
+    def reset_pool(cls) -> None:
+        """Resets the connection pool (useful between test runs)."""
+        cls._clients.clear()
+        cls._ensure_default_registered()
+
+    @classmethod
+    async def close_all(cls) -> None:
+        """Closes all client sessions in the pool."""
+        for client in list(cls._clients.values()):
+            await client.close()
+        cls._clients.clear()
+
+    @classmethod
+    def get_client_for_server(cls, server: Any) -> RCONClient:
+        return cls.get_client(server.base_url, server.password)
+        return cls.get_client(server.base_url, server.password)
+
+    @classmethod
+    async def get_all_active_servers(cls, session: Any) -> list[tuple[Any, RCONClient]]:
+        from sqlmodel import select, col
+        from src.connections.databases.db import RconServer
+        stmt = select(RconServer).where(RconServer.is_active == True).order_by(col(RconServer.is_default).desc(), col(RconServer.id))
+        servers = (await session.exec(stmt)).all()
+        if not servers:
+            # Fallback to .env configuration if DB has no registered servers
+            clean_url = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_URL.rstrip("/")
+            scheme = "https" if clean_url.startswith("https://") else "http"
+            host_port = clean_url.replace("https://", "").replace("http://", "")
+            parts = host_port.split(":")
+            ip = parts[0]
+            port = int(parts[1]) if len(parts) > 1 else (443 if scheme == "https" else 80)
+            fallback = RconServer(
+                id=0,
+                name="Default (.env)",
+                ip=ip,
+                port=port,
+                password=ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_PASSWORD,
+                scheme=scheme,
+                is_active=True,
+                is_default=True
+            )
+            return [(fallback, cls.get_client(fallback.base_url, fallback.password))]
+        return [(s, cls.get_client_for_server(s)) for s in servers]
+
+    @classmethod
+    async def get_default_server(cls, session: Any) -> tuple[Any, RCONClient]:
+        from sqlmodel import select, col
+        from src.connections.databases.db import RconServer
+        stmt = select(RconServer).where(RconServer.is_active == True, RconServer.is_default == True)
+        default_server = (await session.exec(stmt)).first()
+        if not default_server:
+            stmt_any = select(RconServer).where(RconServer.is_active == True).order_by(col(RconServer.id))
+            default_server = (await session.exec(stmt_any)).first()
+
+        if default_server:
+            return default_server, cls.get_client_for_server(default_server)
+
+        # Fallback to .env configuration
+        clean_url = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_URL.rstrip("/")
+        scheme = "https" if clean_url.startswith("https://") else "http"
+        host_port = clean_url.replace("https://", "").replace("http://", "")
+        parts = host_port.split(":")
+        ip = parts[0]
+        port = int(parts[1]) if len(parts) > 1 else (443 if scheme == "https" else 80)
+        fallback = RconServer(
+            id=0,
+            name="Default (.env)",
+            ip=ip,
+            port=port,
+            password=ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_PASSWORD,
+            scheme=scheme,
+            is_active=True,
+            is_default=True
+        )
+        return fallback, cls.get_client(fallback.base_url, fallback.password)
+
 

@@ -1,6 +1,6 @@
 import aiohttp
 import os
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 
 from wardogs_schemas import v1 as schemas
 
@@ -11,18 +11,28 @@ class APIClient:
             "X-API-Key": api_key,
             "Content-Type": "application/json"
         }
+        self._session: Optional[aiohttp.ClientSession] = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(headers=self.headers)
+        return self._session
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
 
     async def _request(self, method: str, endpoint: str, **kwargs) -> Any:
         url = f"{self.base_url}{endpoint}"
-        async with aiohttp.ClientSession(headers=self.headers) as session:
-            async with session.request(method, url, **kwargs) as response:
-                if response.status >= 400:
-                    text = await response.text()
-                    raise Exception(f"HTTP {response.status}: {text}")
-                response.raise_for_status()
-                if "application/json" in response.headers.get("Content-Type", ""):
-                    return await response.json()
-                return await response.text()
+        session = await self._get_session()
+        async with session.request(method, url, **kwargs) as response:
+            if response.status >= 400:
+                text = await response.text()
+                raise Exception(f"HTTP {response.status}: {text}")
+            response.raise_for_status()
+            if "application/json" in response.headers.get("Content-Type", ""):
+                return await response.json()
+            return await response.text()
 
     # RCON wrapped endpoints
     async def get_status(self) -> schemas.Status:
@@ -70,10 +80,12 @@ class APIClient:
 
     # Database endpoints
     async def link_account(self, discord_id: str, steam_id: str) -> None:
-        await self._request("POST", "/api/v1/db/players/link", json={"discord_id": discord_id, "steam_id": steam_id})
+        req = schemas.LinkAccountRequest(discord_id=discord_id, steam_id=steam_id)
+        await self._request("POST", "/api/v1/db/players/link", json=req.model_dump())
 
     async def unlink_account(self, discord_id: str) -> None:
-        await self._request("POST", "/api/v1/db/players/unlink", json={"discord_id": discord_id})
+        req = schemas.UnlinkAccountRequest(discord_id=discord_id)
+        await self._request("POST", "/api/v1/db/players/unlink", json=req.model_dump())
 
     async def get_player_by_discord(self, discord_id: str) -> Optional[Dict[str, Any]]:
         try:
@@ -94,37 +106,51 @@ class APIClient:
     async def set_welcome_message(self, steam_id: str, message: str) -> None:
         await self._request("POST", f"/api/v1/db/players/steam/{steam_id}/welcome-message", json={"message": message})
 
-    async def add_membership(self, steam_id: str, membership_type: str, days: Optional[int] = None, special_role: Optional[str] = None) -> None:
-        payload = {"steam_id": steam_id, "membership_type": membership_type}
-        if days is not None:
-            payload["days"] = days
-        if special_role:
-            payload["special_role"] = special_role
-        await self._request("POST", "/api/v1/db/players/membership", json=payload)
+    async def add_membership(self, steam_id: str, membership_type: str, days: Optional[int] = None, special_role: Optional[str] = None, is_booster: bool = False, server_id: Optional[int] = None) -> None:
+        req = schemas.AddMembershipRequest(
+            steam_id=steam_id,
+            membership_type=membership_type,
+            days=days,
+            special_role=special_role,
+            is_booster=is_booster,
+            server_id=server_id
+        )
+        await self._request("POST", "/api/v1/db/players/membership", json=req.model_dump(exclude_none=False))
 
-    async def edit_membership(self, membership_id: int, days: Optional[int] = None, add_days: Optional[int] = None, membership_type: Optional[str] = None, is_active: Optional[bool] = None) -> None:
-        payload = {}
-        if days is not None: payload["days"] = days
-        if add_days is not None: payload["add_days"] = add_days
-        if membership_type is not None: payload["membership_type"] = membership_type
-        if is_active is not None: payload["is_active"] = is_active
-        await self._request("PUT", f"/api/v1/db/memberships/{membership_id}", json=payload)
+    async def edit_membership(self, membership_id: int, days: Optional[int] = None, add_days: Optional[int] = None, membership_type: Optional[str] = None, is_active: Optional[bool] = None, is_booster: Optional[bool] = None, server_id: Optional[int] = None) -> None:
+        kwargs: Dict[str, Any] = {
+            "days": days,
+            "add_days": add_days,
+            "membership_type": membership_type,
+            "is_active": is_active,
+            "is_booster": is_booster,
+        }
+        if server_id is not None:
+            kwargs["server_id"] = server_id
+        req = schemas.EditMembershipRequest(**kwargs)
+        await self._request("PUT", f"/api/v1/db/memberships/{membership_id}", json=req.model_dump(exclude_unset=True))
 
     async def compensate_memberships(self, days: int) -> Dict[str, Any]:
-        return await self._request("POST", "/api/v1/db/memberships/compensate", json={"days": days})
+        req = schemas.CompensateRequest(days=days)
+        return await self._request("POST", "/api/v1/db/memberships/compensate", json=req.model_dump())
 
     async def delete_membership(self, membership_id: int) -> None:
         await self._request("DELETE", f"/api/v1/db/memberships/{membership_id}")
+
+    async def export_memberships(self) -> Dict[str, Any]:
+        data = await self._request("POST", "/api/v1/db/memberships/export")
+        return schemas.ExportMembershipsResponse.model_validate(data).model_dump()
 
     async def remove_special_role(self, steam_id: str, role_id: str) -> None:
         await self._request("DELETE", f"/api/v1/db/players/{steam_id}/roles/{role_id}")
 
     async def edit_player(self, steam_id: str, discord_id: Optional[str] = None, custom_welcome_message: Optional[str] = None, observations: Optional[str] = None) -> None:
-        payload = {}
-        if discord_id is not None: payload["discord_id"] = discord_id
-        if custom_welcome_message is not None: payload["custom_welcome_message"] = custom_welcome_message
-        if observations is not None: payload["observations"] = observations
-        await self._request("PUT", f"/api/v1/db/players/{steam_id}", json=payload)
+        req = schemas.EditPlayerRequest(
+            discord_id=discord_id,
+            custom_welcome_message=custom_welcome_message,
+            observations=observations
+        )
+        await self._request("PUT", f"/api/v1/db/players/{steam_id}", json=req.model_dump(exclude_unset=True))
 
     async def export_table_csv(self, table_name: str) -> str:
         # Returns raw CSV text
@@ -150,13 +176,15 @@ class APIClient:
         return res.get("configs", {})
 
     async def set_bot_config(self, key: str, value: str) -> None:
-        await self._request("PUT", "/api/v1/bot/config", json={"key": key, "value": value})
+        payload = schemas.SetBotConfigRequest(key=key, value=value).model_dump()
+        await self._request("PUT", "/api/v1/bot/config", json=payload)
         
     async def get_quotas(self) -> Dict[str, Any]:
         return await self._request("GET", "/api/v1/db/quotas")
         
     async def update_quota(self, membership_type: str, max_quota: Optional[int]) -> Dict[str, Any]:
-        return await self._request("PUT", f"/api/v1/db/quotas/{membership_type}", json={"max_quota": max_quota})
+        payload = schemas.QuotaUpdateRequest(max_quota=max_quota).model_dump()
+        return await self._request("PUT", f"/api/v1/db/quotas/{membership_type}", json=payload)
 
     async def delete_bot_config(self, key: str) -> None:
         await self._request("DELETE", f"/api/v1/bot/config/{key}")
@@ -191,16 +219,19 @@ class APIClient:
             return None
 
     async def kick_player(self, steam_id: str, reason: str) -> None:
-        await self._request("POST", f"/api/v1/players/{steam_id}/kick", json={"reason": reason})
+        payload = schemas.ReasonRequest(reason=reason).model_dump(exclude_none=True)
+        await self._request("POST", f"/api/v1/players/{steam_id}/kick", json=payload)
 
     async def ban_player(self, steam_id: str, reason: str, duration_days: int = 0) -> None:
-        await self._request("POST", f"/api/v1/players/{steam_id}/ban", json={"reason": reason, "duration_days": duration_days})
+        payload = schemas.ReasonRequest(reason=reason, duration_days=duration_days).model_dump(exclude_none=True)
+        await self._request("POST", f"/api/v1/players/{steam_id}/ban", json=payload)
         
     async def unban_player(self, steam_id: str) -> None:
         await self._request("POST", f"/api/v1/players/{steam_id}/unban")
 
     async def switch_faction(self, steam_id: str, faction: str) -> None:
-        await self._request("POST", f"/api/v1/players/{steam_id}/faction", json={"faction": faction})
+        payload = schemas.FactionRequest(faction=faction).model_dump()
+        await self._request("POST", f"/api/v1/players/{steam_id}/faction", json=payload)
 
     async def get_rcon_sync_status(self) -> Dict[str, Any]:
         return await self._request("GET", "/api/v1/db/rcon_sync_status")
@@ -221,9 +252,71 @@ class APIClient:
             return []
 
     async def register_role(self, code: str, name: str, role_type: str, discord_role_id: str) -> None:
-        await self._request("POST", "/api/v1/db/roles", json={
-            "code": code,
-            "name": name,
-            "role_type": role_type,
-            "discord_role_id": discord_role_id
-        })
+        payload = schemas.RoleRegisterRequest(
+            code=code,
+            name=name,
+            role_type=role_type,
+            discord_role_id=discord_role_id
+        ).model_dump()
+        await self._request("POST", "/api/v1/db/roles", json=payload)
+
+    # RCON Server management endpoints
+    async def get_rcon_servers(self) -> List[Dict[str, Any]]:
+        return await self._request("GET", "/api/v1/rcon-servers")
+
+    async def create_rcon_server(
+        self,
+        ip: str,
+        port: int,
+        password: str,
+        name: Optional[str] = None,
+        scheme: str = "http",
+        is_active: bool = True,
+        is_default: bool = False
+    ) -> Dict[str, Any]:
+        req = schemas.CreateRconServerRequest(
+            ip=ip,
+            port=port,
+            password=password,
+            name=name,
+            scheme=scheme,
+            is_active=is_active,
+            is_default=is_default
+        )
+        return await self._request("POST", "/api/v1/rcon-servers", json=req.model_dump(exclude_none=True))
+
+    async def get_rcon_server(self, server_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/rcon-servers/{server_id}")
+
+    async def update_rcon_server(self, server_id: int, **kwargs) -> Dict[str, Any]:
+        req = schemas.UpdateRconServerRequest(**kwargs)
+        return await self._request("PUT", f"/api/v1/rcon-servers/{server_id}", json=req.model_dump(exclude_unset=True))
+
+    async def delete_rcon_server(self, server_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/rcon-servers/{server_id}")
+
+    async def test_rcon_server(self, server_id: int) -> Dict[str, Any]:
+        return await self._request("POST", f"/api/v1/rcon-servers/{server_id}/test")
+
+    async def sync_all_rcon_servers(self) -> Dict[str, Any]:
+        return await self._request("POST", "/api/v1/rcon-servers/sync-all")
+
+    # Membership Types management endpoints
+    async def get_membership_types(self, active_only: bool = False) -> List[Dict[str, Any]]:
+        return await self._request("GET", f"/api/v1/membership-types?active_only={active_only}")
+
+    async def get_membership_type(self, identifier: Union[int, str]) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/membership-types/{identifier}")
+
+    async def create_membership_type(self, **kwargs) -> Dict[str, Any]:
+        req = schemas.CreateMembershipTypeRequest(**kwargs)
+        return await self._request("POST", "/api/v1/membership-types", json=req.model_dump(exclude_none=True))
+
+    async def update_membership_type(self, type_id: int, **kwargs) -> Dict[str, Any]:
+        req = schemas.UpdateMembershipTypeRequest(**kwargs)
+        return await self._request("PUT", f"/api/v1/membership-types/{type_id}", json=req.model_dump(exclude_unset=True))
+
+    async def delete_membership_type(self, type_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/membership-types/{type_id}")
+
+

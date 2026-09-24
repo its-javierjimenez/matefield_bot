@@ -46,27 +46,38 @@ class ConfigService:
 
     @staticmethod
     async def get_quotas(session: AsyncSession) -> Dict[str, Any]:
-        configs = (await session.exec(select(MembershipTypeConfig))).all()
-        
+        from src.connections.databases.db import MembershipType
+        from src.modules.v1.services.membership_types_service import MembershipTypesService
+        await MembershipTypesService._ensure_defaults(session)
+
+        types = (await session.exec(select(MembershipType))).all()
         usage_stmt = select(Membership.membership_type, func.count(col(Membership.id))).where(Membership.is_active == True).group_by(Membership.membership_type)
         usage = (await session.exec(usage_stmt)).all()
-        usage_dict = {t: c for t, c in usage}
+        usage_dict = {t.upper(): c for t, c in usage}
         
         result = []
-        for c in configs:
+        for c in types:
             result.append({
-                "membership_type": c.membership_type,
+                "membership_type": c.code,
                 "max_quota": c.max_quota,
-                "current_usage": usage_dict.get(c.membership_type, 0)
+                "current_usage": usage_dict.get(c.code.upper(), 0)
             })
             
         return {"quotas": result}
 
     @staticmethod
     async def update_quota(membership_type: str, max_quota: Optional[int], session: AsyncSession) -> Dict[str, Any]:
+        from src.connections.databases.db import MembershipType
         normalized_type = membership_type.strip().upper()
-        config = (await session.exec(select(MembershipTypeConfig).where(MembershipTypeConfig.membership_type == normalized_type))).first()
         
+        # Update MembershipType
+        m_type = (await session.exec(select(MembershipType).where(func.upper(MembershipType.code) == normalized_type))).first()
+        if m_type:
+            m_type.max_quota = max_quota
+            session.add(m_type)
+        
+        # Update legacy MembershipTypeConfig
+        config = (await session.exec(select(MembershipTypeConfig).where(MembershipTypeConfig.membership_type == normalized_type))).first()
         if not config:
             config = MembershipTypeConfig(membership_type=normalized_type, max_quota=max_quota)
             session.add(config)

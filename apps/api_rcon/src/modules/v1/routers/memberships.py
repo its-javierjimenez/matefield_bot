@@ -1,14 +1,22 @@
 from typing import Any, Dict, Optional
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request, HTTPException, Header
+from fastapi.responses import FileResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
 from wardogs_schemas import v1 as schemas
 
 from src.security.guard import verify_api_key_guard
 from src.connections.databases.db import get_session
+from src.config import ENVIRONMENT_SETTINGS
 from src.modules.v1.schemas.dtos import (
     AddMembershipRequest, EditMembershipRequest, CompensateRequest
 )
 from src.modules.v1.services.memberships_service import MembershipsService
+from src.modules.v1.services.export_service import (
+    generate_memberships_csv,
+    generate_export_download_token,
+    verify_export_download_token,
+    get_export_dir,
+)
 
 router = APIRouter(tags=["Memberships"])
 
@@ -39,3 +47,60 @@ async def sync_memberships_endpoint(session: AsyncSession = Depends(get_session)
 @router.get("/db/rcon_sync_status", dependencies=[Depends(verify_api_key_guard)])
 async def rcon_sync_status(session: AsyncSession = Depends(get_session)):
     return await MembershipsService.get_rcon_sync_status(session)
+
+@router.post("/db/memberships/export", dependencies=[Depends(verify_api_key_guard)])
+async def export_memberships_endpoint(
+    request: Request,
+    session: AsyncSession = Depends(get_session)
+):
+    csv_file, filename, count = await generate_memberships_csv(session)
+    expires_in_seconds = 1800  # 30 minutes
+    token = generate_export_download_token(filename, expires_in_seconds=expires_in_seconds)
+
+    public_url = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.PUBLIC_API_URL.strip()
+    if public_url:
+        base_url = public_url.rstrip("/")
+    else:
+        base_url = str(request.base_url).rstrip("/")
+
+    download_url = f"{base_url}/api/v1/db/memberships/export/download/{filename}?token={token}"
+
+    return {
+        "ok": True,
+        "filename": filename,
+        "total_records": count,
+        "size_bytes": csv_file.stat().st_size,
+        "download_url": download_url,
+        "expires_in_seconds": expires_in_seconds
+    }
+
+@router.get("/db/memberships/export/download/{filename}")
+async def download_memberships_export_endpoint(
+    filename: str,
+    token: Optional[str] = None,
+    api_key: Optional[str] = None,
+    api_key_header: Optional[str] = Header(None, alias="X-API-Key")
+):
+    master_key = ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY
+    is_authorized = False
+
+    if token and verify_export_download_token(filename, token):
+        is_authorized = True
+    elif (api_key and api_key == master_key) or (api_key_header and api_key_header == master_key):
+        is_authorized = True
+
+    if not is_authorized:
+        raise HTTPException(status_code=403, detail="Token de descarga inválido o expirado")
+
+    export_dir = get_export_dir().resolve()
+    file_path = (export_dir / filename).resolve()
+
+    if not str(file_path).startswith(str(export_dir)) or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Archivo de exportación no encontrado")
+
+    return FileResponse(
+        path=str(file_path),
+        filename=filename,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )

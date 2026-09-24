@@ -17,3 +17,5 @@ match_group = crescent.Group("match", "Partida en vivo")
 leaderboard_group = crescent.Group("leaderboard", "Top jugadores")
 
 ban_role_group = crescent.Group("ban_role", "Mapeo de roles a baneos", hooks=[admin_only])
+rcon_group = crescent.Group("rcon", "Gestión de servidores RCON", hooks=[admin_only])
+membership_type_group = crescent.Group("membership_type", "Gestión de paquetes y tipos de membresía", hooks=[admin_only])

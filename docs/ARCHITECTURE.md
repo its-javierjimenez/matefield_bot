@@ -33,7 +33,7 @@ El sistema utiliza **PostgreSQL 15** administrado mediante migraciones de **Alem
 
 ### Entidades de Dominio
 - **Player**: Identidad central. Vincula el `steam_id` (juego) con el `discord_id` de la comunidad.
-- **Membership**: Registra las suscripciones VIP (`VIP_COMUN`, `VIP_EXPRESS`, etc.) con fechas `start_time` y `end_time`. Define el derecho prioritario a slots reservados.
+- **Membership**: Registra las suscripciones VIP (`VIP_COMUN`, `VIP_EXPRESS`, etc.) con fechas `start_time`, `end_time` y vigencia `is_active`. Incluye el indicador `is_booster` para trazabilidad de donaciones/mejoras de Discord Nitro y vinculación opcional a roles especiales (`special_role_id`). Define el derecho prioritario a slots reservados en el servidor de juego.
 - **Role / PlayerRole**: Sistema de roles DDD. Almacena roles de sistema (`SYSTEM`), roles VIP (`VIP`), públicos (`PUBLIC`) y especiales (`SPECIAL`) asociados a IDs de rol de Discord. La jerarquía de administración está unificada bajo **ADMIN / SUPERVISOR**.
 - **Match**: Historial de partidas disputadas (ID UUID, mapa, fecha de inicio, fin y equipo vencedor).
 - **MatchTeamStats / MatchPlayerStats**: Registro detallado de puntuaciones por equipo y rendimiento individual (kills, deaths, cash) consolidado al finalizar cada partida.

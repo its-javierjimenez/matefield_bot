@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
@@ -6,15 +7,23 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from wardogs_schemas import v1 as schemas
 
 from src.connections.databases.db import Ban, Player
-from src.connections.apis.rcon import rcon_client as rcon
+from src.connections.apis.rcon import RCONManager
 from src.connections.apis.steam import get_player_summary
+
+logger = logging.getLogger("wardogs.bans")
 
 class BansService:
     @staticmethod
     async def sync_bans(session: AsyncSession) -> Dict[str, Any]:
         try:
-            rcon_bans_resp = await rcon.get_bans()
-            rcon_steam_ids = set(rcon_bans_resp)
+            active_servers = await RCONManager.get_all_active_servers(session)
+            rcon_steam_ids: set[str] = set()
+            for s_info, client in active_servers:
+                try:
+                    s_bans = await client.get_bans()
+                    rcon_steam_ids.update(s_bans)
+                except Exception as s_err:
+                    logger.warning(f"Failed to fetch bans from {s_info.name} ({s_info.base_url}): {s_err}")
             
             stmt = select(Ban).where(Ban.is_active == True)
             active_bans = (await session.exec(stmt)).all()
@@ -33,9 +42,13 @@ class BansService:
                 session.add(new_ban)
                 db_steam_ids.add(sid)
                 
-            # 2. DB to RCON (Push our full combined list)
+            # 2. DB to RCON (Push our full combined list to all active servers)
             active_steam_ids = list(db_steam_ids)
-            await rcon.sync_banned_slots(active_steam_ids)
+            for s_info, client in active_servers:
+                try:
+                    await client.sync_banned_slots(active_steam_ids)
+                except Exception as s_err:
+                    logger.warning(f"Failed to push bans to {s_info.name} ({s_info.base_url}): {s_err}")
             
             # Mark pending DB bans as SUCCESS
             for b in active_bans:
@@ -45,10 +58,9 @@ class BansService:
                     
             await session.commit()
             
-            return {"ok": True, "message": f"Bans synchronized successfully. Absorbed {len(missing_in_db)} from RCON."}
+            return {"ok": True, "message": f"Bans synchronized successfully across {len(active_servers)} servers. Absorbed {len(missing_in_db)} from RCON."}
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            logger.error("Error synchronizing bans across servers", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
 
     @staticmethod
@@ -73,10 +85,12 @@ class BansService:
         session.add(ban_entry)
         await session.commit()
         
-        try:
-            await rcon.ban_player(steam_id, reason)
-        except Exception as e:
-            print(f"Failed to execute real-time ban: {e}")
+        active_servers = await RCONManager.get_all_active_servers(session)
+        for s_info, client in active_servers:
+            try:
+                await client.ban_player(steam_id, reason)
+            except Exception as e:
+                logger.warning(f"Failed to execute real-time ban on {s_info.name}: {e}")
         
         await BansService.sync_bans(session)
         return {"ok": True}

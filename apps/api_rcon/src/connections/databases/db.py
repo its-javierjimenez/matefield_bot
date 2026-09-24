@@ -59,8 +59,13 @@ class Membership(SQLModel, table=True):
     start_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column("start_date", DateTime(timezone=True)))
     end_time: Optional[datetime] = Field(default=None, sa_column=Column("end_date", DateTime(timezone=True))) # Null means permanent
     is_active: bool = Field(default=True)
+    is_booster: bool = Field(default=False)
     special_role_id: Optional[int] = Field(default=None, sa_column=Column("role_granted_id", BigInteger(), ForeignKey("roles.id")))
     rcon_sync_status: str = Field(default="PENDING", sa_column_kwargs={"server_default": "PENDING"}) # PENDING, SUCCESS, FAILED
+    server_id: Optional[int] = Field(default=None, foreign_key="rcon_servers.id")
+    tebex_transaction_id: Optional[str] = Field(default=None, index=True)
+    tebex_subscription_id: Optional[str] = Field(default=None, index=True)
+    payment_source: str = Field(default="MANUAL", sa_column_kwargs={"server_default": "MANUAL"}) # MANUAL, TEBEX
     
     # Relationships
     player: Player = Relationship(back_populates="memberships")
@@ -144,6 +149,58 @@ class MembershipTypeConfig(SQLModel, table=True):
     __tablename__ = "membership_type_configs"
     membership_type: str = Field(primary_key=True)
     max_quota: Optional[int] = Field(default=None) # Null = infinite
+
+
+class MembershipType(SQLModel, table=True):
+    __tablename__ = "membership_types"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    code: str = Field(unique=True, index=True)
+    name: str
+    description: Optional[str] = Field(default=None)
+    price_usd: float = Field(default=0.0)
+    billing_type: str = Field(default="ONE_TIME") # "ONE_TIME" or "RECURRING"
+    default_days: int = Field(default=30)         # 0 = permanente
+    max_quota: Optional[int] = Field(default=None)# None = ilimitado
+    discord_role_id: Optional[str] = Field(default=None)
+    server_id: Optional[int] = Field(default=None, foreign_key="rcon_servers.id")
+    is_active: bool = Field(default=True)
+    tebex_package_id: Optional[int] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True)))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True)))
+
+
+class PaymentRecord(SQLModel, table=True):
+    __tablename__ = "payment_records"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    transaction_id: str = Field(unique=True, index=True)
+    event_type: str = Field(index=True) # payment.completed, recurring-payment.renewed, etc.
+    steam_id: Optional[str] = Field(default=None, index=True)
+    discord_id: Optional[str] = Field(default=None, index=True)
+    package_id: Optional[int] = Field(default=None, index=True)
+    package_name: Optional[str] = Field(default=None)
+    amount: float = Field(default=0.0)
+    currency: str = Field(default="USD")
+    status: str = Field(default="COMPLETED", index=True) # COMPLETED, RENEWED, CANCELLED, REFUNDED, IGNORED
+    raw_payload: str = Field(default="{}", sa_column_kwargs={"nullable": False})
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True)))
+
+
+class RconServer(SQLModel, table=True):
+    __tablename__ = "rcon_servers"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    ip: str
+    port: int
+    password: str
+    scheme: str = Field(default="http") # "http" or "https"
+    is_active: bool = Field(default=True)
+    is_default: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True)))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True)))
+
+    @property
+    def base_url(self) -> str:
+        return f"{self.scheme}://{self.ip}:{self.port}"
 
 
 from sqlmodel.ext.asyncio.session import AsyncSession
