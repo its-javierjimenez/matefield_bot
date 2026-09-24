@@ -247,4 +247,16 @@ Configuración de roles automáticos para vinculación y moderación en Discord.
 - `/unban` `[Staff / Admin]`
   - **Descripción**: Comando directo equivalente a `/ban remove` para desbanear por Discord (`@usuario`) o Steam ID, removiendo el rol de ban y restituyendo el rol de `unset_ban`.
 
+---
 
+## 📦 Tipos y Paquetes de Membresía (`/membership_type`)
+Gestión dinámica del catálogo de membresías VIP, precios en USD, modalidad de cobro y cupos.
+
+- `/membership_type list` `[Staff / Admin]`
+  - **Descripción**: Muestra un Embed interactivo con todos los paquetes configurados, incluyendo precio, modalidad (pago único / mensualidad), duración por defecto, cupos ocupados vs máximos, servidor asignado y rol de Discord.
+- `/membership_type create` `[Staff / Admin]`
+  - **Descripción**: Registra un nuevo paquete de membresía en la base de datos.
+  - **Parámetros**: `codigo`, `nombre`, `precio` *(USD)*, `dias` *(duración por defecto, 0 = permanente)*, `cupo` *(opcional: límite de compras simultáneas)*, `rol` *(rol de Discord a otorgar)*, `servidor` *(opcional: vincular a un servidor RCON específico)*, `facturacion` *(`ONE_TIME` o `RECURRING`)*, `descripcion` *(opcional)*.
+- `/membership_type edit` `[Staff / Admin]`
+  - **Descripción**: Edita parámetros de un paquete existente (nombre, precio, días, cupos, rol, servidor, facturación o estado activo/inactivo).
+  - **Parámetros**: `tipo_id`, `nombre`, `precio`, `dias`, `cupo`, `rol`, `servidor`, `facturacion`, `activo`.

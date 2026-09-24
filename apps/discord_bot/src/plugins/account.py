@@ -36,7 +36,10 @@ class LinkAccount:
             guild_id = ctx.guild_id
             if guild_id:
                 try:
-                    member = plugin.app.cache.get_member(guild_id, int(target_id)) or await ctx.app.rest.fetch_member(guild_id, int(target_id))
+                    try:
+                        member = await ctx.app.rest.fetch_member(guild_id, int(target_id))
+                    except Exception:
+                        member = plugin.app.cache.get_member(guild_id, int(target_id))
                     if member:
                         # Verificar si el Steam ID posee un baneo activo en DB (incluyendo solo_discord)
                         bans_resp = await plugin.model.api.get_db_bans(str(self.steam_id))

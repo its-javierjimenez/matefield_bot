@@ -1,3 +1,4 @@
+import secrets
 from fastapi import Security, HTTPException
 from fastapi.security.api_key import APIKeyHeader
 
@@ -9,6 +10,7 @@ api_key_header = APIKeyHeader(
 )
 
 async def verify_api_key_guard(api_key_header: str = Security(api_key_header)):
-    if api_key_header == ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY:
+    expected = ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY
+    if api_key_header and secrets.compare_digest(api_key_header, expected):
         return api_key_header
     raise HTTPException(status_code=403, detail="Could not validate credentials")

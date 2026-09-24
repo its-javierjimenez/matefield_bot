@@ -390,7 +390,9 @@ class BanPlayer:
         await ctx.defer()
         try:
             dur_str = "permanentemente" if self.dias == 0 else f"por {self.dias} días"
-            guild_id = ctx.guild_id
+            guild_id = ctx.guild_id or (ctx.member.guild_id if ctx.member else None)
+            if not guild_id and plugin.app.cache.get_guilds_view():
+                guild_id = list(plugin.app.cache.get_guilds_view().keys())[0]
             
             target_discord_id, target_steam_id = await _resolve_ban_targets(self.usuario, self.steam_id)
             
@@ -422,9 +424,9 @@ class BanPlayer:
                     return
 
                 try:
-                    member = plugin.app.cache.get_member(guild_id, target_discord_id) or await ctx.app.rest.fetch_member(guild_id, target_discord_id)
+                    member = await ctx.app.rest.fetch_member(guild_id, target_discord_id)
                 except Exception:
-                    member = None
+                    member = plugin.app.cache.get_member(guild_id, target_discord_id)
 
                 if not member:
                     await ctx.respond(f"❌ No se encontró al usuario <@{target_discord_id}> en este servidor de Discord.")
@@ -466,7 +468,10 @@ class BanPlayer:
             # 2. Asignar rol en Discord y remover unset_ban si está en el servidor
             if target_discord_id and guild_id:
                 try:
-                    member = plugin.app.cache.get_member(guild_id, target_discord_id) or await ctx.app.rest.fetch_member(guild_id, target_discord_id)
+                    try:
+                        member = await ctx.app.rest.fetch_member(guild_id, target_discord_id)
+                    except Exception:
+                        member = plugin.app.cache.get_member(guild_id, target_discord_id)
                     if member:
                         ban_role_id = await plugin.model.api.get_bot_config(f"BAN_ROLE_{self.dias}")
                         if not ban_role_id or not ban_role_id.isdigit():
@@ -495,7 +500,10 @@ async def _handle_unban_callback(
 ) -> None:
     await ctx.defer()
     try:
-        guild_id = ctx.guild_id
+        guild_id = ctx.guild_id or (ctx.member.guild_id if ctx.member else None)
+        if not guild_id and plugin.app.cache.get_guilds_view():
+            guild_id = list(plugin.app.cache.get_guilds_view().keys())[0]
+
         target_discord_id, target_steam_id = await _resolve_ban_targets(usuario, steam_id)
 
         if not target_steam_id and not target_discord_id:
@@ -513,20 +521,25 @@ async def _handle_unban_callback(
         else:
             if target_steam_id:
                 await plugin.model.api.unban_player(target_steam_id)
-            msg = "ℹ️ Desbaneo aplicado únicamente en Discord (sin sincronizar RCON)."
+            user_info = f" (<@{target_discord_id}>)" if target_discord_id else ""
+            msg = f"ℹ️ Desbaneo aplicado únicamente en Discord (sin sincronizar RCON)."
 
         # Switch de roles en Discord: Quitar roles de ban y devolver unset_ban rol
         if target_discord_id and guild_id:
             try:
                 configs = await plugin.model.api.get_bot_configs()
                 ban_roles = [int(v) for k, v in configs.items() if (k == "BAN_ROLE_DEFAULT" or k.startswith("BAN_ROLE_")) and v.isdigit()]
-                member = plugin.app.cache.get_member(guild_id, target_discord_id) or await ctx.app.rest.fetch_member(guild_id, target_discord_id)
+                
+                try:
+                    member = await ctx.app.rest.fetch_member(guild_id, target_discord_id)
+                except Exception:
+                    member = plugin.app.cache.get_member(guild_id, target_discord_id)
                 
                 if member:
                     if ban_roles:
                         removed = 0
                         for role_id in set(ban_roles):
-                            if member and role_id in member.role_ids:
+                            if role_id in member.role_ids:
                                 await member.remove_role(role_id, reason="Desbaneado")
                                 removed += 1
                         if removed > 0:
@@ -539,8 +552,12 @@ async def _handle_unban_callback(
                         if u_rid not in member.role_ids:
                             await member.add_role(u_rid, reason="Desbaneado: rol restituido")
                             msg += f"\n🔒 Rol <@&{u_rid}> restituido a <@{target_discord_id}>."
+                else:
+                    msg += f"\n⚠️ No se encontró al usuario <@{target_discord_id}> en el servidor para actualizar sus roles."
             except Exception as ex:
                 msg += f"\n⚠️ No se pudieron actualizar los roles de Discord: {ex}"
+        elif not target_discord_id:
+            msg += "\nℹ️ Como el jugador no está vinculado a Discord, no se modificaron roles en el servidor."
         
         await ctx.respond(msg)
     except Exception as e:

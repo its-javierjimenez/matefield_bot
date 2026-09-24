@@ -1,7 +1,7 @@
 from typing import Optional, List
 from sqlmodel import Field, Session, SQLModel, create_engine, Relationship
 from datetime import datetime, timezone
-from sqlalchemy import Column, DateTime, BigInteger, ForeignKey
+from sqlalchemy import Column, DateTime, BigInteger, ForeignKey, Text
 import uuid
 
 from src.config import ENVIRONMENT_SETTINGS
@@ -165,8 +165,8 @@ class MembershipType(SQLModel, table=True):
     server_id: Optional[int] = Field(default=None, foreign_key="rcon_servers.id")
     is_active: bool = Field(default=True)
     tebex_package_id: Optional[int] = Field(default=None, index=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True)))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True)))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
 class PaymentRecord(SQLModel, table=True):
@@ -181,8 +181,8 @@ class PaymentRecord(SQLModel, table=True):
     amount: float = Field(default=0.0)
     currency: str = Field(default="USD")
     status: str = Field(default="COMPLETED", index=True) # COMPLETED, RENEWED, CANCELLED, REFUNDED, IGNORED
-    raw_payload: str = Field(default="{}", sa_column_kwargs={"nullable": False})
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True)))
+    raw_payload: str = Field(default="{}", sa_column=Column(Text, nullable=False))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
 class RconServer(SQLModel, table=True):
@@ -195,8 +195,8 @@ class RconServer(SQLModel, table=True):
     scheme: str = Field(default="http") # "http" or "https"
     is_active: bool = Field(default=True)
     is_default: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True)))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True)))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
 
     @property
     def base_url(self) -> str:

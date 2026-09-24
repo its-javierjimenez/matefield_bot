@@ -10,6 +10,10 @@ root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../
 if not os.environ.get("DATABASE_URL"):
     env_file = os.environ.get("ENV_FILE")
     if env_file:
+        if not os.path.isabs(env_file):
+            candidate = os.path.join(root_dir, env_file)
+            if os.path.exists(candidate):
+                env_file = candidate
         load_dotenv(env_file, override=True)
     elif os.environ.get("ENV") == "prod":
         load_dotenv(os.path.join(root_dir, ".env.prod"), override=True)
@@ -103,10 +107,21 @@ async def run_async_migrations() -> None:
         poolclass=pool.NullPool,
     )
 
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
+    last_err = None
+    for attempt in range(1, 6):
+        try:
+            async with connectable.connect() as connection:
+                await connection.run_sync(do_run_migrations)
+            last_err = None
+            break
+        except Exception as e:
+            last_err = e
+            if attempt < 5:
+                await asyncio.sleep(2)
 
     await connectable.dispose()
+    if last_err is not None:
+        raise last_err
 
 
 def run_migrations_online() -> None:
