@@ -1,12 +1,14 @@
 import asyncio
 import logging
+import math
 import time
+from typing import Any
 import crescent
 import hikari
 
 from src.model import Model
 from src.hooks import admin_only
-from src.groups import membership_group, membership_type_group
+from src.groups import membership_group, membership_type_group, player_group
 
 logger = logging.getLogger(__name__)
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
@@ -174,6 +176,103 @@ class DbMemberships:
             await ctx.respond(f"❌ Error: {e}")
 
 
+def build_player_memberships_view(
+    app: Any,
+    usuario_id: int,
+    memberships: list[dict],
+    page: int,
+    total: int,
+    limit: int = 5
+) -> tuple[hikari.Embed, list[hikari.api.MessageActionRowBuilder]]:
+    total_pages = max(1, math.ceil(total / limit)) if total > 0 else 1
+    embed = hikari.Embed(
+        title=f"📋 Historial de Membresías: <@{usuario_id}>",
+        description=f"Total de registros: **{total}** | Página **{page}** de **{total_pages}**",
+        color=0x9B59B6
+    )
+
+    if not memberships:
+        embed.description = f"El usuario <@{usuario_id}> no registra membresías en la base de datos."
+    else:
+        for m in memberships:
+            m_id = m.get("id", "?")
+            m_type = m.get("type", "DESCONOCIDO")
+            is_active = m.get("is_active", False)
+            status_str = "🟢 Activa" if is_active else "🔴 Inactiva"
+            steam_id = m.get("steam_id", "Desconocido")
+
+            start_val = m.get("start_date")
+            start_str = start_val[:19].replace("T", " ") if start_val else "N/A"
+
+            end_val = m.get("end_date")
+            end_str = end_val[:19].replace("T", " ") if end_val else "Permanente (Sin fin)"
+
+            sp_role_id = m.get("special_role_id")
+            sp_role_name = m.get("special_role")
+            if sp_role_name:
+                sp_role_str = f"<@&{sp_role_name}> (`{sp_role_id}`)"
+            elif sp_role_id:
+                sp_role_str = f"<@&{sp_role_id}> (`{sp_role_id}`)"
+            else:
+                sp_role_str = "Ninguno"
+
+            rcon_status = m.get("rcon_sync_status", "PENDING")
+
+            field_name = f"🏷️ Membresía #{m_id} — {m_type}"
+            field_value = (
+                f"• **Estado:** {status_str} (`is_active={is_active}`)\n"
+                f"• **Steam ID:** `{steam_id}`\n"
+                f"• **Fecha Inicio:** `{start_str}`\n"
+                f"• **Fecha Fin:** `{end_str}`\n"
+                f"• **Rol Especial:** {sp_role_str}\n"
+                f"• **RCON Sync Status:** `{rcon_status}`"
+            )
+            embed.add_field(name=field_name, value=field_value, inline=False)
+
+    btn_row = app.rest.build_message_action_row()
+    btn_row.add_interactive_button(
+        hikari.ButtonStyle.PRIMARY,
+        f"pmem_prev_{usuario_id}_{page}",
+        label="◀ Anterior",
+        is_disabled=(page <= 1)
+    )
+    btn_row.add_interactive_button(
+        hikari.ButtonStyle.PRIMARY,
+        f"pmem_next_{usuario_id}_{page}",
+        label="Siguiente ▶",
+        is_disabled=(page >= total_pages or total == 0)
+    )
+    return embed, [btn_row]
+
+
+@plugin.include
+@player_group.child
+@crescent.command(name="memberships", description="Muestra el historial de membresías de un usuario de Discord (Paginado)")
+class PlayerMemberships:
+    usuario = crescent.option(hikari.User, "Usuario de Discord a consultar")
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer()
+        page = 1
+        limit = 5
+        try:
+            res = await plugin.model.api.get_paginated_memberships(page=page, limit=limit, discord_id=str(self.usuario.id))
+            memberships = res.get("memberships", [])
+            total = res.get("total", 0)
+
+            embed, components = build_player_memberships_view(
+                ctx.app,
+                int(self.usuario.id),
+                memberships,
+                page,
+                total,
+                limit
+            )
+            await ctx.respond(embed=embed, components=components)
+        except Exception as e:
+            await ctx.respond(f"❌ Error al consultar membresías: {e}")
+
+
 @plugin.include
 @crescent.event
 async def on_membership_button_click(event: hikari.InteractionCreateEvent) -> None:
@@ -181,63 +280,103 @@ async def on_membership_button_click(event: hikari.InteractionCreateEvent) -> No
         return
         
     custom_id = event.interaction.custom_id
-    if not custom_id.startswith("mem_prev_") and not custom_id.startswith("mem_next_"):
+    if not custom_id.startswith("mem_prev_") and not custom_id.startswith("mem_next_") and not custom_id.startswith("pmem_prev_") and not custom_id.startswith("pmem_next_"):
         return
+
+    if custom_id.startswith("mem_prev_") or custom_id.startswith("mem_next_"):
+        current_page = int(custom_id.split("_")[-1])
+        is_next = custom_id.startswith("mem_next_")
+        new_page = current_page + 1 if is_next else current_page - 1
         
-    current_page = int(custom_id.split("_")[-1])
-    is_next = custom_id.startswith("mem_next_")
-    new_page = current_page + 1 if is_next else current_page - 1
-    
-    if new_page < 1:
-        new_page = 1
-        
-    try:
-        res = await plugin.model.api.get_paginated_memberships(page=new_page, limit=10)
-        memberships = res.get("memberships", [])
-        total = res.get("total", 0)
-        
-        if not memberships and new_page > 1:
+        if new_page < 1:
+            new_page = 1
+            
+        try:
+            res = await plugin.model.api.get_paginated_memberships(page=new_page, limit=10)
+            memberships = res.get("memberships", [])
+            total = res.get("total", 0)
+            
+            if not memberships and new_page > 1:
+                await event.interaction.create_initial_response(
+                    hikari.ResponseType.MESSAGE_CREATE,
+                    "No hay más páginas.",
+                    flags=hikari.MessageFlag.EPHEMERAL
+                )
+                return
+                
+            embed = hikari.Embed(
+                title=f"📋 Listado de Membresías (Pág {new_page})",
+                description=f"Total registradas: {total}",
+                color=0x00FF00
+            )
+            
+            for m in memberships:
+                status = "🟢 Activa" if m['is_active'] else "🔴 Inactiva"
+                booster_str = " | ⚡ **Booster**" if m.get('is_booster') else ""
+                end_str = m['end_date'][:10] if m['end_date'] else "Permanente"
+                sp_str = f" | **Especial:** <@&{m.get('special_role')}>" if m.get('special_role') else ""
+                embed.add_field(
+                    name=f"[ID: {m.get('id', '?')}] SteamID: {m['steam_id']}", 
+                    value=f"**Tipo:** {m['type']} | **Estado:** {status}{booster_str}\n**Vence:** {end_str}{sp_str}", 
+                    inline=False
+                )
+                
+            components = [
+                plugin.app.rest.build_message_action_row()
+                .add_interactive_button(hikari.ButtonStyle.PRIMARY, f"mem_prev_{new_page}", label="Anterior")
+                .add_interactive_button(hikari.ButtonStyle.PRIMARY, f"mem_next_{new_page}", label="Siguiente")
+            ]
+            
+            await event.interaction.create_initial_response(
+                hikari.ResponseType.MESSAGE_UPDATE,
+                embed=embed,
+                components=components
+            )
+        except Exception as e:
             await event.interaction.create_initial_response(
                 hikari.ResponseType.MESSAGE_CREATE,
-                "No hay más páginas.",
+                f"❌ Error: {e}",
                 flags=hikari.MessageFlag.EPHEMERAL
             )
-            return
-            
-        embed = hikari.Embed(
-            title=f"📋 Listado de Membresías (Pág {new_page})",
-            description=f"Total registradas: {total}",
-            color=0x00FF00
-        )
-        
-        for m in memberships:
-            status = "🟢 Activa" if m['is_active'] else "🔴 Inactiva"
-            booster_str = " | ⚡ **Booster**" if m.get('is_booster') else ""
-            end_str = m['end_date'][:10] if m['end_date'] else "Permanente"
-            sp_str = f" | **Especial:** <@&{m.get('special_role')}>" if m.get('special_role') else ""
-            embed.add_field(
-                name=f"[ID: {m.get('id', '?')}] SteamID: {m['steam_id']}", 
-                value=f"**Tipo:** {m['type']} | **Estado:** {status}{booster_str}\n**Vence:** {end_str}{sp_str}", 
-                inline=False
+    elif custom_id.startswith("pmem_prev_") or custom_id.startswith("pmem_next_"):
+        parts = custom_id.split("_")
+        action = parts[1]
+        target_discord_id = int(parts[2])
+        current_page = int(parts[3])
+        limit = 5
+
+        new_page = current_page - 1 if action == "prev" else current_page + 1
+        if new_page < 1:
+            new_page = 1
+
+        try:
+            res = await plugin.model.api.get_paginated_memberships(page=new_page, limit=limit, discord_id=str(target_discord_id))
+            memberships = res.get("memberships", [])
+            total = res.get("total", 0)
+            total_pages = max(1, math.ceil(total / limit)) if total > 0 else 1
+
+            if new_page > total_pages:
+                new_page = total_pages
+
+            embed, components = build_player_memberships_view(
+                plugin.app,
+                target_discord_id,
+                memberships,
+                new_page,
+                total,
+                limit
             )
-            
-        components = [
-            plugin.app.rest.build_message_action_row()
-            .add_interactive_button(hikari.ButtonStyle.PRIMARY, f"mem_prev_{new_page}", label="Anterior")
-            .add_interactive_button(hikari.ButtonStyle.PRIMARY, f"mem_next_{new_page}", label="Siguiente")
-        ]
-        
-        await event.interaction.create_initial_response(
-            hikari.ResponseType.MESSAGE_UPDATE,
-            embed=embed,
-            components=components
-        )
-    except Exception as e:
-        await event.interaction.create_initial_response(
-            hikari.ResponseType.MESSAGE_CREATE,
-            f"❌ Error: {e}",
-            flags=hikari.MessageFlag.EPHEMERAL
-        )
+            await event.interaction.create_initial_response(
+                hikari.ResponseType.MESSAGE_UPDATE,
+                embed=embed,
+                components=components
+            )
+        except Exception as e:
+            await event.interaction.create_initial_response(
+                hikari.ResponseType.MESSAGE_CREATE,
+                f"❌ Error: {e}",
+                flags=hikari.MessageFlag.EPHEMERAL
+            )
 
 
 @plugin.include
@@ -291,18 +430,22 @@ class DbExportMemberships:
         await ctx.defer(ephemeral=True)
         try:
             res = await plugin.model.api.export_memberships()
-            download_url = res["download_url"]
+            download_url = res.get("download_url", "")
             total = res["total_records"]
             filename = res["filename"]
             expires_mins = res["expires_in_seconds"] // 60
             size_kb = round(res["size_bytes"] / 1024, 1)
 
+            # Retrieve file bytes directly to send as a Discord attachment (native download)
+            csv_bytes = await plugin.model.api.download_file_bytes(f"/api/v1/db/memberships/export/download/{filename}")
+            attachment = hikari.Bytes(csv_bytes, filename)
+
             embed = hikari.Embed(
                 title="📥 Exportación de Membresías",
                 description=(
-                    f"Se ha generado exitosamente el archivo CSV con las membresías y cuentas vinculadas.\n\n"
-                    f"🔗 **[Haz clic aquí para descargar el archivo CSV]({download_url})**\n\n"
-                    f"*(El enlace es de descarga directa desde la API y expira en {expires_mins} minutos para mayor seguridad)*"
+                    f"Se ha generado exitosamente el archivo CSV con las membresías y cuentas vinculadas.\n"
+                    f"El archivo ha sido adjuntado a este mensaje para su descarga directa.\n\n"
+                    f"*(Generado desde la base de datos con {total} registros)*"
                 ),
                 color=0x00FF88
             )
@@ -315,11 +458,22 @@ class DbExportMemberships:
                 inline=False
             )
 
-            button_row = (
-                ctx.app.rest.build_message_action_row()
-                .add_link_button(download_url, label="Descargar CSV")
+            # Discord rejects link buttons with internal docker/non-FQDN URLs (error 50035).
+            # Only add the web link button if download_url is a valid public web URL.
+            is_public_url = download_url.startswith("https://") or (
+                download_url.startswith("http://")
+                and "." in download_url.split("/")[2]
+                and not download_url.split("/")[2].startswith("localhost")
             )
-            await ctx.respond(embed=embed, components=[button_row])
+
+            if is_public_url:
+                button_row = (
+                    ctx.app.rest.build_message_action_row()
+                    .add_link_button(download_url, label="Descargar vía Web")
+                )
+                await ctx.respond(embed=embed, attachment=attachment, components=[button_row])
+            else:
+                await ctx.respond(embed=embed, attachment=attachment)
         except Exception as e:
             await ctx.respond(f"❌ Error al generar exportación: {e}")
 
@@ -343,7 +497,7 @@ class ForceSyncRolesToMemberships:
             await ctx.respond("ℹ️ No hay mapeos de roles configurados en /config map_membership_role.")
             return
             
-        res = await plugin.model.api.get_paginated_players(page=1, limit=1000, linked="all")
+        res = await plugin.model.api.get_paginated_players(page=1, limit=1000, linked="linked")
         players = res.get("players", [])
         
         if not players:

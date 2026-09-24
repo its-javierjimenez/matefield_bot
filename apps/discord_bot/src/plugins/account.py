@@ -32,10 +32,38 @@ class LinkAccount:
         try:
             await plugin.model.api.link_account(target_id, self.steam_id)
             
+            link_msg = ""
+            guild_id = ctx.guild_id
+            if guild_id:
+                try:
+                    member = plugin.app.cache.get_member(guild_id, int(target_id)) or await ctx.app.rest.fetch_member(guild_id, int(target_id))
+                    if member:
+                        # Verificar si el Steam ID posee un baneo activo en DB (incluyendo solo_discord)
+                        bans_resp = await plugin.model.api.get_db_bans(str(self.steam_id))
+                        active_bans = [b for b in (bans_resp.bans if bans_resp else []) if b.is_active]
+                        
+                        if active_bans:
+                            ban_role_id = await plugin.model.api.get_bot_config("BAN_ROLE_DEFAULT")
+                            if ban_role_id and ban_role_id.isdigit() and int(ban_role_id) not in member.role_ids:
+                                await member.add_role(int(ban_role_id), reason="Baneo activo detectado al vincular cuenta")
+                                link_msg += f"\n🔒 Rol de sanción <@&{ban_role_id}> asignado automáticamente."
+                                
+                            unset_role_id = await plugin.model.api.get_bot_config("BAN_UNSET_ROLE_ID")
+                            if unset_role_id and unset_role_id.isdigit() and int(unset_role_id) in member.role_ids:
+                                await member.remove_role(int(unset_role_id), reason="Baneo activo: rol revocado al vincular")
+                                link_msg += f"\n🔓 Rol <@&{unset_role_id}> removido."
+                        else:
+                            link_role_id = await plugin.model.api.get_bot_config("LINK_ROLE_ID")
+                            if link_role_id and link_role_id.isdigit() and int(link_role_id) not in member.role_ids:
+                                await member.add_role(int(link_role_id), reason="Rol asignado por vincular cuenta (/player link)")
+                                link_msg = f"\n🔗 Rol <@&{link_role_id}> asignado automáticamente."
+                except Exception as ex:
+                    logger.warning(f"No se pudieron actualizar los roles al vincular {target_id}: {ex}")
+            
             if self.usuario:
-                await ctx.respond(f"✅ Has vinculado a {self.usuario.mention} con el Steam ID `{self.steam_id}`")
+                await ctx.respond(f"✅ Has vinculado a {self.usuario.mention} con el Steam ID `{self.steam_id}`{link_msg}")
             else:
-                await ctx.respond(f"✅ Tu cuenta ha sido vinculada exitosamente con el Steam ID `{self.steam_id}`")
+                await ctx.respond(f"✅ Tu cuenta ha sido vinculada exitosamente con el Steam ID `{self.steam_id}`{link_msg}")
         except Exception as e:
             await ctx.respond(f"❌ Error al vincular: {e}")
 
@@ -43,11 +71,20 @@ class LinkAccount:
 @player_group.child
 @crescent.command(name="unlink", description="Desvincula tu cuenta de Discord de Steam")
 class UnlinkAccount:
+    usuario = crescent.option(hikari.User, "Usuario a desvincular (Solo admin)", default=None)
+
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
+        
+        discord_id = str(ctx.user.id)
+        if self.usuario:
+            is_admin = await check_is_admin(ctx)
+            if not is_admin:
+                await ctx.respond("❌ Solo los administradores pueden desvincular a otros usuarios.")
+                return
+            discord_id = str(self.usuario.id)
+
         try:
-            discord_id = str(ctx.user.id)
-            
             # Remove managed roles first to prevent role leak (Bug 6)
             guild_id = ctx.guild_id
             if guild_id:
@@ -56,6 +93,10 @@ class UnlinkAccount:
                     role_maps = res.get("role_maps", {})
                     managed_special_roles = res.get("managed_special_roles", [])
                     all_managed_roles = set(role_maps.values()).union(set(managed_special_roles))
+                    
+                    link_role_id = await plugin.model.api.get_bot_config("LINK_ROLE_ID")
+                    if link_role_id and link_role_id.isdigit():
+                        all_managed_roles.add(int(link_role_id))
                     
                     member = await plugin.app.rest.fetch_member(guild_id, int(discord_id))
                     if member:
@@ -67,20 +108,21 @@ class UnlinkAccount:
                     logger.warning(f"Failed to remove roles during unlink for {discord_id}: {e}")
                     
             await plugin.model.api.unlink_account(discord_id)
-            await ctx.respond("✅ Tu cuenta de Discord ha sido desvinculada y tus roles revocados.")
+            if self.usuario:
+                await ctx.respond(f"✅ La cuenta de {self.usuario.mention} ha sido desvinculada y sus roles revocados.")
+            else:
+                await ctx.respond("✅ Tu cuenta de Discord ha sido desvinculada y tus roles revocados.")
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
 
-@plugin.include
-@crescent.hook(admin_only)
 @plugin.include
 @crescent.hook(admin_only)
 @player_group.child
 @crescent.command(name="welcome_message_set", description="Establece un mensaje de bienvenida personalizado (VIP/ADMIN)")
 class SetWelcomeMessage:
     message = crescent.option(str, "El mensaje que se mostrará cuando entres al servidor")
-    steam_id: str | None = crescent.option(str, "Steam ID del jugador a editar (opcional)", default=None)
-    usuario: hikari.User | None = crescent.option(hikari.User, "Usuario de Discord a editar (opcional)", default=None)
+    steam_id = crescent.option(str, "Steam ID del jugador a editar (opcional)", default=None)
+    usuario = crescent.option(hikari.User, "Usuario de Discord a editar (opcional)", default=None)
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=False)
@@ -105,14 +147,14 @@ class SetWelcomeMessage:
                 return
             target_steam = user_data["steam_id"]
             
-        steam_data = await plugin.model.api.get_player_by_steam(target_steam)
+        steam_data = await plugin.model.api.get_player_by_steam(str(target_steam))
         active_role = steam_data.get("active_role") if steam_data else None
         
         if not active_role:
             await ctx.respond(f"❌ El jugador no tiene una membresía VIP o ADMIN activa. No se puede establecer el mensaje.")
             return
             
-        await plugin.model.api.set_welcome_message(target_steam, self.message)
+        await plugin.model.api.set_welcome_message(str(target_steam), self.message)
         preview_msg = f"El {active_role} [Nombre en Juego] se conectó: \"{self.message}\""
         await ctx.respond(f"✅ **Mensaje de bienvenida establecido.**\n👀 **Vista Previa:**\n> {preview_msg}")
 
@@ -153,15 +195,14 @@ class Profile:
         stats_data = await plugin.model.api.get_player_historical_stats(str(target_steam_id))
             
         # Parse data
-        memberships = steam_data.get("memberships", [])
+        memberships = steam_data.get("active_memberships") or steam_data.get("memberships", [])
         special_roles = steam_data.get("special_roles", [])
         active_role = steam_data.get("active_role", "Ninguno")
         if not active_role:
             active_role = "Ninguno"
         
         # We need to fetch the Steam API for the real name if it's not in our DB
-        # The API doesn't return it directly in get_player_by_steam yet unless we added it, but let's use what we have.
-        in_game_name = steam_data.get("name", steam_data.get("in_game_name", "Desconocido"))
+        in_game_name = steam_data.get("name") or steam_data.get("in_game_name") or "Desconocido"
         
         linked_discord = steam_data.get("discord_id", None)
         
@@ -171,6 +212,9 @@ class Profile:
             description=f"**Steam ID:** {target_steam_id}",
             color=0x2b2d31
         )
+        avatar_url = steam_data.get("avatar_url")
+        if avatar_url:
+            embed.set_thumbnail(avatar_url)
             
         if linked_discord:
             embed.add_field(name="🔗 Discord Vinculado", value=f"<@{linked_discord}>", inline=False)
@@ -178,7 +222,7 @@ class Profile:
             embed.add_field(name="🔗 Discord Vinculado", value="No vinculado", inline=False)
             
         # Add roles
-        mem_str = "\n".join([f"• {m['type']} (Vence: {m.get('end_time', 'Nunca')})" for m in memberships])
+        mem_str = "\n".join([f"• {m['type']} (Vence: {m.get('end_time') or 'Permanente'})" for m in memberships])
         if not mem_str: mem_str = "Ninguna"
         embed.add_field(name="👑 Membresías Activas", value=mem_str, inline=True)
         
@@ -203,9 +247,9 @@ class Profile:
         if stats_data:
             kills = stats_data.get("total_kills", 0)
             deaths = stats_data.get("total_deaths", 0)
-            cash = stats_data.get("total_cash", 0)
+            cash = stats_data.get("total_cash_earned", stats_data.get("total_cash", 0))
             matches = stats_data.get("matches_played", 0)
-            embed.add_field(name="📊 Estadísticas Históricas", value=f"**Partidas jugadas:** {matches}\n**Kills:** {kills} | **Deaths:** {deaths}\n**Cash total:** ", inline=False)
+            embed.add_field(name="📊 Estadísticas Históricas", value=f"**Partidas jugadas:** {matches}\n**Kills:** {kills} | **Deaths:** {deaths}\n**Cash total:** ${cash}", inline=False)
             
         await ctx.respond(embed=embed)
 

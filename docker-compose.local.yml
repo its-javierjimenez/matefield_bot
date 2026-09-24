@@ -24,7 +24,7 @@ services:
       dockerfile: apps/rcon_mock/Dockerfile
     container_name: mock_rcon
     ports:
-      - "9001:9001"
+      - "7776:7776"
     networks:
       - matefield_local_net
 
@@ -36,8 +36,11 @@ services:
     working_dir: /app/apps/api_rcon
     env_file: .env.local
     environment:
-      - UV_PROJECT_ENVIRONMENT=/app/.venv_api
-    command: sh -c "uv cache clean && uv sync && uv run alembic upgrade head && uv run uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload"
+      - UV_PROJECT_ENVIRONMENT=/app/.venv
+    command: sh -c "uv run alembic upgrade head && uv run uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload"
+    volumes:
+      - ./apps/api_rcon:/app/apps/api_rcon
+      - ./packages:/app/packages
     ports:
       - "8000:8000"
     networks:
@@ -53,9 +56,12 @@ services:
     container_name: discord_bot_local
     env_file: .env.local
     environment:
-      - UV_PROJECT_ENVIRONMENT=/app/.venv_api
+      - UV_PROJECT_ENVIRONMENT=/app/.venv
     working_dir: /app/apps/discord_bot
-    command: sh -c "uv cache clean && uv sync && uv run python -m src.main"
+    command: sh -c "uv run python -m src.main"
+    volumes:
+      - ./apps/discord_bot:/app/apps/discord_bot
+      - ./packages:/app/packages
     networks:
       - matefield_local_net
     depends_on:

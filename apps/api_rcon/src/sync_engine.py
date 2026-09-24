@@ -1,10 +1,11 @@
 import asyncio
-from sqlmodel import select, col
+from sqlmodel import select, col, or_
 from typing import Optional
 
 from src.connections.databases.db import engine, Player, Match, MatchPlayerStats, PlayerSession, Team, MatchTeamStats
 from sqlmodel.ext.asyncio.session import AsyncSession
 from src.connections.apis.rcon import rcon_client
+from src.connections.apis.steam import get_player_summary
 import datetime
 import logging
 
@@ -21,6 +22,29 @@ if not logger.handlers:
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     ch.setFormatter(formatter)
     logger.addHandler(ch)
+
+async def _fetch_avatar_background(steam_id: str):
+    try:
+        summary = await get_player_summary(steam_id)
+        if summary:
+            avatar = summary.get("avatarfull") or summary.get("avatarmedium")
+            personaname = summary.get("personaname")
+            if avatar or personaname:
+                async with AsyncSession(engine) as s:
+                    p = await s.get(Player, steam_id)
+                    if p:
+                        changed = False
+                        if avatar and not p.avatar_url:
+                            p.avatar_url = avatar
+                            changed = True
+                        if personaname and not p.in_game_name:
+                            p.in_game_name = personaname
+                            changed = True
+                        if changed:
+                            s.add(p)
+                            await s.commit()
+    except Exception as e:
+        logger.debug(f"[Sync Engine] Could not fetch steam profile for {steam_id}: {e}")
 
 async def poll_rcon():
     global current_rotation_index, current_match_id, current_map
@@ -86,12 +110,15 @@ async def poll_rcon():
                         if not p.steamId:
                             continue
                             
-                        # 1. Ensure Player exists
+                        # 1. Ensure Player exists & update in_game_name
                         db_player = await session.get(Player, p.steamId)
                         if not db_player:
-                            db_player = Player(steam_id=p.steamId, discord_id=None)
+                            db_player = Player(steam_id=p.steamId, discord_id=None, in_game_name=p.name)
                             session.add(db_player)
                             await session.commit()
+                        elif p.name and db_player.in_game_name != p.name:
+                            db_player.in_game_name = p.name
+                            session.add(db_player)
                             
                         # 2. Update MatchPlayerStats
                         if current_match_id:
@@ -99,10 +126,11 @@ async def poll_rcon():
                             team_id = None
                             if p.faction:
                                 faction_name = str(p.faction)
-                                t_stmt = select(Team).where(Team.name == faction_name)
+                                faction_code = faction_name[:3].upper()
+                                t_stmt = select(Team).where(or_(Team.name == faction_name, Team.code == faction_code))
                                 team = (await session.exec(t_stmt)).first()
                                 if not team:
-                                    team = Team(name=faction_name, code=faction_name[:3].upper())
+                                    team = Team(name=faction_name, code=faction_code)
                                     session.add(team)
                                     await session.commit()
                                     await session.refresh(team)
@@ -160,6 +188,7 @@ async def poll_rcon():
                         if sid not in active_session_dict:
                             new_sess = PlayerSession(steam_id=sid, start_time=now)
                             session.add(new_sess)
+                            asyncio.create_task(_fetch_avatar_background(sid))
                             
                     # Match Team Stats & End Detection
                     if current_match_id and status.factionScores:
@@ -174,10 +203,12 @@ async def poll_rcon():
                                     continue
                                 
                                 # Get or create Team
-                                t_stmt = select(Team).where(Team.name == fs.name)
+                                faction_name = str(fs.name)
+                                faction_code = faction_name[:3].upper()
+                                t_stmt = select(Team).where(or_(Team.name == faction_name, Team.code == faction_code))
                                 team = (await session.exec(t_stmt)).first()
                                 if not team:
-                                    team = Team(name=fs.name, code=fs.name[:3].upper())
+                                    team = Team(name=faction_name, code=faction_code)
                                     session.add(team)
                                     await session.commit()
                                     await session.refresh(team)

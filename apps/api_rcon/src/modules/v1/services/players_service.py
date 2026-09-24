@@ -12,7 +12,24 @@ from src.modules.v1.schemas.dtos import LinkAccountRequest, UnlinkAccountRequest
 class PlayersService:
     @staticmethod
     async def link_account(req: LinkAccountRequest, session: AsyncSession) -> Dict[str, Any]:
+        # 1. Validar que el SteamID no esté ya vinculado a otra cuenta de Discord
         player = await session.get(Player, req.steam_id)
+        if player and player.discord_id and player.discord_id != req.discord_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El Steam ID '{req.steam_id}' ya está vinculado a otra cuenta de Discord."
+            )
+
+        # 2. Validar que esta cuenta de Discord no esté ya vinculada a otro SteamID
+        existing_discord = (await session.exec(
+            select(Player).where(Player.discord_id == req.discord_id)
+        )).first()
+        if existing_discord and existing_discord.steam_id != req.steam_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tu cuenta de Discord ya está vinculada al Steam ID '{existing_discord.steam_id}'. Usa /player unlink primero."
+            )
+
         if not player:
             player = Player(steam_id=req.steam_id, discord_id=req.discord_id)
             session.add(player)
@@ -27,7 +44,7 @@ class PlayersService:
         statement = select(Player).where(Player.discord_id == req.discord_id)
         player = (await session.exec(statement)).first()
         if not player:
-            raise HTTPException(status_code=404, detail="Player not found for this Discord ID")
+            raise HTTPException(status_code=404, detail="No se encontró ningún jugador vinculado a esta cuenta de Discord.")
         player.discord_id = None
         session.add(player)
         await session.commit()
@@ -90,11 +107,17 @@ class PlayersService:
         elif active_roles:
             primary_role = active_roles[0]
             
+
+
         return {
+            "name": player.in_game_name,
+            "in_game_name": player.in_game_name,
+            "avatar_url": player.avatar_url,
             "discord_id": player.discord_id, 
             "custom_welcome_message": player.custom_welcome_message,
             "observations": player.observations,
             "active_role": primary_role,
+            "memberships": active_memberships,
             "active_memberships": active_memberships,
             "special_roles": [r.code for r in special_roles]
         }
@@ -131,7 +154,16 @@ class PlayersService:
             raise HTTPException(status_code=404, detail="Player not found")
             
         if req.discord_id is not None:
-            player.discord_id = req.discord_id if req.discord_id else None
+            if req.discord_id:
+                existing = (await session.exec(select(Player).where(Player.discord_id == req.discord_id))).first()
+                if existing and existing.steam_id != steam_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Esta cuenta de Discord ya está vinculada al Steam ID '{existing.steam_id}'."
+                    )
+                player.discord_id = req.discord_id
+            else:
+                player.discord_id = None
         if req.custom_welcome_message is not None:
             player.custom_welcome_message = req.custom_welcome_message if req.custom_welcome_message else None
         if req.observations is not None:
@@ -170,7 +202,7 @@ class PlayersService:
         statement = statement.order_by(col(Player.steam_id)).offset(offset).limit(limit)
         db_players = (await session.exec(statement)).all()
         
-        paginated_results = []
+        paginated_results: List[Dict[str, Any]] = []
         for p in db_players:
             paginated_results.append({
                 "steam_id": p.steam_id,
@@ -180,17 +212,24 @@ class PlayersService:
                 "name": "Sin Nickname"
             })
             
-        async def fetch_name(p):
-            summary = await get_player_summary(p["steam_id"])
-            if summary and "personaname" in summary:
-                p["name"] = summary["personaname"]
-                
-        await asyncio.gather(*(fetch_name(p) for p in paginated_results))
-        
-        for p in paginated_results:
-            stmt = select(Membership).where(Membership.steam_id == p["steam_id"], Membership.is_active == True)
+        steam_ids = [p["steam_id"] for p in paginated_results]
+        if steam_ids:
+            summaries = await get_player_summaries(steam_ids)
+            for p in paginated_results:
+                summary = summaries.get(p["steam_id"])
+                if summary and "personaname" in summary:
+                    p["name"] = summary["personaname"]
+                    
+            stmt = select(Membership).where(col(Membership.steam_id).in_(steam_ids), Membership.is_active == True)
             memberships = (await session.exec(stmt)).all()
-            p["active_memberships"] = [m.membership_type for m in memberships]
+            mem_map: Dict[str, List[str]] = {}
+            for m in memberships:
+                mem_map.setdefault(m.steam_id, []).append(m.membership_type)
+            for p in paginated_results:
+                p["active_memberships"] = mem_map.get(p["steam_id"], [])
+        else:
+            for p in paginated_results:
+                p["active_memberships"] = []
             
         return {
             "total": total,

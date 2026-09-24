@@ -655,8 +655,7 @@ class TebexWebhookService:
 
         revoked_memberships = (await session.exec(stmt)).all()
         for m in revoked_memberships:
-            m.is_active = False
-            session.add(m)
+            await MembershipsService._deactivate_membership(m, session, revoke_special_role=True)
         await session.commit()
 
         # Immediately revoke reserved slot via RCON sync

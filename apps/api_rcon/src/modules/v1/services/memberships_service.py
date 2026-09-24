@@ -77,7 +77,7 @@ class MembershipsService:
                     end_date = start_date + remaining_time + timedelta(days=days_to_add) if days_to_add > 0 else None
                     
             # Expire the old membership to keep history intact
-            existing_membership.is_active = False
+            await MembershipsService._deactivate_membership(existing_membership, session)
             existing_membership.end_time = start_date # Mark it as ended now
             session.add(existing_membership)
         
@@ -119,13 +119,72 @@ class MembershipsService:
         return {"ok": True, "message": "Membership added"}
 
     @staticmethod
+    async def _deactivate_membership(m: Membership, session: AsyncSession, revoke_special_role: bool = False) -> None:
+        """
+        Desactiva una membresía (is_active = False).
+        Por regla de negocio, los roles especiales (ej. VIP Fundador, insignias) son permanentes
+        en la cuenta del jugador y perduran para siempre aunque la membresía expire.
+        Solo se revocan de PlayerRole si revoke_special_role=True (exclusivamente ante reembolsos o disputas en Tebex).
+        """
+        m.is_active = False
+        session.add(m)
+        if revoke_special_role and m.special_role_id:
+            other_active = (await session.exec(select(Membership).where(
+                Membership.steam_id == m.steam_id,
+                Membership.special_role_id == m.special_role_id,
+                Membership.is_active == True,
+                Membership.id != m.id
+            ))).first()
+            if not other_active:
+                pr = (await session.exec(select(PlayerRole).where(
+                    PlayerRole.steam_id == m.steam_id,
+                    PlayerRole.role_id == m.special_role_id
+                ))).first()
+                if pr:
+                    await session.delete(pr)
+
+    @staticmethod
     async def edit_membership(membership_id: int, req: EditMembershipRequest, session: AsyncSession) -> Dict[str, Any]:
         membership = await session.get(Membership, membership_id)
         if not membership:
             raise HTTPException(status_code=404, detail="Membership not found")
             
         if req.membership_type is not None:
+            norm_type = req.membership_type.strip().upper()
             membership.membership_type = req.membership_type
+            
+            # Si se edita el tipo y no se pasaron días explícitos, ajustar la fecha de acuerdo al tipo (achicarse o agrandarse)
+            if req.days is None:
+                m_type = (await session.exec(select(MembershipType).where(func.upper(MembershipType.code) == norm_type))).first()
+                if m_type is not None:
+                    type_days = m_type.default_days
+                else:
+                    if norm_type == "VIP_PERMANENTE":
+                        type_days = 0
+                    else:
+                        config_key = f"ROLE_DAYS_{norm_type}"
+                        config_days = (await session.exec(select(BotConfig).where(BotConfig.config_key == config_key))).first()
+                        if config_days and config_days.config_value.isdigit():
+                            type_days = int(config_days.config_value)
+                        elif norm_type == "VIP_EXPRESS":
+                            type_days = 15
+                        else:
+                            type_days = 30
+                
+                start_base = membership.start_time or datetime.now(timezone.utc)
+                if start_base.tzinfo is None:
+                    start_base = start_base.replace(tzinfo=timezone.utc)
+                
+                if type_days == 0 or norm_type == "VIP_PERMANENTE":
+                    membership.end_time = None
+                    if req.is_active is None:
+                        membership.is_active = True
+                else:
+                    membership.end_time = start_base + timedelta(days=type_days)
+                    if req.is_active is None:
+                        now_utc = datetime.now(timezone.utc)
+                        end_comp = membership.end_time if membership.end_time.tzinfo else membership.end_time.replace(tzinfo=timezone.utc)
+                        membership.is_active = end_comp > now_utc
             
         if req.days is not None:
             if req.days == 0:
@@ -138,21 +197,11 @@ class MembershipsService:
                 membership.end_time = membership.end_time + timedelta(days=req.add_days)
                 
         if req.is_active is not None:
-            membership.is_active = req.is_active
-            if not req.is_active and membership.special_role_id:
-                other_active = (await session.exec(select(Membership).where(
-                    Membership.steam_id == membership.steam_id,
-                    Membership.special_role_id == membership.special_role_id,
-                    Membership.is_active == True,
-                    Membership.id != membership.id
-                ))).first()
-                if not other_active:
-                    pr = (await session.exec(select(PlayerRole).where(
-                        PlayerRole.steam_id == membership.steam_id,
-                        PlayerRole.role_id == membership.special_role_id
-                    ))).first()
-                    if pr:
-                        await session.delete(pr)
+            if not req.is_active:
+                await MembershipsService._deactivate_membership(membership, session)
+            else:
+                membership.is_active = True
+                session.add(membership)
 
         if req.is_booster is not None:
             membership.is_booster = req.is_booster
@@ -185,32 +234,33 @@ class MembershipsService:
         if not membership:
             raise HTTPException(status_code=404, detail="Membership not found")
             
-        if membership.special_role_id:
-            other_active = (await session.exec(select(Membership).where(
-                Membership.steam_id == membership.steam_id,
-                Membership.special_role_id == membership.special_role_id,
-                Membership.is_active == True,
-                Membership.id != membership.id
-            ))).first()
-            if not other_active:
-                pr = (await session.exec(select(PlayerRole).where(
-                    PlayerRole.steam_id == membership.steam_id,
-                    PlayerRole.role_id == membership.special_role_id
-                ))).first()
-                if pr:
-                    await session.delete(pr)
-
         await session.delete(membership)
         await session.commit()
         return {"ok": True, "message": "Membership deleted"}
 
     @staticmethod
-    async def get_paginated_memberships(page: int, limit: int, session: AsyncSession) -> Dict[str, Any]:
+    async def get_paginated_memberships(page: int, limit: int, session: AsyncSession, discord_id: Optional[str] = None) -> Dict[str, Any]:
+        target_steam_id = None
+        if discord_id:
+            player = (await session.exec(select(Player).where(Player.discord_id == discord_id))).first()
+            if not player:
+                return {
+                    "page": page,
+                    "limit": limit,
+                    "total": 0,
+                    "memberships": []
+                }
+            target_steam_id = player.steam_id
+
         offset = (page - 1) * limit
-        statement = select(Membership).order_by(col(Membership.start_time).desc()).offset(offset).limit(limit)
-        memberships = (await session.exec(statement)).all()
-        
+        statement = select(Membership).order_by(col(Membership.start_time).desc())
         total_statement = select(func.count(col(Membership.id)))
+        if target_steam_id:
+            statement = statement.where(Membership.steam_id == target_steam_id)
+            total_statement = total_statement.where(Membership.steam_id == target_steam_id)
+
+        statement = statement.offset(offset).limit(limit)
+        memberships = (await session.exec(statement)).all()
         total = (await session.exec(total_statement)).one()
         
         results = []
@@ -230,7 +280,9 @@ class MembershipsService:
                 "server_id": m.server_id,
                 "start_date": m.start_time.isoformat(),
                 "end_date": m.end_time.isoformat() if m.end_time else None,
-                "special_role": special_role_name
+                "special_role": special_role_name,
+                "special_role_id": m.special_role_id,
+                "rcon_sync_status": "SUCCESS" if m.is_active else "INACTIVE",
             })
         
         return {
@@ -252,8 +304,7 @@ class MembershipsService:
         )
         expired = (await session.exec(expired_stmt)).all()
         for m in expired:
-            m.is_active = False
-            session.add(m)
+            await MembershipsService._deactivate_membership(m, session)
                         
         if expired:
             await session.commit()

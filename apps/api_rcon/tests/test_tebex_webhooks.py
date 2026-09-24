@@ -381,3 +381,62 @@ async def test_tebex_recurring_payment_status_changed_cancelled(client, session)
     assert pr is not None
     assert pr.status == "CANCELLED"
 
+
+@pytest.mark.asyncio
+async def test_tebex_refund_revokes_special_role(client, session):
+    from src.connections.databases.db import Role, PlayerRole
+
+    steam_id = "76561198000000999"
+    tx_id = "tx-refund-special-role-1"
+
+    player = Player(steam_id=steam_id, discord_id="discord-refunder")
+    role = Role(code="VIP_FUNDADOR", name="VIP Fundador", role_type="SPECIAL", discord_role_id="999888111")
+    session.add_all([player, role])
+    await session.commit()
+    await session.refresh(role)
+    assert role.id is not None
+
+    pr = PlayerRole(steam_id=steam_id, role_id=role.id)
+    membership = Membership(
+        steam_id=steam_id,
+        membership_type="VIP_FUNDADOR",
+        special_role_id=role.id,
+        is_active=True,
+        tebex_transaction_id=tx_id,
+        start_time=datetime.now(timezone.utc),
+        end_time=datetime.now(timezone.utc) + timedelta(days=30)
+    )
+    session.add_all([pr, membership])
+    await session.commit()
+
+    # Pre-condition: player has the special role
+    active_pr = (await session.exec(select(PlayerRole).where(PlayerRole.steam_id == steam_id))).first()
+    assert active_pr is not None
+
+    # Refund webhook event
+    payload = {
+        "id": "evt-refund-1",
+        "type": "payment.refunded",
+        "subject": {
+            "transaction_id": tx_id,
+            "status": {"id": 3, "description": "Refunded"},
+            "customer": {
+                "username": {
+                    "id": steam_id,
+                    "username": "RefunderSteam"
+                }
+            }
+        }
+    }
+
+    resp = await client.post("/api/v1/webhooks/tebex", json=payload)
+    assert resp.status_code == 200
+
+    # Membership deactivated
+    await session.refresh(membership)
+    assert membership.is_active is False
+
+    # Special role revoked because of refund!
+    revoked_pr = (await session.exec(select(PlayerRole).where(PlayerRole.steam_id == steam_id))).first()
+    assert revoked_pr is None
+

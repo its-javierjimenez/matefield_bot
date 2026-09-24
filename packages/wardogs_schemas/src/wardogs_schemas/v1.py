@@ -161,6 +161,7 @@ class MapSelection(BaseModel):
 class ReasonRequest(BaseModel):
     reason: str | None = None
     duration_days: int | None = None
+    solo_discord: bool = False
 
 
 class BanRequest(BaseModel):

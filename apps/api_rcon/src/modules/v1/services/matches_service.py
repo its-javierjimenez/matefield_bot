@@ -86,9 +86,9 @@ class MatchesService:
         
         statement = (
             select(MatchPlayerStats.steam_id, Player.discord_id, func.sum(metric_col).label("total"))
-            .join(Player, MatchPlayerStats.steam_id == Player.steam_id)
-            .group_by(MatchPlayerStats.steam_id, Player.discord_id)
-            .order_by(col(func.sum(metric_col)).desc())
+            .join(Player, col(MatchPlayerStats.steam_id) == col(Player.steam_id))
+            .group_by(col(MatchPlayerStats.steam_id), col(Player.discord_id))
+            .order_by(func.sum(metric_col).desc())
             .limit(limit)
         )
         

@@ -66,3 +66,22 @@ async def test_api_client_request_delegation():
         mock_req.assert_called_once_with("GET", "http://127.0.0.1:8000/api/v1/test")
 
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_api_client_download_file_bytes():
+    client = APIClient(base_url="http://127.0.0.1:8000", api_key="secret-key")
+
+    mock_response = AsyncMock()
+    mock_response.read = AsyncMock(return_value=b"col1,col2\nval1,val2")
+    mock_response.raise_for_status = MagicMock()
+
+    mock_get_ctx = AsyncMock()
+    mock_get_ctx.__aenter__.return_value = mock_response
+
+    with patch.object(aiohttp.ClientSession, "get", return_value=mock_get_ctx) as mock_get:
+        data = await client.download_file_bytes("/api/v1/download/test.csv")
+        assert data == b"col1,col2\nval1,val2"
+        mock_get.assert_called_once_with("http://127.0.0.1:8000/api/v1/download/test.csv")
+
+    await client.close()

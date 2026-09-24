@@ -60,3 +60,26 @@ El bot de Discord reconcilia los roles de los usuarios de forma autónoma median
 
 - **Backups Automáticos en VPS**: La API RCON ejecuta una rutina periódica en segundo plano (`db_backup_loop`) cada 12 horas que genera un volcado transaccional completo en formato SQL estándar en `data/backups/` (`backup_<timestamp>.sql` y `latest.sql`) aplicando una política de retención automática de 14 días.
 - **Exportación CSV On-Demand (`/membership export`)**: Genera de forma asíncrona un archivo CSV (`memberships_export_<timestamp>.csv`) con codificación UTF-8 con BOM (`utf-8-sig`) para compatibilidad nativa con Microsoft Excel y Google Sheets. El bot devuelve un enlace firmado con token HMAC-SHA256 válido por 30 minutos, permitiendo la descarga directa desde la API sin saturar Discord con transferencias de archivos pesados.
+
+## 6. Compensación de Días y Comportamiento con Tebex
+
+El sistema cuenta con mecanismos para recompensar tiempo a los jugadores ante imprevistos técnicos o caídas de servidor:
+
+### Comandos de Compensación
+- **`/membership compensate_all <dias>`**: Masivo. Recorre todas las membresías activas en base de datos (`is_active == True` y `end_time != None`) y añade los días indicados a su fecha de expiración (`end_time = end_time + timedelta(days=dias)`).
+- **`/membership extend <id_membresia> <dias>`**: Individual. Extiende una membresía puntual por su ID sumando días a su vencimiento actual.
+
+### Comportamiento según el Origen de la Membresía
+1. **Compras Directas / Únicas (Manuales o Tebex):**
+   - El desplazamiento de `end_time` es 100% directo. El jugador conserva sus slots reservados in-game y roles en Discord hasta que la nueva fecha extendida sea alcanzada.
+2. **Suscripciones Recurrentes de Tebex (`recurring-payment`):**
+   - **En el Bot y Servidor de Juego (Beneficios):** La rutina de renovación de webhooks (`recurring-payment.renewed`) evalúa la fecha actual contra `end_time`. Si `end_time > now` (es decir, el usuario aún tiene días a favor por una compensación previa), los nuevos días de la suscripción se **acumulan al final** de la fecha compensada (`membership.end_time = m_end + timedelta(days=days_added)`). El jugador **nunca pierde** los días regalados.
+   - **En la Pasarela Bancaria de Tebex (Facturación):** El cobro financiero se rige por el calendario propio de Tebex/Stripe/PayPal (factura automáticamente cada 30 días según su ciclo). La compensación no retrasa el cobro en la pasarela externa, pero garantiza que el usuario acumula el tiempo en su cuenta del juego y, si cancela la suscripción en Tebex, conservará el acceso hasta agotar el último día acumulado.
+
+## 7. Ciclo de Vida: Membresías Temporales vs Roles Especiales Permanentes
+
+El sistema separa con precisión el acceso temporal al servidor de las credenciales o insignias vitalicias de la cuenta:
+
+- **Membresías Temporales (`Membership`)**: Controlan el acceso a slots reservados en el juego (RCON) y roles temporales en Discord mientras estén activas (`is_active = True` y `end_time > now`). Al cumplirse la fecha de vencimiento, pasan a inactivas y se retira el slot reservado y el rol de suscripción en Discord.
+- **Roles Especiales Permanentes (`Role` y `PlayerRole`)**: Representan títulos, privilegios de por vida o insignias (como "VIP Fundador", "Veterano" o "Staff"). Al adquirirse (mediante un paquete de Tebex que incluya el rol o asignación administrativa), quedan vinculados permanentemente al Steam ID del jugador en la tabla `player_roles`.
+- **Regla Estricta de Revocación**: La expiración natural o finalización de una membresía **nunca retira el rol especial** de la cuenta del jugador (el fundador conserva su distinción y beneficios permanentes para siempre). El rol especial **solo se revoca automáticamente** en caso de **reembolso o disputa bancaria en Tebex** (`payment.refunded` / `payment.dispute.won`, donde se revierte el dinero), o de forma manual por un administrador mediante `/roles remove`.

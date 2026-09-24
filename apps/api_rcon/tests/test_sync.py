@@ -183,3 +183,85 @@ async def test_sync_only_removes_role_when_all_memberships_expire(client: AsyncC
 
     assert "VIP_EXPRESS" in user_entry["active_memberships"]
     assert "VIP_MVP_GIFT" not in user_entry["active_memberships"]
+
+
+@pytest.mark.asyncio
+async def test_sync_preserves_special_role_on_expiration(client: AsyncClient, session: AsyncSession):
+    from src.connections.databases.db import PlayerRole
+    from sqlmodel import select
+
+    now = datetime.now(timezone.utc)
+    p = Player(steam_id="ROLE_EXPIRE_STEAM", discord_id="777888999")
+    r = Role(code="CUSTOM_VIP", name="Custom VIP", role_type="SPECIAL", discord_role_id="111999")
+    session.add_all([p, r])
+    await session.commit()
+    await session.refresh(r)
+    assert r.id is not None
+
+    pr = PlayerRole(steam_id="ROLE_EXPIRE_STEAM", role_id=r.id)
+    m = Membership(
+        steam_id="ROLE_EXPIRE_STEAM",
+        membership_type="VIP_CUSTOM",
+        special_role_id=r.id,
+        is_active=True,
+        start_time=now - timedelta(days=35),
+        end_time=now - timedelta(days=5)
+    )
+    session.add_all([pr, m])
+    await session.commit()
+
+    # Pre-condition: player has PlayerRole
+    active_pr = (await session.exec(select(PlayerRole).where(PlayerRole.steam_id == "ROLE_EXPIRE_STEAM"))).first()
+    assert active_pr is not None
+
+    # Sync
+    response = await client.post("/api/v1/db/sync_memberships")
+    assert response.status_code == 200
+
+    # Post-condition: membership expired, but special role is PERMANENT and preserved
+    await session.refresh(m)
+    assert m.is_active is False
+
+    preserved_pr = (await session.exec(select(PlayerRole).where(PlayerRole.steam_id == "ROLE_EXPIRE_STEAM"))).first()
+    assert preserved_pr is not None
+
+
+@pytest.mark.asyncio
+async def test_ban_solo_discord_db_status_and_sync(client: AsyncClient, session: AsyncSession, mocker):
+    from src.connections.databases.db import Ban
+    from sqlmodel import select
+
+    mock_rcon_sync = mocker.patch("src.connections.apis.rcon.RCONClient.sync_banned_slots", return_value=None)
+    mock_rcon_ban = mocker.patch("src.connections.apis.rcon.RCONClient.ban_player", return_value=None)
+    mocker.patch("src.connections.apis.rcon.RCONClient.get_bans", return_value=[])
+
+    # 1. Ban player with solo_discord = True
+    resp = await client.post("/api/v1/players/SOLO_DISCORD_STEAM_123/ban", json={
+        "reason": "Reglas de Discord",
+        "duration_days": 0,
+        "solo_discord": True
+    })
+    assert resp.status_code == 200
+
+    # Verify RCON real-time ban was NOT called
+    mock_rcon_ban.assert_not_called()
+
+    # Verify Ban entry in DB is active with DISCORD_ONLY
+    ban = (await session.exec(select(Ban).where(Ban.steam_id == "SOLO_DISCORD_STEAM_123"))).first()
+    assert ban is not None
+    assert ban.is_active is True
+    assert ban.rcon_sync_status == "DISCORD_ONLY"
+
+    # 2. Trigger sync_bans -> should NOT push DISCORD_ONLY bans to RCON servers
+    sync_resp = await client.post("/api/v1/db/sync_bans")
+    assert sync_resp.status_code == 200
+
+    if mock_rcon_sync.called:
+        for call_args in mock_rcon_sync.call_args_list:
+            slots = call_args[0][0]
+            assert "SOLO_DISCORD_STEAM_123" not in slots
+
+    # Ban status must remain DISCORD_ONLY in DB
+    await session.refresh(ban)
+    assert ban.rcon_sync_status == "DISCORD_ONLY"
+

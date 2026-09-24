@@ -10,9 +10,6 @@ services:
       - "8000:8000"
     networks:
       - wardogs_prod_net
-    depends_on:
-      postgres-db:
-        condition: service_healthy
   discord_bot:
     build:
       context: .

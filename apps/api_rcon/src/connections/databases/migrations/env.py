@@ -4,7 +4,21 @@ import sys
 from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../')))
-load_dotenv(os.path.join(os.path.dirname(__file__), '../../../../../../.env.dev'))
+
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../../../'))
+
+if not os.environ.get("DATABASE_URL"):
+    env_file = os.environ.get("ENV_FILE")
+    if env_file:
+        load_dotenv(env_file, override=True)
+    elif os.environ.get("ENV") == "prod":
+        load_dotenv(os.path.join(root_dir, ".env.prod"), override=True)
+    elif os.environ.get("ENV") == "local":
+        load_dotenv(os.path.join(root_dir, ".env.local"), override=True)
+    elif os.path.exists(os.path.join(root_dir, ".env.dev")):
+        load_dotenv(os.path.join(root_dir, ".env.dev"), override=True)
+    elif os.path.exists(os.path.join(root_dir, ".env")):
+        load_dotenv(os.path.join(root_dir, ".env"), override=True)
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -72,15 +86,20 @@ def do_run_migrations(connection: Connection) -> None:
         context.run_migrations()
 
 
+from sqlalchemy.ext.asyncio import create_async_engine
+
 async def run_async_migrations() -> None:
     """In this scenario we need to create an Engine
     and associate a connection with the context.
 
     """
+    url = os.environ.get('DATABASE_URL') or config.get_main_option("sqlalchemy.url")
+    if not url:
+        from src.config import ENVIRONMENT_SETTINGS
+        url = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.DATABASE_URL
 
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
+    connectable = create_async_engine(
+        url,
         poolclass=pool.NullPool,
     )
 

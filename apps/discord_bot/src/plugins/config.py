@@ -1,8 +1,12 @@
+import logging
+import asyncio
 import crescent
 import hikari
 from src.model import Model
 from src.hooks import admin_only
-from src.groups import config_group, roles_group, whitelist_group, ban_role_group
+from src.groups import config_group, roles_group, whitelist_group, ban_role_group, role_group
+
+logger = logging.getLogger(__name__)
 
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 
@@ -232,3 +236,124 @@ class ListBanRoles:
             return
             
         await ctx.respond("**Roles de Baneos:\n" + "\n".join(lines))
+
+
+async def _sync_retroactive_link_role(ctx: crescent.Context, guild_id: int, role_id: int) -> tuple[int, int]:
+    assigned_count = 0
+    already_had_count = 0
+    page = 1
+    limit = 100
+    try:
+        while True:
+            res = await plugin.model.api.get_paginated_players(page=page, limit=limit, linked="linked")
+            players = res.get("players", [])
+            if not players:
+                break
+            for p in players:
+                d_id_str = p.get("discord_id")
+                if not d_id_str or not d_id_str.isdigit():
+                    continue
+                try:
+                    d_id = int(d_id_str)
+                    await asyncio.sleep(0.05)
+                    member = plugin.app.cache.get_member(guild_id, d_id)
+                    if not member:
+                        member = await plugin.app.rest.fetch_member(guild_id, d_id)
+                    if member:
+                        if role_id not in member.role_ids:
+                            await member.add_role(role_id, reason="Rol de vinculación asignado retroactivamente (/role set_link)")
+                            assigned_count += 1
+                        else:
+                            already_had_count += 1
+                except hikari.NotFoundError:
+                    continue
+                except hikari.ForbiddenError as fe:
+                    logger.warning(f"Permisos insuficientes para asignar rol {role_id} en guild {guild_id}: {fe}")
+                    break
+                except Exception as ex:
+                    logger.debug(f"No se pudo asignar rol de link a {d_id_str}: {ex}")
+
+            total = res.get("total", 0)
+            if len(players) < limit or page * limit >= total:
+                break
+            page += 1
+
+        summary = f"✅ Rol de vinculación configurado a <@&{role_id}>. Se otorgará automáticamente al usar `/player link`.\n🔗 **Sincronización retroactiva finalizada:** {assigned_count} rol(es) asignado(s)"
+        if already_had_count > 0:
+            summary += f" ({already_had_count} ya lo tenían)."
+        else:
+            summary += "."
+        try:
+            await ctx.edit(content=summary)
+        except Exception as edit_err:
+            logger.debug(f"No se pudo actualizar mensaje de /role set_link: {edit_err}")
+    except Exception as e:
+        logger.error(f"Error al sincronizar rol de vinculación retroactivo: {e}")
+    return assigned_count, already_had_count
+
+
+@plugin.include
+@crescent.hook(admin_only)
+@role_group.child
+@crescent.command(name="set_link", description="Configura el rol que se otorga automáticamente al vincular la cuenta")
+class RoleSetLink:
+    rol = crescent.option(hikari.Role, "Rol a asignar al vincular (opcional, omitir para desactivar)", default=None)
+
+    async def callback(self, ctx: crescent.Context) -> asyncio.Task | None:
+        await ctx.defer(ephemeral=True)
+        if self.rol:
+            if getattr(self.rol, "is_managed", False) is True:
+                await ctx.respond("❌ No se puede asignar un rol administrado por Discord/integraciones.")
+                return None
+
+            await plugin.model.api.set_bot_config("LINK_ROLE_ID", str(self.rol.id))
+            
+            if ctx.guild_id:
+                await ctx.respond(
+                    f"✅ Rol de vinculación configurado a <@&{self.rol.id}>. Se otorgará automáticamente al usar `/player link`.\n"
+                    f"⏳ Sincronizando usuarios vinculados en este servidor en segundo plano..."
+                )
+                task = asyncio.create_task(_sync_retroactive_link_role(ctx, ctx.guild_id, self.rol.id))
+                return task
+            else:
+                await ctx.respond(f"✅ Rol de vinculación configurado a <@&{self.rol.id}>. Se otorgará automáticamente al usar `/player link`.")
+                return None
+        else:
+            await plugin.model.api.set_bot_config("LINK_ROLE_ID", "")
+            await ctx.respond("✅ Rol de vinculación desactivado.")
+            return None
+
+
+@plugin.include
+@crescent.hook(admin_only)
+@role_group.child
+@crescent.command(name="set_ban", description="Configura el rol que se otorga automáticamente al banear a un usuario")
+class RoleSetBan:
+    rol = crescent.option(hikari.Role, "Rol a asignar al banear (opcional, omitir para desactivar)", default=None)
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer(ephemeral=True)
+        if self.rol:
+            await plugin.model.api.set_bot_config("BAN_ROLE_DEFAULT", str(self.rol.id))
+            await ctx.respond(f"✅ Rol de baneo configurado a <@&{self.rol.id}>. Se otorgará automáticamente al banear con `/ban add`.")
+        else:
+            await plugin.model.api.set_bot_config("BAN_ROLE_DEFAULT", "")
+            await ctx.respond("✅ Rol de baneo desactivado.")
+
+
+@plugin.include
+@crescent.hook(admin_only)
+@role_group.child
+@crescent.command(name="unset_ban", description="Configura el rol que se remueve al banear y se restituye al desbanear")
+class RoleUnsetBan:
+    rol = crescent.option(hikari.Role, "Rol a remover al banear y devolver al desbanear (opcional, omitir para desactivar)", default=None)
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer(ephemeral=True)
+        if self.rol:
+            await plugin.model.api.set_bot_config("BAN_UNSET_ROLE_ID", str(self.rol.id))
+            await ctx.respond(f"✅ Rol de desbaneo configurado a <@&{self.rol.id}>. Se quitará al banear y se restituirá al desbanear.")
+        else:
+            await plugin.model.api.set_bot_config("BAN_UNSET_ROLE_ID", "")
+            await ctx.respond("✅ Rol de desbaneo desactivado.")
+

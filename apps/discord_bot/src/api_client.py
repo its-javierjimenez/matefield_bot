@@ -27,8 +27,16 @@ class APIClient:
         session = await self._get_session()
         async with session.request(method, url, **kwargs) as response:
             if response.status >= 400:
-                text = await response.text()
-                raise Exception(f"HTTP {response.status}: {text}")
+                detail = None
+                try:
+                    data = await response.json()
+                    if isinstance(data, dict) and "detail" in data:
+                        detail = data["detail"]
+                except Exception:
+                    pass
+                if detail is None:
+                    detail = await response.text()
+                raise Exception(f"HTTP {response.status}: {detail}")
             response.raise_for_status()
             if "application/json" in response.headers.get("Content-Type", ""):
                 return await response.json()
@@ -141,6 +149,13 @@ class APIClient:
         data = await self._request("POST", "/api/v1/db/memberships/export")
         return schemas.ExportMembershipsResponse.model_validate(data).model_dump()
 
+    async def download_file_bytes(self, endpoint: str) -> bytes:
+        url = f"{self.base_url}{endpoint}"
+        session = await self._get_session()
+        async with session.get(url) as response:
+            response.raise_for_status()
+            return await response.read()
+
     async def remove_special_role(self, steam_id: str, role_id: str) -> None:
         await self._request("DELETE", f"/api/v1/db/players/{steam_id}/roles/{role_id}")
 
@@ -195,8 +210,11 @@ class APIClient:
     async def get_paginated_matches(self, page: int = 1, limit: int = 10) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/db/matches?page={page}&limit={limit}")
         
-    async def get_paginated_memberships(self, page: int = 1, limit: int = 10) -> Dict[str, Any]:
-        return await self._request("GET", f"/api/v1/db/memberships?page={page}&limit={limit}")
+    async def get_paginated_memberships(self, page: int = 1, limit: int = 10, discord_id: Optional[str] = None) -> Dict[str, Any]:
+        url = f"/api/v1/db/memberships?page={page}&limit={limit}"
+        if discord_id:
+            url += f"&discord_id={discord_id}"
+        return await self._request("GET", url)
 
     async def get_steam_player(self, steam_id: str) -> Optional[Dict[str, Any]]:
         try:
@@ -222,12 +240,15 @@ class APIClient:
         payload = schemas.ReasonRequest(reason=reason).model_dump(exclude_none=True)
         await self._request("POST", f"/api/v1/players/{steam_id}/kick", json=payload)
 
-    async def ban_player(self, steam_id: str, reason: str, duration_days: int = 0) -> None:
-        payload = schemas.ReasonRequest(reason=reason, duration_days=duration_days).model_dump(exclude_none=True)
+    async def ban_player(self, steam_id: str, reason: str, duration_days: int = 0, solo_discord: bool = False) -> None:
+        payload = schemas.ReasonRequest(reason=reason, duration_days=duration_days, solo_discord=solo_discord).model_dump(exclude_none=True)
         await self._request("POST", f"/api/v1/players/{steam_id}/ban", json=payload)
         
     async def unban_player(self, steam_id: str) -> None:
         await self._request("POST", f"/api/v1/players/{steam_id}/unban")
+
+    async def sync_bans(self) -> Dict[str, Any]:
+        return await self._request("POST", "/api/v1/db/sync_bans")
 
     async def switch_faction(self, steam_id: str, faction: str) -> None:
         payload = schemas.FactionRequest(faction=faction).model_dump()

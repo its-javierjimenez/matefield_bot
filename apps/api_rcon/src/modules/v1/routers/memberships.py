@@ -37,8 +37,8 @@ async def delete_membership(membership_id: int, session: AsyncSession = Depends(
     return await MembershipsService.delete_membership(membership_id, session)
 
 @router.get("/db/memberships", dependencies=[Depends(verify_api_key_guard)])
-async def get_paginated_memberships(page: int = 1, limit: int = 10, session: AsyncSession = Depends(get_session)):
-    return await MembershipsService.get_paginated_memberships(page, limit, session)
+async def get_paginated_memberships(page: int = 1, limit: int = 10, discord_id: Optional[str] = None, session: AsyncSession = Depends(get_session)):
+    return await MembershipsService.get_paginated_memberships(page, limit, session, discord_id=discord_id)
 
 @router.post("/db/sync_memberships", dependencies=[Depends(verify_api_key_guard)])
 async def sync_memberships_endpoint(session: AsyncSession = Depends(get_session)):

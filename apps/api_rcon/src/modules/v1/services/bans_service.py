@@ -25,7 +25,7 @@ class BansService:
                 except Exception as s_err:
                     logger.warning(f"Failed to fetch bans from {s_info.name} ({s_info.base_url}): {s_err}")
             
-            stmt = select(Ban).where(Ban.is_active == True)
+            stmt = select(Ban).where(Ban.is_active == True, Ban.rcon_sync_status != "DISCORD_ONLY")
             active_bans = (await session.exec(stmt)).all()
             db_steam_ids = set([b.steam_id for b in active_bans])
             
@@ -50,9 +50,9 @@ class BansService:
                 except Exception as s_err:
                     logger.warning(f"Failed to push bans to {s_info.name} ({s_info.base_url}): {s_err}")
             
-            # Mark pending DB bans as SUCCESS
+            # Mark pending DB bans as SUCCESS (excluding DISCORD_ONLY)
             for b in active_bans:
-                if b.rcon_sync_status != "SUCCESS":
+                if b.rcon_sync_status != "SUCCESS" and b.rcon_sync_status != "DISCORD_ONLY":
                     b.rcon_sync_status = "SUCCESS"
                     session.add(b)
                     
@@ -81,18 +81,21 @@ class BansService:
             session.add(player)
             await session.flush()
             
-        ban_entry = Ban(steam_id=steam_id, reason=reason, is_active=True, rcon_sync_status="PENDING", expires_at=expires_at)
+        is_solo_discord = getattr(req, "solo_discord", False)
+        status = "DISCORD_ONLY" if is_solo_discord else "PENDING"
+        ban_entry = Ban(steam_id=steam_id, reason=reason, is_active=True, rcon_sync_status=status, expires_at=expires_at)
         session.add(ban_entry)
         await session.commit()
         
-        active_servers = await RCONManager.get_all_active_servers(session)
-        for s_info, client in active_servers:
-            try:
-                await client.ban_player(steam_id, reason)
-            except Exception as e:
-                logger.warning(f"Failed to execute real-time ban on {s_info.name}: {e}")
-        
-        await BansService.sync_bans(session)
+        if not is_solo_discord:
+            active_servers = await RCONManager.get_all_active_servers(session)
+            for s_info, client in active_servers:
+                try:
+                    await client.ban_player(steam_id, reason)
+                except Exception as e:
+                    logger.warning(f"Failed to execute real-time ban on {s_info.name}: {e}")
+            
+            await BansService.sync_bans(session)
         return {"ok": True}
 
     @staticmethod

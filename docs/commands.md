@@ -22,7 +22,7 @@ Gestión completa del ciclo de vida de membresías VIP, cupos y sincronizaciones
 - `/membership list` `[Staff / Admin]`
   - **Descripción**: Muestra la lista paginada e interactiva de todas las membresías activas e históricas, incluyendo tags de estado (`🟢 Activa` / `🔴 Inactiva`), roles especiales asignados y si es `⚡ Booster`.
 - `/membership edit` `[Staff / Admin]`
-  - **Descripción**: Edita los detalles de una membresía existente (duración, tipo, estado activo/inactivo o condición de booster).
+  - **Descripción**: Edita los detalles de una membresía existente (duración, tipo, estado activo/inactivo o condición de booster). Si se modifica el `tipo` sin especificar `dias`, el sistema ajusta dinámicamente la fecha de vencimiento (`end_time`) de acuerdo a la duración del nuevo tipo (o permanente).
   - **Parámetros**: `id_membresia`, `dias` *(opcional)*, `tipo` *(opcional)*, `activa` *(opcional)*, `booster` *(opcional)*.
 - `/membership remove` `[Staff / Admin]`
   - **Descripción**: Elimina una membresía permanentemente de la base de datos por su ID.
@@ -30,7 +30,7 @@ Gestión completa del ciclo de vida de membresías VIP, cupos y sincronizaciones
 - `/membership sync` `[Staff / Admin]`
   - **Descripción**: Fuerza una sincronización inmediata entre la base de datos, el servidor de Discord y los slots reservados de RCON.
 - `/membership compensate_all` `[Staff / Admin]`
-  - **Descripción**: Extiende masivamente todas las membresías activas por una cantidad determinada de días (útil para compensar caídas del servidor).
+  - **Descripción**: Extiende masivamente todas las membresías activas por una cantidad determinada de días (útil para compensar caídas del servidor). *(Nota: En membresías de Tebex de compra única extiende su vigencia total; en suscripciones recurrentes de Tebex, el bot acumula los días compensados a favor del jugador para que no los pierda al renovar).*
   - **Parámetros**: `dias` (Número de días a añadir a cada membresía activa).
 - `/membership extend` `[Staff / Admin]`
   - **Descripción**: Extiende una membresía individual específica por ID.
@@ -64,14 +64,27 @@ Catálogo de roles del sistema y asignación de roles especiales a jugadores.
 
 ---
 
+## ⚙️ Roles Automáticos (`/role`)
+Configuración de roles asignados por eventos del sistema (vinculación y moderación).
+
+- `/role set_link` `[Staff / Admin]`
+  - **Descripción**: Configura el rol de Discord que se otorga automáticamente cuando un usuario vincula su cuenta mediante `/player link` (y se revoca al desvincular con `/player unlink`). Al configurarse, **otorga el rol de inmediato y de forma retroactiva a todos los usuarios que ya estén vinculados** en el servidor de Discord. Omitir el parámetro desactiva el rol de vinculación.
+  - **Parámetros**: `rol` *(opcional)*.
+- `/role set_ban` `[Staff / Admin]`
+  - **Descripción**: Configura el rol de Discord predeterminado que se otorga automáticamente al sancionar a un usuario con `/ban add` (y se remueve al desbanear con `/ban remove`). Omitir el parámetro desactiva el rol.
+  - **Parámetros**: `rol` *(opcional)*.
+
+---
+
 ## 👤 Jugadores (`/player`)
 Gestión de perfil, vinculación de cuentas y mensajes in-game.
 
 - `/player link` `[Público]`
-  - **Descripción**: Vincula tu cuenta de Discord con tu Steam ID64 para habilitar la recepción automática de membresías y roles.
-  - **Parámetros**: `steam_id` (Steam ID64 numérico de 17 dígitos).
+  - **Descripción**: Vincula tu cuenta de Discord con tu Steam ID64 para habilitar la recepción automática de membresías y roles. Relación estricta 1:1: un Steam ID no puede ser vinculado a múltiples cuentas de Discord, ni una cuenta de Discord a múltiples cuentas de Steam (usa `/player unlink` primero si necesitas cambiarlo).
+  - **Parámetros**: `steam_id` (Steam ID64 numérico de 17 dígitos), `usuario` *(opcional, Solo Staff / Admin)*: Permite a un administrador vincular a otro usuario.
 - `/player unlink` `[Público]`
-  - **Descripción**: Desvincula tu cuenta de Discord de tu Steam ID.
+  - **Descripción**: Desvincula tu cuenta de Discord de tu Steam ID y revoca los roles asociados. Solo actúa sobre la cuenta del usuario que lo invoca; el parámetro opcional `usuario` está estrictamente restringido a administradores.
+  - **Parámetros**: `usuario` *(opcional, Solo Staff / Admin)*: Permite a un administrador desvincular a otro usuario.
 - `/player profile` `[Público]`
   - **Descripción**: Muestra tu perfil histórico de jugador (Kills, Deaths, K/D, Cash generado, Membresías activas y Roles).
   - **Parámetros**: `usuario` *(opcional)*: Permite a los administradores consultar el perfil de otro jugador.
@@ -80,6 +93,9 @@ Gestión de perfil, vinculación de cuentas y mensajes in-game.
   - **Parámetros**: `mensaje` (Máximo 60 caracteres).
 - `/player list` `[Staff / Admin]`
   - **Descripción**: Lista todos los jugadores registrados en el sistema de manera paginada.
+- `/player memberships` `[Público / Staff]`
+  - **Descripción**: Muestra el historial completo de membresías de un usuario de Discord de forma paginada e interactiva con botones (◀ Anterior / Siguiente ▶). Muestra ID, Steam ID, tipo, fechas de inicio y fin, estado (`🟢 Activa` / `🔴 Inactiva`), rol especial y estado de sincronización con RCON.
+  - **Parámetros**: `usuario` (Usuario de Discord).
 - `/player edit` `[Staff / Admin]`
   - **Descripción**: Permite a un administrador editar información de un jugador vinculado (Steam ID, Discord ID, observaciones).
 
@@ -120,11 +136,11 @@ Telemetría de la ronda actual de juego.
 Sistema coordinado de sanciones entre RCON y Discord.
 
 - `/ban add` `[Staff / Admin]`
-  - **Descripción**: Banea a un jugador en el servidor de juego vía RCON y registra la sanción en la base de datos (con asignación de rol de castigo en Discord si está vinculado).
-  - **Parámetros**: `steam_id`, `duracion_dias` (0 para permanente), `motivo`.
+  - **Descripción**: Banea a un jugador en el servidor de juego vía RCON o en Discord. Si se pasa un `@usuario` de Discord vinculado, busca automáticamente su Steam ID.
+  - **Parámetros**: `usuario` (opcional si se especifica Steam ID), `steam_id` (opcional si se especifica usuario, admite mención o ID), `reason` (motivo), `dias` (duración en días, 0 = permanente), `solo_discord` (si es `True`, solo asigna el rol de baneo configurado sin sincronizar RCON).
 - `/ban remove` `[Staff / Admin]`
-  - **Descripción**: Desbanea a un jugador en el servidor de juego y remueve los roles de sanción en Discord.
-  - **Parámetros**: `steam_id`, `motivo`.
+  - **Descripción**: Desbanea a un jugador en el servidor de juego y remueve los roles de sanción en Discord. Admite `@usuario` vinculado o `steam_id`.
+  - **Parámetros**: `usuario` (opcional si se especifica Steam ID), `steam_id` (opcional si se especifica usuario), `solo_discord` (solo remueve rol de ban en Discord).
 - `/ban list` `[Staff / Admin]`
   - **Descripción**: Muestra la lista de sanciones activas e históricas registradas en el sistema.
 - `/ban_role map` `[Staff / Admin]`
@@ -213,4 +229,22 @@ Gestión dinámica y conexión simultánea a múltiples servidores RCON en base 
   - **Parámetros**: `server_id`.
 - `/rcon sync_all` `[Staff / Admin]`
   - **Descripción**: Fuerza la sincronización inmediata de slots VIP y listas de baneos en todos los servidores RCON activos de forma distribuida y tolerante a fallos.
+
+---
+
+## 🎭 Roles del Sistema (`/role`)
+Configuración de roles automáticos para vinculación y moderación en Discord.
+
+- `/role set_link` `[Staff / Admin]`
+  - **Descripción**: Configura el rol que se otorga automáticamente al vincular una cuenta (`/player link`) y lo asigna retroactivamente en segundo plano a todos los usuarios vinculados.
+  - **Parámetros**: `rol` *(opcional, omitir para desactivar)*.
+- `/role set_ban` `[Staff / Admin]`
+  - **Descripción**: Configura el rol de castigo que se otorga automáticamente al banear a un usuario con `/ban add`.
+  - **Parámetros**: `rol` *(opcional, omitir para desactivar)*.
+- `/role unset_ban` `[Staff / Admin]`
+  - **Descripción**: Configura el rol que se remueve automáticamente al banear a un usuario y se le restituye al ser desbaneado (actúa como switch inverso con el rol de baneo).
+  - **Parámetros**: `rol` *(opcional, omitir para desactivar)*.
+- `/unban` `[Staff / Admin]`
+  - **Descripción**: Comando directo equivalente a `/ban remove` para desbanear por Discord (`@usuario`) o Steam ID, removiendo el rol de ban y restituyendo el rol de `unset_ban`.
+
 
