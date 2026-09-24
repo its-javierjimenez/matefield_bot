@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Any, Optional, List
-from sqlmodel import select
+from sqlmodel import select, col
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy import func, desc, text
 from datetime import datetime, timedelta, timezone
@@ -18,8 +18,14 @@ from src.connections.databases.db import (
 )
 from src.connections.apis.rcon import rcon_client as rcon
 from src.modules.v1.services.backup_service import (
-    create_database_backup, get_available_backups,
+    create_database_sql_backup, create_database_backup, get_available_backups,
     generate_download_token, verify_download_token, get_backup_dir
+)
+from src.modules.v1.services.export_service import (
+    generate_memberships_csv,
+    generate_export_download_token,
+    verify_export_download_token,
+    get_export_dir,
 )
 
 router = APIRouter(prefix="/v1", tags=["v1"])
@@ -246,7 +252,7 @@ async def get_player_by_steam(steam_id: str, session: AsyncSession = Depends(get
             })
             
     # Fetch configs to resolve special role names
-    configs_stmt = select(BotConfig).where(BotConfig.config_key.in_(["ADMIN_ROLE_ID", "OWNER_ROLE_ID"]))
+    configs_stmt = select(BotConfig).where(col(BotConfig.config_key).in_(["ADMIN_ROLE_ID", "OWNER_ROLE_ID"]))
     configs = (await session.exec(configs_stmt)).all()
     config_dict = {c.config_key: c.config_value for c in configs}
     
@@ -433,15 +439,53 @@ async def edit_membership(membership_id: int, req: EditMembershipRequest, sessio
     if req.membership_type is not None:
         membership.membership_type = req.membership_type
         
+        # Si se edita el tipo y no se pasaron días explícitos, ajustar la fecha de acuerdo al tipo (achicarse o agrandarse)
+        if req.days is None:
+            if req.membership_type.upper() == "VIP_PERMANENTE":
+                membership.end_time = None
+                if req.is_active is None:
+                    membership.is_active = True
+            else:
+                config_key = f"ROLE_DAYS_{req.membership_type.upper()}"
+                config_days = (await session.exec(select(BotConfig).where(BotConfig.config_key == config_key))).first()
+                if config_days:
+                    type_days = int(config_days.config_value)
+                elif req.membership_type.upper() == "VIP_EXPRESS":
+                    type_days = 15
+                else:
+                    type_days = 30
+                
+                start_base = membership.start_time or datetime.now(timezone.utc)
+                if start_base.tzinfo is None:
+                    start_base = start_base.replace(tzinfo=timezone.utc)
+                membership.end_time = start_base + timedelta(days=type_days)
+                if req.is_active is None:
+                    now_utc = datetime.now(timezone.utc)
+                    end_comp = membership.end_time if membership.end_time.tzinfo else membership.end_time.replace(tzinfo=timezone.utc)
+                    membership.is_active = end_comp > now_utc
+        
     if req.days is not None:
         if req.days == 0:
             membership.end_time = None
+            if req.is_active is None:
+                membership.is_active = True
         else:
-            membership.end_time = membership.start_time + timedelta(days=req.days)
+            start_base = membership.start_time or datetime.now(timezone.utc)
+            if start_base.tzinfo is None:
+                start_base = start_base.replace(tzinfo=timezone.utc)
+            membership.end_time = start_base + timedelta(days=req.days)
+            if req.is_active is None:
+                now_utc = datetime.now(timezone.utc)
+                end_comp = membership.end_time if membership.end_time.tzinfo else membership.end_time.replace(tzinfo=timezone.utc)
+                membership.is_active = end_comp > now_utc
             
     if req.add_days is not None:
         if membership.end_time is not None:
             membership.end_time = membership.end_time + timedelta(days=req.add_days)
+            if req.is_active is None:
+                now_utc = datetime.now(timezone.utc)
+                end_comp = membership.end_time if membership.end_time.tzinfo else membership.end_time.replace(tzinfo=timezone.utc)
+                membership.is_active = end_comp > now_utc
             
     if req.is_active is not None:
         membership.is_active = req.is_active
@@ -793,12 +837,35 @@ async def get_all_bot_configs(session: AsyncSession = Depends(get_session)):
     return {"configs": {c.config_key: c.config_value for c in configs}}
 
 @router.get("/db/memberships", dependencies=[Depends(verify_api_key_guard)])
-async def get_paginated_memberships(page: int = 1, limit: int = 10, session: AsyncSession = Depends(get_session)):
+async def get_paginated_memberships(
+    page: int = 1,
+    limit: int = 10,
+    steam_id: Optional[str] = None,
+    discord_id: Optional[str] = None,
+    session: AsyncSession = Depends(get_session)
+):
+    target_steam_id = steam_id
+    if discord_id and not target_steam_id:
+        player_stmt = select(Player).where(Player.discord_id == discord_id)
+        player = (await session.exec(player_stmt)).first()
+        if not player:
+            return {
+                "page": page,
+                "limit": limit,
+                "total": 0,
+                "memberships": []
+            }
+        target_steam_id = player.steam_id
+
+    statement = select(Membership)
+    total_statement = select(func.count(col(Membership.id)))
+    if target_steam_id:
+        statement = statement.where(col(Membership.steam_id) == target_steam_id)
+        total_statement = total_statement.where(col(Membership.steam_id) == target_steam_id)
+
     offset = (page - 1) * limit
-    statement = select(Membership).order_by(Membership.start_time.desc()).offset(offset).limit(limit)  # type: ignore
+    statement = statement.order_by(col(Membership.start_time).desc()).offset(offset).limit(limit)
     memberships = ((await session.exec(statement))).all()
-    
-    total_statement = select(func.count(Membership.id))  # type: ignore
     total = ((await session.exec(total_statement))).one()
     
     results = []
@@ -814,9 +881,11 @@ async def get_paginated_memberships(page: int = 1, limit: int = 10, session: Asy
             "steam_id": m.steam_id,
             "type": m.membership_type,
             "is_active": m.is_active,
-            "start_date": m.start_time.isoformat(),
+            "start_date": m.start_time.isoformat() if m.start_time else None,
             "end_date": m.end_time.isoformat() if m.end_time else None,
-            "special_role": special_role_name
+            "special_role": special_role_name,
+            "special_role_id": m.special_role_id,
+            "rcon_sync_status": m.rcon_sync_status,
         })
     
     return {
@@ -1064,7 +1133,10 @@ async def get_mode_50v50(session: AsyncSession = Depends(get_session)):
 async def enable_mode_50v50(session: AsyncSession = Depends(get_session)):
     # 1. Check current state in database
     cfg_state = await session.get(BotConfig, "MODE_50V50_STATE")
-    current_state = cfg_state.config_value.strip().lower() if cfg_state and cfg_state.config_value else "inactive"
+    if not cfg_state:
+        cfg_state = BotConfig(config_key="MODE_50V50_STATE", config_value="inactive")
+        session.add(cfg_state)
+    current_state = cfg_state.config_value.strip().lower() if cfg_state.config_value else "inactive"
 
     if current_state == "pending_disable":
         # Was scheduled to be disabled: cancel deactivation and keep 50v50 active!
@@ -1152,7 +1224,10 @@ async def enable_mode_50v50(session: AsyncSession = Depends(get_session)):
 async def disable_mode_50v50(session: AsyncSession = Depends(get_session)):
     # 1. Check current state in database
     cfg_state = await session.get(BotConfig, "MODE_50V50_STATE")
-    current_state = cfg_state.config_value.strip().lower() if cfg_state and cfg_state.config_value else "inactive"
+    if not cfg_state:
+        cfg_state = BotConfig(config_key="MODE_50V50_STATE", config_value="inactive")
+        session.add(cfg_state)
+    current_state = cfg_state.config_value.strip().lower() if cfg_state.config_value else "inactive"
 
     if current_state == "active":
         # 50v50 match is currently in progress: schedule deactivation for next match
@@ -1250,7 +1325,10 @@ async def disable_mode_50v50(session: AsyncSession = Depends(get_session)):
 @router.post("/mode50v50/cancel", dependencies=[Depends(verify_api_key_guard)])
 async def cancel_mode_50v50(session: AsyncSession = Depends(get_session)):
     cfg_state = await session.get(BotConfig, "MODE_50V50_STATE")
-    current_state = cfg_state.config_value.strip().lower() if cfg_state and cfg_state.config_value else "inactive"
+    if not cfg_state:
+        cfg_state = BotConfig(config_key="MODE_50V50_STATE", config_value="inactive")
+        session.add(cfg_state)
+    current_state = cfg_state.config_value.strip().lower() if cfg_state.config_value else "inactive"
 
     if current_state == "pending_enable":
         try:
@@ -1327,15 +1405,24 @@ class BackupLinkRequest(BaseModel):
     format: str = "sql"  # "sql" or "csv"
     filename: Optional[str] = None
 
+@router.post("/db/backup", dependencies=[Depends(verify_api_key_guard)])
+async def trigger_database_backup(session: AsyncSession = Depends(get_session)):
+    file_path = await create_database_sql_backup(session)
+    return {
+        "ok": True,
+        "message": f"Backup SQL generado exitosamente: {file_path.name}",
+        "filename": file_path.name,
+        "size_bytes": file_path.stat().st_size
+    }
+
 @router.post("/db/backups/create", dependencies=[Depends(verify_api_key_guard)])
 async def create_backup_endpoint(session: AsyncSession = Depends(get_session)):
     try:
-        sql_file, csv_file = await create_database_backup(session)
+        sql_file = await create_database_sql_backup(session)
         return {
             "ok": True,
             "sql_file": sql_file.name,
-            "csv_file": csv_file.name,
-            "message": "Database backup created successfully on disk"
+            "message": "SQL database backup created successfully on disk"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create backup: {e}")
@@ -1344,6 +1431,63 @@ async def create_backup_endpoint(session: AsyncSession = Depends(get_session)):
 async def list_backups_endpoint():
     backups = get_available_backups()
     return {"backups": backups}
+
+@router.post("/db/memberships/export", dependencies=[Depends(verify_api_key_guard)])
+async def export_memberships_endpoint(
+    request: Request,
+    session: AsyncSession = Depends(get_session)
+):
+    csv_file, filename, count = await generate_memberships_csv(session)
+    expires_in_seconds = 1800  # 30 minutes
+    token = generate_export_download_token(filename, expires_in_seconds=expires_in_seconds)
+
+    public_url = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.PUBLIC_API_URL.strip()
+    if public_url:
+        base_url = public_url.rstrip("/")
+    else:
+        base_url = str(request.base_url).rstrip("/")
+
+    download_url = f"{base_url}/api/v1/db/memberships/export/download/{filename}?token={token}"
+
+    return {
+        "ok": True,
+        "filename": filename,
+        "total_records": count,
+        "size_bytes": csv_file.stat().st_size,
+        "download_url": download_url,
+        "expires_in_seconds": expires_in_seconds
+    }
+
+@router.get("/db/memberships/export/download/{filename}")
+async def download_memberships_export_endpoint(
+    filename: str,
+    token: Optional[str] = None,
+    api_key: Optional[str] = None,
+    api_key_header: Optional[str] = Header(None, alias="X-API-Key")
+):
+    master_key = ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY
+    is_authorized = False
+
+    if token and verify_export_download_token(filename, token):
+        is_authorized = True
+    elif (api_key and api_key == master_key) or (api_key_header and api_key_header == master_key):
+        is_authorized = True
+
+    if not is_authorized:
+        raise HTTPException(status_code=403, detail="Token de descarga inválido o expirado")
+
+    export_dir = get_export_dir().resolve()
+    file_path = (export_dir / filename).resolve()
+
+    if not str(file_path).startswith(str(export_dir)) or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Archivo de exportación no encontrado")
+
+    return FileResponse(
+        path=str(file_path),
+        filename=filename,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
 
 @router.post("/db/backups/link", dependencies=[Depends(verify_api_key_guard)])
 async def get_backup_link_endpoint(
@@ -1355,43 +1499,53 @@ async def get_backup_link_endpoint(
     if req_format not in ("sql", "csv"):
         raise HTTPException(status_code=400, detail="Invalid format. Supported formats: 'sql', 'csv'")
 
+    public_url = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.PUBLIC_API_URL.strip()
+    base_url = public_url.rstrip("/") if public_url else str(request.base_url).rstrip("/")
+
+    # If CSV requested on demand, generate a fresh CSV export on the fly
+    if req_format == "csv":
+        csv_file, filename, count = await generate_memberships_csv(session)
+        expires_in_seconds = 1800
+        token = generate_export_download_token(filename, expires_in_seconds=expires_in_seconds)
+        download_url = f"{base_url}/api/v1/db/memberships/export/download/{filename}?token={token}"
+        return {
+            "ok": True,
+            "filename": filename,
+            "format": "csv",
+            "size_bytes": csv_file.stat().st_size,
+            "download_url": download_url,
+            "expires_in_seconds": expires_in_seconds
+        }
+
     backup_dir = get_backup_dir()
     target_filename = req.filename
 
     if not target_filename:
-        preferred_name = "latest.sql" if req_format == "sql" else "latest.csv"
+        preferred_name = "latest.sql"
         if (backup_dir / preferred_name).is_file():
             target_filename = preferred_name
         else:
-            candidates = [b for b in get_available_backups() if b["format"] == req_format and not b["is_latest"]]
+            candidates = [b for b in get_available_backups() if b["format"] == "sql" and not b["is_latest"]]
             if candidates:
                 target_filename = candidates[0]["filename"]
 
-    # If no file exists yet, generate backup now
+    # If no file exists yet, generate SQL backup now
     if not target_filename or not (backup_dir / target_filename).is_file():
-        await create_database_backup(session)
-        target_filename = "latest.sql" if req_format == "sql" else "latest.csv"
+        await create_database_sql_backup(session)
+        target_filename = "latest.sql"
 
     file_path = (backup_dir / target_filename).resolve()
-    if not file_path.is_file() or not file_path.is_relative_to(backup_dir.resolve()):
+    if not file_path.is_file() or not str(file_path).startswith(str(backup_dir.resolve())):
         raise HTTPException(status_code=404, detail="Requested backup file not found")
 
     expires_in_seconds = 900  # 15 minutes
     token = generate_download_token(target_filename, expires_in_seconds=expires_in_seconds)
-
-    # Determine base URL for link
-    public_url = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.PUBLIC_API_URL.strip()
-    if public_url:
-        base_url = public_url.rstrip("/")
-    else:
-        base_url = str(request.base_url).rstrip("/")
-
     download_url = f"{base_url}/api/v1/db/backups/download/{target_filename}?token={token}"
 
     return {
         "ok": True,
         "filename": target_filename,
-        "format": req_format,
+        "format": "sql",
         "size_bytes": file_path.stat().st_size,
         "download_url": download_url,
         "expires_in_seconds": expires_in_seconds
@@ -1407,7 +1561,7 @@ async def download_backup_endpoint(
     master_key = ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY
     is_authorized = False
 
-    if token and verify_download_token(filename, token):
+    if token and (verify_download_token(filename, token) or verify_export_download_token(filename, token)):
         is_authorized = True
     elif (api_key and api_key == master_key) or (api_key_header and api_key_header == master_key):
         is_authorized = True
@@ -1418,8 +1572,12 @@ async def download_backup_endpoint(
     backup_dir = get_backup_dir().resolve()
     target_file = (backup_dir / filename).resolve()
 
-    if not target_file.is_file() or not target_file.is_relative_to(backup_dir):
-        raise HTTPException(status_code=404, detail="Backup file not found")
+    if not target_file.is_file() or not str(target_file).startswith(str(backup_dir)):
+        # Check export_dir if it's a CSV
+        export_dir = get_export_dir().resolve()
+        target_file = (export_dir / filename).resolve()
+        if not target_file.is_file() or not str(target_file).startswith(str(export_dir)):
+            raise HTTPException(status_code=404, detail="Backup file not found")
 
     if filename.endswith(".sql"):
         media_type = "application/sql"

@@ -1,7 +1,9 @@
 import asyncio
 import crescent
 import hikari
+import math
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 from src.model import Model
@@ -180,6 +182,103 @@ class DbPlayers:
             await ctx.respond(embed=embed, components=components)
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
+
+
+def build_player_memberships_view(
+    app: Any,
+    usuario_id: int,
+    memberships: list[dict],
+    page: int,
+    total: int,
+    limit: int = 5
+) -> tuple[hikari.Embed, list[hikari.api.MessageActionRowBuilder]]:
+    total_pages = max(1, math.ceil(total / limit)) if total > 0 else 1
+    embed = hikari.Embed(
+        title=f"📋 Historial de Membresías: <@{usuario_id}>",
+        description=f"Total de registros: **{total}** | Página **{page}** de **{total_pages}**",
+        color=0x9B59B6
+    )
+
+    if not memberships:
+        embed.description = f"El usuario <@{usuario_id}> no registra membresías en la base de datos."
+    else:
+        for m in memberships:
+            m_id = m.get("id", "?")
+            m_type = m.get("type", "DESCONOCIDO")
+            is_active = m.get("is_active", False)
+            status_str = "🟢 Activa" if is_active else "🔴 Inactiva"
+            steam_id = m.get("steam_id", "Desconocido")
+
+            start_val = m.get("start_date")
+            start_str = start_val[:19].replace("T", " ") if start_val else "N/A"
+
+            end_val = m.get("end_date")
+            end_str = end_val[:19].replace("T", " ") if end_val else "Permanente (Sin fin)"
+
+            sp_role_id = m.get("special_role_id")
+            sp_role_name = m.get("special_role")
+            if sp_role_name:
+                sp_role_str = f"<@&{sp_role_name}> (`{sp_role_id}`)"
+            elif sp_role_id:
+                sp_role_str = f"<@&{sp_role_id}> (`{sp_role_id}`)"
+            else:
+                sp_role_str = "Ninguno"
+
+            rcon_status = m.get("rcon_sync_status", "PENDING")
+
+            field_name = f"🏷️ Membresía #{m_id} — {m_type}"
+            field_value = (
+                f"• **Estado:** {status_str} (`is_active={is_active}`)\n"
+                f"• **Steam ID:** `{steam_id}`\n"
+                f"• **Fecha Inicio:** `{start_str}`\n"
+                f"• **Fecha Fin:** `{end_str}`\n"
+                f"• **Rol Especial:** {sp_role_str}\n"
+                f"• **RCON Sync Status:** `{rcon_status}`"
+            )
+            embed.add_field(name=field_name, value=field_value, inline=False)
+
+    btn_row = app.rest.build_message_action_row()
+    btn_row.add_interactive_button(
+        hikari.ButtonStyle.PRIMARY,
+        f"pmem_prev_{usuario_id}_{page}",
+        label="◀ Anterior",
+        is_disabled=(page <= 1)
+    )
+    btn_row.add_interactive_button(
+        hikari.ButtonStyle.PRIMARY,
+        f"pmem_next_{usuario_id}_{page}",
+        label="Siguiente ▶",
+        is_disabled=(page >= total_pages or total == 0)
+    )
+    return embed, [btn_row]
+
+
+@plugin.include
+@player_group.child
+@crescent.command(name="memberships", description="Muestra el historial de membresías de un usuario de Discord (Paginado)")
+class PlayerMemberships:
+    usuario = crescent.option(hikari.User, "Usuario de Discord a consultar")
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer()
+        page = 1
+        limit = 5
+        try:
+            res = await plugin.model.api.get_paginated_memberships(page=page, limit=limit, discord_id=str(self.usuario.id))
+            memberships = res.get("memberships", [])
+            total = res.get("total", 0)
+
+            embed, components = build_player_memberships_view(
+                ctx.app,
+                int(self.usuario.id),
+                memberships,
+                page,
+                total,
+                limit
+            )
+            await ctx.respond(embed=embed, components=components)
+        except Exception as e:
+            await ctx.respond(f"❌ Error al consultar membresías: {e}")
 
 class DbMatches:
     async def callback(self, ctx: crescent.Context) -> None:
@@ -366,6 +465,42 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
         except Exception as e:
             pass
 
+    elif custom_id.startswith("pmem_prev_") or custom_id.startswith("pmem_next_"):
+        parts = custom_id.split("_")
+        action = parts[1]
+        target_discord_id = int(parts[2])
+        current_page = int(parts[3])
+        limit = 5
+
+        new_page = current_page - 1 if action == "prev" else current_page + 1
+        if new_page < 1:
+            new_page = 1
+
+        try:
+            res = await plugin.model.api.get_paginated_memberships(page=new_page, limit=limit, discord_id=str(target_discord_id))
+            memberships = res.get("memberships", [])
+            total = res.get("total", 0)
+            total_pages = max(1, math.ceil(total / limit)) if total > 0 else 1
+
+            if new_page > total_pages:
+                new_page = total_pages
+
+            embed, components = build_player_memberships_view(
+                plugin.app,
+                target_discord_id,
+                memberships,
+                new_page,
+                total,
+                limit
+            )
+            await event.interaction.create_initial_response(
+                hikari.ResponseType.MESSAGE_UPDATE,
+                embed=embed,
+                components=components
+            )
+        except Exception as e:
+            logger.error(f"[pmem pagination] Error: {e}")
+
 @plugin.include
 @server_group.child
 @crescent.command(name="status", description="Muestra el estado actual del servidor RCON y rotación")
@@ -515,7 +650,17 @@ class DbEditMembership:
         await ctx.defer()
         try:
             await plugin.model.api.edit_membership(self.id_membresia, days=self.dias, membership_type=self.tipo, is_active=self.activa)
-            await ctx.respond(f"✅ Membresía ID {self.id_membresia} actualizada exitosamente.")
+            extra = []
+            if self.tipo:
+                extra.append(f"Tipo: `{self.tipo}`")
+            if self.dias is not None:
+                extra.append(f"Días: `{self.dias}`")
+            elif self.tipo:
+                extra.append("Duración y fecha fin reajustadas según el tipo")
+            if self.activa is not None:
+                extra.append(f"Activa: `{self.activa}`")
+            detail = f" ({', '.join(extra)})" if extra else ""
+            await ctx.respond(f"✅ Membresía ID {self.id_membresia} actualizada exitosamente.{detail}")
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
 
@@ -716,6 +861,48 @@ class ExtenderMembresia:
 
 @plugin.include
 @crescent.hook(admin_only)
+@membership_group.child
+@crescent.command(name="export", description="Exporta las membresías y cuentas vinculadas actuales a un archivo CSV descargable")
+class DbExportMemberships:
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer(ephemeral=True)
+        try:
+            res = await plugin.model.api.export_memberships()
+            download_url = res["download_url"]
+            total = res["total_records"]
+            filename = res["filename"]
+            expires_mins = res["expires_in_seconds"] // 60
+            size_kb = round(res["size_bytes"] / 1024, 1)
+
+            embed = hikari.Embed(
+                title="📥 Exportación de Membresías",
+                description=(
+                    f"Se ha generado exitosamente el archivo CSV con las membresías y cuentas vinculadas actuales.\n\n"
+                    f"🔗 **[Haz clic aquí para descargar el archivo CSV]({download_url})**\n\n"
+                    f"*(El enlace es de descarga directa desde la API y expira en {expires_mins} minutos para mayor seguridad)*"
+                ),
+                color=0x00FF88
+            )
+            embed.add_field(name="📄 Archivo", value=filename, inline=True)
+            embed.add_field(name="👥 Total Membresías", value=str(total), inline=True)
+            embed.add_field(name="📦 Tamaño", value=f"{size_kb} KB", inline=True)
+            embed.add_field(
+                name="🛡️ Columnas incluidas",
+                value="DiscordID, SteamID, Nickname, Tipo VIP, Booster, Fundador, Rol Vinculado, Vigencia y Observaciones.",
+                inline=False
+            )
+
+            button_row = (
+                ctx.app.rest.build_message_action_row()
+                .add_link_button(download_url, label="Descargar CSV", emoji="📥")
+            )
+            await ctx.respond(embed=embed, component=button_row, flags=hikari.MessageFlag.EPHEMERAL)
+        except Exception as e:
+            await ctx.respond(f"❌ Error al generar exportación: {e}", flags=hikari.MessageFlag.EPHEMERAL)
+
+
+@plugin.include
+@crescent.hook(admin_only)
 @db_group.child
 @crescent.command(name="backup_download", description="Genera y envía un enlace para descargar el backup de la base de datos")
 class DbBackupDownload:
@@ -724,7 +911,7 @@ class DbBackupDownload:
         "Formato del backup a descargar",
         choices=(
             ("SQL (Copia completa del sistema)", "sql"),
-            ("CSV (Membresías de vinculados + Fundador)", "csv")
+            ("CSV (Membresías de vinculados + Fundador a demanda)", "csv")
         ),
         default="sql"
     )
@@ -740,7 +927,7 @@ class DbBackupDownload:
 
             size_mb = size_bytes / (1024 * 1024)
             size_str = f"{size_mb:.2f} MB" if size_mb >= 1 else f"{size_bytes / 1024:.1f} KB"
-            fmt_title = "SQL (Dump del sistema)" if self.formato == "sql" else "CSV (Membresías vinculadas + Fundador)"
+            fmt_title = "SQL (Dump del sistema)" if self.formato == "sql" else "CSV (Membresías actuales a demanda)"
 
             embed = hikari.Embed(
                 title="💾 Backup de Base de Datos Listo",
@@ -768,19 +955,17 @@ class DbBackupDownload:
 @plugin.include
 @crescent.hook(admin_only)
 @db_group.child
-@crescent.command(name="backup_create", description="Fuerza la creación inmediata de un backup en disco")
+@crescent.command(name="backup_create", description="Fuerza la creación inmediata de un backup SQL en disco")
 class DbBackupCreate:
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
         try:
             res = await plugin.model.api.create_backup()
             sql_file = res.get("sql_file", "backup.sql")
-            csv_file = res.get("csv_file") or res.get("csv_zip_file", "backup.csv")
             await ctx.respond(
-                f"✅ **Backup creado exitosamente en disco:**\n"
-                f"• SQL: `{sql_file}`\n"
-                f"• CSV: `{csv_file}`\n\n"
-                f"Puedes descargarlo en cualquier momento con `/db backup_download`.",
+                f"✅ **Backup SQL creado exitosamente en disco:**\n"
+                f"• SQL: `{sql_file}`\n\n"
+                f"Puedes descargarlo con `/db backup_download` o solicitar el CSV actual con `/membership export`.",
                 flags=hikari.MessageFlag.EPHEMERAL
             )
         except Exception as e:

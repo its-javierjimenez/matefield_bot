@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 import src.modules.v1.router as router_module
 from wardogs_schemas import v1 as schemas
 
-sqlite_url = "sqlite+aiosqlite:///test.db"
+sqlite_url = "sqlite+aiosqlite:///:memory:"
 engine = create_async_engine(sqlite_url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
 
 
@@ -24,10 +24,6 @@ async def get_session_override():
 
 def override_verify_api_key_guard():
     return True
-
-app.dependency_overrides[get_session] = get_session_override
-app.dependency_overrides[verify_api_key_guard] = override_verify_api_key_guard
-
 
 @pytest_asyncio.fixture(name="session")
 async def session_fixture():
@@ -42,7 +38,10 @@ async def session_fixture():
 
 @pytest_asyncio.fixture(name="client")
 async def client_fixture(session: AsyncSession):
-    return AsyncClient(transport=ASGITransport(app=app), base_url='http://test')
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[verify_api_key_guard] = lambda: True
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+        yield client
 
 @pytest.mark.asyncio
 async def test_edit_membership(client: AsyncClient, session: AsyncSession):
@@ -122,6 +121,75 @@ async def test_edit_player(client: AsyncClient, session: AsyncSession):
     await session.refresh(p)
     assert p.discord_id == "789"
     assert p.custom_welcome_message == "Adios"
+
+@pytest.mark.asyncio
+async def test_edit_membership_auto_adjusts_date(client: AsyncClient, session: AsyncSession):
+    now = datetime.now(timezone.utc)
+    p = Player(steam_id="steam_edit_test", discord_id="discord_edit_test")
+    m = Membership(
+        steam_id="steam_edit_test",
+        membership_type="VIP_COMUN",
+        is_active=True,
+        start_time=now - timedelta(days=2),
+        end_time=now + timedelta(days=28)
+    )
+    session.add(p)
+    session.add(m)
+    await session.commit()
+
+    # 1. Edit to VIP_PERMANENTE without explicit days -> end_time becomes None
+    res1 = await client.put(f"/api/v1/db/memberships/{m.id}", json={"membership_type": "VIP_PERMANENTE"})
+    assert res1.status_code == 200
+    await session.refresh(m)
+    assert m.membership_type == "VIP_PERMANENTE"
+    assert m.end_time is None
+    assert m.is_active is True
+
+    # 2. Edit to VIP_EXPRESS without explicit days -> end_time shrinks to start_time + 15 days
+    res2 = await client.put(f"/api/v1/db/memberships/{m.id}", json={"membership_type": "VIP_EXPRESS"})
+    assert res2.status_code == 200
+    await session.refresh(m)
+    assert m.membership_type == "VIP_EXPRESS"
+    assert m.end_time is not None
+    assert (m.end_time - m.start_time).days == 15
+
+@pytest.mark.asyncio
+async def test_get_paginated_memberships_filter_discord_id(client: AsyncClient, session: AsyncSession):
+    now = datetime.now(timezone.utc)
+    p1 = Player(steam_id="steam_filter_1", discord_id="discord_filter_1")
+    p2 = Player(steam_id="steam_filter_2", discord_id="discord_filter_2")
+    m1 = Membership(
+        steam_id="steam_filter_1",
+        membership_type="VIP_COMUN",
+        is_active=True,
+        start_time=now,
+        rcon_sync_status="SUCCESS"
+    )
+    m2 = Membership(
+        steam_id="steam_filter_2",
+        membership_type="VIP_EXPRESS",
+        is_active=False,
+        start_time=now,
+        rcon_sync_status="PENDING"
+    )
+    session.add_all([p1, p2, m1, m2])
+    await session.commit()
+
+    # Query memberships for discord_filter_1
+    res = await client.get("/api/v1/db/memberships?discord_id=discord_filter_1")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["total"] == 1
+    item = data["memberships"][0]
+    assert item["id"] == m1.id
+    assert item["steam_id"] == "steam_filter_1"
+    assert item["type"] == "VIP_COMUN"
+    assert item["is_active"] is True
+    assert item["rcon_sync_status"] == "SUCCESS"
+    assert "start_date" in item
+    assert "end_date" in item
+    assert "special_role_id" in item
+
 
 
 

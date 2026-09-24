@@ -32,10 +32,23 @@ class LinkAccount:
         try:
             await plugin.model.api.link_account(target_id, self.steam_id)
             
+            link_msg = ""
+            guild_id = ctx.guild_id
+            if guild_id:
+                link_role_id = await plugin.model.api.get_bot_config("LINK_ROLE_ID")
+                if link_role_id and link_role_id.isdigit():
+                    try:
+                        member = plugin.app.cache.get_member(guild_id, int(target_id)) or await ctx.app.rest.fetch_member(guild_id, int(target_id))
+                        if member and int(link_role_id) not in member.role_ids:
+                            await member.add_role(int(link_role_id), reason="Rol asignado por vincular cuenta (/player link)")
+                            link_msg = f"\n🔗 Rol <@&{link_role_id}> asignado automáticamente."
+                    except Exception as ex:
+                        logger.warning(f"No se pudo asignar el rol de link a {target_id}: {ex}")
+            
             if self.usuario:
-                await ctx.respond(f"✅ Has vinculado a {self.usuario.mention} con el Steam ID `{self.steam_id}`")
+                await ctx.respond(f"✅ Has vinculado a {self.usuario.mention} con el Steam ID `{self.steam_id}`{link_msg}")
             else:
-                await ctx.respond(f"✅ Tu cuenta ha sido vinculada exitosamente con el Steam ID `{self.steam_id}`")
+                await ctx.respond(f"✅ Tu cuenta ha sido vinculada exitosamente con el Steam ID `{self.steam_id}`{link_msg}")
         except Exception as e:
             await ctx.respond(f"❌ Error al vincular: {e}")
 
@@ -56,6 +69,10 @@ class UnlinkAccount:
                     role_maps = res.get("role_maps", {})
                     managed_special_roles = res.get("managed_special_roles", [])
                     all_managed_roles = set(role_maps.values()).union(set(managed_special_roles))
+                    
+                    link_role_id = await plugin.model.api.get_bot_config("LINK_ROLE_ID")
+                    if link_role_id and link_role_id.isdigit():
+                        all_managed_roles.add(int(link_role_id))
                     
                     member = await plugin.app.rest.fetch_member(guild_id, int(discord_id))
                     if member:

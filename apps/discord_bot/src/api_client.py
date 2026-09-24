@@ -167,8 +167,15 @@ class APIClient:
     async def get_paginated_matches(self, page: int = 1, limit: int = 10) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/db/matches?page={page}&limit={limit}")
         
-    async def get_paginated_memberships(self, page: int = 1, limit: int = 10) -> Dict[str, Any]:
-        return await self._request("GET", f"/api/v1/db/memberships?page={page}&limit={limit}")
+    async def get_paginated_memberships(
+        self, page: int = 1, limit: int = 10, steam_id: Optional[str] = None, discord_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        url = f"/api/v1/db/memberships?page={page}&limit={limit}"
+        if steam_id:
+            url += f"&steam_id={steam_id}"
+        if discord_id:
+            url += f"&discord_id={discord_id}"
+        return await self._request("GET", url)
 
     async def get_steam_player(self, steam_id: str) -> Optional[Dict[str, Any]]:
         try:
@@ -245,5 +252,8 @@ class APIClient:
         if filename:
             payload["filename"] = filename
         return await self._request("POST", "/api/v1/db/backups/link", json=payload)
+
+    async def export_memberships(self) -> Dict[str, Any]:
+        return await self._request("POST", "/api/v1/db/memberships/export")
 
 

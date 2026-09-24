@@ -188,10 +188,16 @@ async def membership_monitor():
         wl_str = configs.get("SYNC_WHITELIST", "")
         whitelist = set(wl_str.split(",")) if wl_str else set()
         
-        all_managed_roles = set(role_maps.values()).union(set(managed_special_roles))
+        all_managed_roles = {int(r) for r in set(role_maps.values()).union(set(managed_special_roles)) if str(r).isdigit()}
         
-        if not all_managed_roles:
-            return
+        # El rol de link y los roles de ban nunca deben ser removidos por la sincronización de membresías
+        link_role_str = configs.get("LINK_ROLE_ID")
+        if link_role_str and link_role_str.isdigit():
+            all_managed_roles.discard(int(link_role_str))
+            
+        ban_role_default = configs.get("BAN_ROLE_DEFAULT")
+        if ban_role_default and ban_role_default.isdigit():
+            all_managed_roles.discard(int(ban_role_default))
             
         for user_data in sync_data:
             discord_id_str = user_data.get("discord_id")
@@ -499,8 +505,8 @@ async def sync_ban_roles():
         # Obtener mapeos de roles
         configs = await plugin.model.api.get_bot_configs()
         
-        # Para RCON puro (permanente), el rol es BAN_ROLE_0
-        perm_role_id_str = configs.get("BAN_ROLE_0")
+        # Para RCON puro (permanente), el rol es BAN_ROLE_DEFAULT o BAN_ROLE_0
+        perm_role_id_str = configs.get("BAN_ROLE_DEFAULT") or configs.get("BAN_ROLE_0")
         if not perm_role_id_str:
             return
             

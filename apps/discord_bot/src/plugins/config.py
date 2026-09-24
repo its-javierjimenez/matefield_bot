@@ -2,7 +2,7 @@ import crescent
 import hikari
 from src.model import Model
 from src.hooks import admin_only
-from src.groups import config_group, vip_role_group, role_map_group, whitelist_group, ban_role_group
+from src.groups import config_group, vip_role_group, role_map_group, whitelist_group, ban_role_group, role_group
 
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 
@@ -293,3 +293,37 @@ class ListBanRoles:
             return
             
         await ctx.respond("**Roles de Baneos:\n" + "\n".join(lines))
+
+
+@plugin.include
+@crescent.hook(admin_only)
+@role_group.child
+@crescent.command(name="set_link", description="Configura el rol que se otorga automáticamente al vincular la cuenta")
+class RoleSetLink:
+    rol: hikari.Role | None = crescent.option(hikari.Role, "Rol a asignar al vincular (opcional, omitir para desactivar)", default=None)
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer(ephemeral=True)
+        if self.rol:
+            await plugin.model.api.set_bot_config("LINK_ROLE_ID", str(self.rol.id))
+            await ctx.respond(f"✅ Rol de vinculación configurado a <@&{self.rol.id}>. Se otorgará automáticamente al usar `/player link`.")
+        else:
+            await plugin.model.api.set_bot_config("LINK_ROLE_ID", "")
+            await ctx.respond("✅ Rol de vinculación desactivado.")
+
+
+@plugin.include
+@crescent.hook(admin_only)
+@role_group.child
+@crescent.command(name="set_ban", description="Configura el rol que se otorga automáticamente al banear a un usuario")
+class RoleSetBan:
+    rol: hikari.Role | None = crescent.option(hikari.Role, "Rol a asignar al banear (opcional, omitir para desactivar)", default=None)
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer(ephemeral=True)
+        if self.rol:
+            await plugin.model.api.set_bot_config("BAN_ROLE_DEFAULT", str(self.rol.id))
+            await ctx.respond(f"✅ Rol de baneo configurado a <@&{self.rol.id}>. Se otorgará automáticamente al banear con `/ban add`.")
+        else:
+            await plugin.model.api.set_bot_config("BAN_ROLE_DEFAULT", "")
+            await ctx.respond("✅ Rol de baneo desactivado.")

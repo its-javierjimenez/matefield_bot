@@ -10,7 +10,7 @@ load_dotenv()
 
 from src.sync_engine import poll_rcon, mode_50v50_loop
 from src.modules.v1.router import sync_memberships
-from src.modules.v1.services.backup_service import create_database_backup, get_available_backups
+from src.modules.v1.services.backup_service import create_database_sql_backup, get_available_backups
 from src.config import ENVIRONMENT_SETTINGS
 from src.connections.databases.db import engine
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -37,17 +37,17 @@ async def db_backup_loop():
     if not get_available_backups():
         try:
             async with AsyncSession(engine) as session:
-                await create_database_backup(session=session)
-                print("[Backup] Initial database backup completed.")
+                await create_database_sql_backup(session=session)
+                print("[Backup] Initial SQL database backup completed.")
         except Exception as e:
-            print(f"[Backup] Error during initial backup: {e}")
+            print(f"[Backup] Error during initial SQL backup: {e}")
 
     while True:
         try:
             await asyncio.sleep(interval_seconds)
             async with AsyncSession(engine) as session:
-                await create_database_backup(session=session)
-                print("[Backup] Scheduled database backup completed.")
+                await create_database_sql_backup(session=session)
+                print("[Backup] Scheduled SQL database backup completed.")
         except asyncio.CancelledError:
             break
         except Exception as e:
