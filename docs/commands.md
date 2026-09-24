@@ -8,7 +8,31 @@ El bot de Discord de Matefield utiliza **Slash Commands** (`/`) organizados bajo
 
 ---
 
+## 👤 Jugadores y Cuentas (`/player`)
+Vinculación oficial con Steam, gestión de perfiles y paneles de bienvenida.
+
+- `/player link` `[Público / Staff]`
+  - **Descripción**:
+    - **Sin parámetros `[Público]`**: Genera un mensaje efímero con un botón interactivo `[🎮 Iniciar sesión con Steam]` mediante **Steam OpenID 2.0**. Al iniciar sesión en Valve, el bot verifica y vincula de forma 100% auténtica la cuenta de Steam con Discord, asignando de inmediato el rol de miembro verificado (`LINK_ROLE_ID`).
+    - **Con parámetros `[Staff / Admin]`**: Permite a un administrador vincular manualmente un Steam ID a un usuario específico para soporte técnico.
+  - **Parámetros**: `steam_id` *(opcional, solo admin)*, `usuario` *(opcional, solo admin)*.
+- `/player link_channel` `[Staff / Admin]`
+  - **Descripción**: Publica un panel oficial permanente con un botón interactivo `[🎮 Vincular mi cuenta de Steam]` en el canal especificado (o el actual). Cualquier miembro que presione el botón recibe instantáneamente su enlace privado de vinculación sin necesidad de escribir comandos.
+  - **Parámetros**: `canal` *(opcional, canal de Discord)*.
+- `/player unlink` `[Público / Staff]`
+  - **Descripción**: Desvincula la cuenta de Steam asociada a Discord y revoca el rol verificado. Los administradores pueden desvincular a otros usuarios.
+  - **Parámetros**: `usuario` *(opcional, solo admin)*.
+- `/player view` `[Público / Staff]`
+  - **Descripción**: Muestra la ficha de jugador con su Steam ID, nombre en juego, avatar, estado de vinculación y membresías.
+- `/player edit` `[Staff / Admin]`
+  - **Descripción**: Permite editar observaciones administrativas o apodo de un jugador.
+- `/player memberships` `[Público / Staff]`
+  - **Descripción**: Muestra el historial interactivo y paginado de membresías VIP del usuario o del jugador seleccionado.
+
+---
+
 ## 🎟️ Membresías (`/membership`)
+
 Gestión completa del ciclo de vida de membresías VIP, cupos y sincronizaciones.
 
 - `/membership add` `[Staff / Admin]`

@@ -8,6 +8,7 @@ from src.modules.v1.routers.config import router as config_router
 from src.modules.v1.routers.rcon_servers import router as rcon_servers_router
 from src.modules.v1.routers.membership_types import router as membership_types_router
 from src.modules.v1.routers.webhooks import router as webhooks_router
+from src.modules.v1.routers.auth import router as auth_router
 
 __all__ = [
     "server_router",
@@ -20,4 +21,6 @@ __all__ = [
     "rcon_servers_router",
     "membership_types_router",
     "webhooks_router",
+    "auth_router",
 ]
+

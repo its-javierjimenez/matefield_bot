@@ -8,29 +8,64 @@ logger = logging.getLogger(__name__)
 
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 from src.groups import player_group
+from wardogs_schemas.steam_token import create_steam_link_token
 
 
 @plugin.include
 @player_group.child
-@crescent.command(name="link", description="Vincula tu cuenta de Discord con tu Steam ID")
+@crescent.command(name="link", description="Vincula tu cuenta de Discord con Steam de forma segura")
 class LinkAccount:
-    steam_id = crescent.option(str, "Tu Steam ID de 64 bits")
-    usuario = crescent.option(hikari.User, "Usuario a vincular (Solo admin)", default=None)
+    steam_id = crescent.option(str, "Steam ID (Solo administración / soporte)", default=None)
+    usuario = crescent.option(hikari.User, "Usuario a vincular (Solo administración)", default=None)
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
-        
-        target_id = str(ctx.user.id)
-        
-        if self.usuario:
-            is_admin = await check_is_admin(ctx)
-            if not is_admin:
-                await ctx.respond("❌ Solo los administradores pueden vincular a otros usuarios.")
-                return
-            target_id = str(self.usuario.id)
+
+        # 1. Flujo automático sin parámetros: Genera enlace seguro de Steam OpenID
+        if not self.steam_id and not self.usuario:
+            secret_key = plugin.model.api.api_key
+            token = create_steam_link_token(
+                discord_id=str(ctx.user.id),
+                secret_key=secret_key,
+                guild_id=str(ctx.guild_id) if ctx.guild_id else None
+            )
+            public_url = plugin.model.public_api_url.rstrip("/")
+            link_url = f"{public_url}/api/v1/auth/steam/login?token={token}"
+
+            embed = hikari.Embed(
+                title="🎮 Vinculación con Steam",
+                description=(
+                    f"Hola {ctx.user.mention},\n\n"
+                    "Para vincular tu cuenta de Steam de forma segura y automática, "
+                    "haz clic en el botón de abajo para iniciar sesión directamente en Steam.\n\n"
+                    "🔒 **Seguro:** La autenticación se realiza de forma directa en los servidores de Valve (Steam).\n"
+                    "⏱️ **Vigencia:** Este enlace personal expira en 10 minutos."
+                ),
+                color=0x1b2838
+            )
+            row = ctx.app.rest.build_message_action_row()
+            row.add_link_button(link_url, label="Iniciar sesión con Steam", emoji="🎮")
+            await ctx.respond(embed=embed, components=[row], ephemeral=True)
+            return
+
+        # 2. Flujo manual con parámetros: Exclusivo para administradores
+        is_admin = await check_is_admin(ctx)
+        if not is_admin:
+            await ctx.respond(
+                "❌ La vinculación manual con Steam ID está reservada para administradores.\n"
+                "Para vincular tu propia cuenta de Steam de forma segura, ejecuta `/player link` sin parámetros.",
+                ephemeral=True
+            )
+            return
+
+        if not self.steam_id:
+            await ctx.respond("❌ Debes especificar un Steam ID válido para vincular manualmente.", ephemeral=True)
+            return
+
+        target_id = str(self.usuario.id) if self.usuario else str(ctx.user.id)
             
         try:
-            await plugin.model.api.link_account(target_id, self.steam_id)
+            await plugin.model.api.link_account(target_id, str(self.steam_id))
             
             link_msg = ""
             guild_id = ctx.guild_id
@@ -69,6 +104,85 @@ class LinkAccount:
                 await ctx.respond(f"✅ Tu cuenta ha sido vinculada exitosamente con el Steam ID `{self.steam_id}`{link_msg}")
         except Exception as e:
             await ctx.respond(f"❌ Error al vincular: {e}")
+
+
+@plugin.include
+@player_group.child
+@crescent.command(name="link_channel", description="Publica un panel permanente con botón para vincular cuentas de Steam")
+class LinkChannel:
+    canal = crescent.option(hikari.InteractionChannel, "Canal donde publicar el mensaje (Por defecto el canal actual)", default=None)
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer(ephemeral=True)
+        is_admin = await check_is_admin(ctx)
+        if not is_admin:
+            await ctx.respond("❌ Solo los administradores pueden publicar el panel de vinculación.", ephemeral=True)
+            return
+
+        target_channel_id = self.canal.id if self.canal else ctx.channel_id
+        
+        embed = hikari.Embed(
+            title="🔗 Vinculación Oficial de Cuentas | Matefield",
+            description=(
+                "¡Bienvenido a los servidores de **Matefield**!\n\n"
+                "Para obtener tu rol de miembro verificado, sincronizar membresías VIP, "
+                "guardar tus estadísticas de juego y acceder a los servidores protegidos, "
+                "debes vincular tu cuenta oficial de Steam con Discord.\n\n"
+                "👉 **Haz clic en el botón de abajo para iniciar la vinculación.**"
+            ),
+            color=0x2b6cb0
+        )
+        embed.set_footer(text="Autenticación oficial y segura provista por Steam OpenID")
+        
+        row = ctx.app.rest.build_message_action_row()
+        row.add_interactive_button(
+            hikari.ButtonStyle.PRIMARY,
+            "btn_start_steam_link",
+            label="Vincular mi cuenta de Steam",
+            emoji="🎮"
+        )
+        
+        try:
+            await ctx.app.rest.create_message(target_channel_id, embed=embed, components=[row])
+            await ctx.respond(f"✅ Panel de vinculación publicado exitosamente en <#{target_channel_id}>.", ephemeral=True)
+        except Exception as e:
+            await ctx.respond(f"❌ Error al publicar en el canal: {e}", ephemeral=True)
+
+
+@crescent.event
+async def on_steam_link_button_click(event: hikari.InteractionCreateEvent) -> None:
+    if not isinstance(event.interaction, hikari.ComponentInteraction):
+        return
+    if event.interaction.custom_id == "btn_start_steam_link":
+        secret_key = plugin.model.api.api_key
+        token = create_steam_link_token(
+            discord_id=str(event.interaction.user.id),
+            secret_key=secret_key,
+            guild_id=str(event.interaction.guild_id) if event.interaction.guild_id else None
+        )
+        public_url = plugin.model.public_api_url.rstrip("/")
+        link_url = f"{public_url}/api/v1/auth/steam/login?token={token}"
+        
+        embed = hikari.Embed(
+            title="🎮 Vinculación con Steam",
+            description=(
+                f"Hola <@{event.interaction.user.id}>,\n\n"
+                "Haz clic en el siguiente botón para iniciar sesión en Steam y verificar tu cuenta de forma 100% segura.\n\n"
+                "🔒 **Seguro:** La autenticación se realiza de forma directa en los servidores de Valve (Steam).\n"
+                "⏱️ **Vigencia:** Este enlace personal expira en 10 minutos."
+            ),
+            color=0x1b2838
+        )
+        row = plugin.app.rest.build_message_action_row()
+        row.add_link_button(link_url, label="Iniciar sesión con Steam", emoji="🎮")
+        
+        await event.interaction.create_initial_response(
+            hikari.ResponseType.MESSAGE_CREATE,
+            embed=embed,
+            components=[row],
+            flags=hikari.MessageFlag.EPHEMERAL
+        )
+
 
 @plugin.include
 @player_group.child

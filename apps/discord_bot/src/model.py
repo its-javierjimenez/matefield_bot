@@ -13,6 +13,7 @@ class Model:
             base_url=os.environ.get("API_BASE_URL", "http://127.0.0.1:8000"),
             api_key=os.environ.get("API_KEY", "default_secret_key")
         )
+        self.public_api_url = os.environ.get("PUBLIC_API_URL", "http://localhost:8000")
         self.active_match_id = ""
         self.players_cache = {}
         self.hacker_monitors = {}

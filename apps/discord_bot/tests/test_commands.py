@@ -401,3 +401,92 @@ async def test_role_unset_ban_config():
     plugin._client.model.api.set_bot_config.assert_called_once_with("BAN_UNSET_ROLE_ID", "777888")
     assert "Rol de desbaneo configurado a <@&777888>" in ctx.respond.call_args[0][0]
 
+
+@pytest.mark.asyncio
+async def test_player_link_without_params(monkeypatch):
+    from src.plugins.account import LinkAccount, plugin
+
+    cmd_cls = getattr(LinkAccount, "metadata").owner
+    cmd = cmd_cls()
+    cmd.steam_id = None
+    cmd.usuario = None
+
+    ctx = MagicMock()
+    ctx.user.id = 111222333
+    ctx.user.mention = "<@111222333>"
+    ctx.guild_id = 999888
+    ctx.defer = AsyncMock()
+    ctx.respond = AsyncMock()
+
+    mock_row = MagicMock()
+    ctx.app.rest.build_message_action_row.return_value = mock_row
+
+    plugin._client = MagicMock()
+    plugin._client.model.api.api_key = "test_key"
+    plugin._client.model.public_api_url = "http://test-server:8000"
+
+    await cmd.callback(ctx)
+
+    ctx.respond.assert_called_once()
+    kwargs = ctx.respond.call_args[1]
+    assert kwargs.get("ephemeral") is True
+    assert "embed" in kwargs
+    assert kwargs["embed"].title == "🎮 Vinculación con Steam"
+    mock_row.add_link_button.assert_called_once()
+    link_url = mock_row.add_link_button.call_args[0][0]
+    assert "http://test-server:8000/api/v1/auth/steam/login?token=" in link_url
+
+
+@pytest.mark.asyncio
+async def test_player_link_with_params_restricted(monkeypatch):
+    from src.plugins.account import LinkAccount, plugin
+
+    cmd_cls = getattr(LinkAccount, "metadata").owner
+    cmd = cmd_cls()
+    cmd.steam_id = "76561198000000001"
+    cmd.usuario = None
+
+    ctx = MagicMock()
+    ctx.user.id = 111222333
+    ctx.defer = AsyncMock()
+    ctx.respond = AsyncMock()
+
+    # Non-admin
+    monkeypatch.setattr("src.plugins.account.check_is_admin", AsyncMock(return_value=False))
+
+    await cmd.callback(ctx)
+
+    ctx.respond.assert_called_once()
+    msg = ctx.respond.call_args[0][0]
+    assert "La vinculación manual con Steam ID está reservada para administradores" in msg
+
+
+@pytest.mark.asyncio
+async def test_player_link_channel_admin(monkeypatch):
+    from src.plugins.account import LinkChannel, plugin
+
+    cmd_cls = getattr(LinkChannel, "metadata").owner
+    cmd = cmd_cls()
+    cmd.canal = None
+
+    ctx = MagicMock()
+    ctx.channel_id = 444555666
+    ctx.defer = AsyncMock()
+    ctx.respond = AsyncMock()
+    ctx.app.rest.create_message = AsyncMock()
+
+    mock_row = MagicMock()
+    ctx.app.rest.build_message_action_row.return_value = mock_row
+
+    monkeypatch.setattr("src.plugins.account.check_is_admin", AsyncMock(return_value=True))
+
+    await cmd.callback(ctx)
+
+    ctx.app.rest.create_message.assert_called_once()
+    target_channel = ctx.app.rest.create_message.call_args[0][0]
+    assert target_channel == 444555666
+    mock_row.add_interactive_button.assert_called_once()
+    assert mock_row.add_interactive_button.call_args[0][1] == "btn_start_steam_link"
+    assert "Panel de vinculación publicado exitosamente" in ctx.respond.call_args[0][0]
+
+
