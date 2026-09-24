@@ -478,6 +478,10 @@ async def test_player_link_channel_admin(monkeypatch):
     mock_row = MagicMock()
     ctx.app.rest.build_message_action_row.return_value = mock_row
 
+    plugin._client = MagicMock()
+    plugin._client.model.api.get_bot_config = AsyncMock(return_value=None)
+    plugin._client.model.api.set_bot_config = AsyncMock()
+
     monkeypatch.setattr("src.plugins.account.check_is_admin", AsyncMock(return_value=True))
 
     await cmd.callback(ctx)

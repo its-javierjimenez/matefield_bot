@@ -143,45 +143,62 @@ class LinkChannel:
         )
         
         try:
-            await ctx.app.rest.create_message(target_channel_id, embed=embed, components=[row])
+            # Borrar panel anterior si existe para garantizar idempotencia
+            old_chan = await plugin.model.api.get_bot_config("LINK_PANEL_CHANNEL_ID")
+            old_msg = await plugin.model.api.get_bot_config("LINK_PANEL_MESSAGE_ID")
+            if old_chan and old_msg and old_chan.isdigit() and old_msg.isdigit():
+                try:
+                    await ctx.app.rest.delete_message(int(old_chan), int(old_msg))
+                except Exception:
+                    pass
+
+            new_msg = await ctx.app.rest.create_message(target_channel_id, embed=embed, components=[row])
+            await plugin.model.api.set_bot_config("LINK_PANEL_CHANNEL_ID", str(target_channel_id))
+            await plugin.model.api.set_bot_config("LINK_PANEL_MESSAGE_ID", str(new_msg.id))
+
             await ctx.respond(f"✅ Panel de vinculación publicado exitosamente en <#{target_channel_id}>.", ephemeral=True)
         except Exception as e:
             await ctx.respond(f"❌ Error al publicar en el canal: {e}", ephemeral=True)
 
 
+@plugin.include
 @crescent.event
 async def on_steam_link_button_click(event: hikari.InteractionCreateEvent) -> None:
     if not isinstance(event.interaction, hikari.ComponentInteraction):
         return
     if event.interaction.custom_id == "btn_start_steam_link":
-        secret_key = plugin.model.api.api_key
-        token = create_steam_link_token(
-            discord_id=str(event.interaction.user.id),
-            secret_key=secret_key,
-            guild_id=str(event.interaction.guild_id) if event.interaction.guild_id else None
-        )
-        public_url = plugin.model.public_api_url.rstrip("/")
-        link_url = f"{public_url}/api/v1/auth/steam/login?token={token}"
-        
-        embed = hikari.Embed(
-            title="🎮 Vinculación con Steam",
-            description=(
-                f"Hola <@{event.interaction.user.id}>,\n\n"
-                "Haz clic en el siguiente botón para iniciar sesión en Steam y verificar tu cuenta de forma 100% segura.\n\n"
-                "🔒 **Seguro:** La autenticación se realiza de forma directa en los servidores de Valve (Steam).\n"
-                "⏱️ **Vigencia:** Este enlace personal expira en 10 minutos."
-            ),
-            color=0x1b2838
-        )
-        row = plugin.app.rest.build_message_action_row()
-        row.add_link_button(link_url, label="Iniciar sesión con Steam", emoji="🎮")
-        
-        await event.interaction.create_initial_response(
-            hikari.ResponseType.MESSAGE_CREATE,
-            embed=embed,
-            components=[row],
-            flags=hikari.MessageFlag.EPHEMERAL
-        )
+        try:
+            secret_key = plugin.model.api.api_key
+            token = create_steam_link_token(
+                discord_id=str(event.interaction.user.id),
+                secret_key=secret_key,
+                guild_id=str(event.interaction.guild_id) if event.interaction.guild_id else None
+            )
+            public_url = plugin.model.public_api_url.rstrip("/")
+            link_url = f"{public_url}/api/v1/auth/steam/login?token={token}"
+            
+            embed = hikari.Embed(
+                title="🎮 Vinculación con Steam",
+                description=(
+                    f"Hola <@{event.interaction.user.id}>,\n\n"
+                    "Haz clic en el siguiente botón para iniciar sesión en Steam y verificar tu cuenta de forma 100% segura.\n\n"
+                    "🔒 **Seguro:** La autenticación se realiza de forma directa en los servidores de Valve (Steam).\n"
+                    "⏱️ **Vigencia:** Este enlace personal expira en 10 minutos."
+                ),
+                color=0x1b2838
+            )
+            row = plugin.app.rest.build_message_action_row()
+            row.add_link_button(link_url, label="Iniciar sesión con Steam", emoji="🎮")
+            
+            await event.interaction.create_initial_response(
+                hikari.ResponseType.MESSAGE_CREATE,
+                embed=embed,
+                components=[row],
+                flags=hikari.MessageFlag.EPHEMERAL
+            )
+        except Exception as e:
+            logger.error(f"[Steam Link Button] Error al procesar interacción: {e}", exc_info=True)
+
 
 
 @plugin.include
