@@ -440,3 +440,40 @@ async def test_tebex_refund_revokes_special_role(client, session):
     revoked_pr = (await session.exec(select(PlayerRole).where(PlayerRole.steam_id == steam_id))).first()
     assert revoked_pr is None
 
+
+@pytest.mark.asyncio
+async def test_tebex_recurring_payment_ended_revocation(client, session):
+    """Tests recurring-payment.ended revoking active membership linked to subscription reference."""
+    steam_id = "76561198011223344"
+    sub_ref = "sub-ended-ref-123"
+
+    player = Player(steam_id=steam_id, in_game_name="EndedSubPlayer")
+    membership = Membership(
+        steam_id=steam_id,
+        membership_type="VIP_COMUN",
+        is_active=True,
+        tebex_subscription_id=sub_ref,
+        payment_source="TEBEX"
+    )
+    session.add_all([player, membership])
+    await session.commit()
+    await session.refresh(membership)
+    assert membership.is_active is True
+
+    payload = {
+        "id": "evt-sub-end-1",
+        "type": "recurring-payment.ended",
+        "subject": {
+            "reference": sub_ref,
+            "status": {"id": 5, "description": "Cancelled"}
+        }
+    }
+    resp = await client.post("/api/v1/webhooks/tebex", json=payload)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "success"
+    assert resp.json()["revoked_count"] == 1
+
+    await session.refresh(membership)
+    assert membership.is_active is False
+
+

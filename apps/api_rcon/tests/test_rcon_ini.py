@@ -75,3 +75,49 @@ def test_update_ini_array_consecutive_updates_idempotent():
     assert second_update.count("!Slots=ClearArray") == 1
     assert second_update.count(".Slots=ID_1") == 1
     assert second_update.count(".Slots=ID_2") == 1
+
+
+def test_update_ini_array_normalizes_crlf():
+    initial_text = "[Config]\r\nKey=Value\r\n.Slots=OLD\r\n"
+    section = "[Config]"
+    key_prefix = "Slots"
+    items = ["ID_1", "ID_2"]
+
+    result = _update_ini_array(initial_text, section, key_prefix, items)
+    assert "\r" not in result
+    assert ".Slots=ID_1" in result
+    assert ".Slots=ID_2" in result
+    assert ".Slots=OLD" not in result
+
+
+@pytest.mark.asyncio
+async def test_rcon_client_get_bans_from_live_endpoint(mocker):
+    from src.connections.apis.rcon import RCONClient
+    client = RCONClient("http://fake:7776", "pass")
+    
+    # Mock _request to simulate /v1/bans returning live bans
+    mocker.patch.object(client, "_request", return_value={
+        "bans": [{"steamId": "76561198000000001"}, {"steamId": "76561198000000002"}],
+        "count": 2
+    })
+    
+    bans = await client.get_bans()
+    assert bans == ["76561198000000001", "76561198000000002"]
+
+
+@pytest.mark.asyncio
+async def test_rcon_client_get_bans_fallback_to_config(mocker):
+    from src.connections.apis.rcon import RCONClient
+    from wardogs_schemas import v1 as schemas
+    client = RCONClient("http://fake:7776", "pass")
+    
+    # If /v1/bans raises exception, fallback to config
+    async def fake_request(method, endpoint, **kwargs):
+        if endpoint == "/v1/bans":
+            raise Exception("404 not found")
+        return {"text": "[/Script/WDGame.WDGameSession]\n.DefaultBannedPlayerIds=76561198000000099\n", "revision": "rev1"}
+        
+    mocker.patch.object(client, "_request", side_effect=fake_request)
+    bans = await client.get_bans()
+    assert bans == ["76561198000000099"]
+

@@ -96,13 +96,17 @@ class ServerService:
     @staticmethod
     async def add_reserved_slot(steam_id: str, session: Optional[AsyncSession] = None) -> None:
         if session:
+            from sqlmodel import select
+            from src.connections.databases.db import Membership
+            db_stmt = select(Membership.steam_id).where(Membership.is_active == True)
+            db_slots = set((await session.exec(db_stmt)).all())
+            db_slots.add(steam_id)
+            target_slots = list(db_slots)
+
             active_servers = await RCONManager.get_all_active_servers(session)
             for s_info, client in active_servers:
                 try:
-                    current = await client.get_reserved_slots()
-                    slots = set(current.reservedSlots or [])
-                    slots.add(steam_id)
-                    await client.sync_reserved_slots(list(slots))
+                    await client.sync_reserved_slots(target_slots)
                 except Exception as e:
                     logger.warning(f"Failed to add reserved slot on {s_info.name}: {e}")
         else:
@@ -114,13 +118,17 @@ class ServerService:
     @staticmethod
     async def remove_reserved_slot(steam_id: str, session: Optional[AsyncSession] = None) -> None:
         if session:
+            from sqlmodel import select
+            from src.connections.databases.db import Membership
+            db_stmt = select(Membership.steam_id).where(Membership.is_active == True)
+            db_slots = set((await session.exec(db_stmt)).all())
+            db_slots.discard(steam_id)
+            target_slots = list(db_slots)
+
             active_servers = await RCONManager.get_all_active_servers(session)
             for s_info, client in active_servers:
                 try:
-                    current = await client.get_reserved_slots()
-                    slots = set(current.reservedSlots or [])
-                    slots.discard(steam_id)
-                    await client.sync_reserved_slots(list(slots))
+                    await client.sync_reserved_slots(target_slots)
                 except Exception as e:
                     logger.warning(f"Failed to remove reserved slot on {s_info.name}: {e}")
         else:

@@ -8,7 +8,8 @@ from src.config import ENVIRONMENT_SETTINGS
 
 def _update_ini_array(text: str, section: str, key_prefix: str, items: list[str]) -> str:
     """Updates an Unreal Engine INI array under the specified section cleanly without duplicating headers or corrupting formatting."""
-    lines = text.split('\n')
+    normalized_text = text.replace('\r\n', '\n').replace('\r', '\n')
+    lines = normalized_text.split('\n')
     new_lines = [line for line in lines if key_prefix not in line]
 
     insert_idx = -1
@@ -39,6 +40,7 @@ class RCONClient:
         }
         self._cache = {}
         self._cache_lock = asyncio.Lock()
+        self._config_lock = asyncio.Lock()
         self._cache_ttl = 3.0
         self._session: Optional[aiohttp.ClientSession] = None
 
@@ -96,13 +98,23 @@ class RCONClient:
         return schemas.ReservedSlots.model_validate(data)
 
     async def sync_reserved_slots(self, steam_ids: list[str]) -> None:
-        config = await self.get_config()
-        text = config.text or ""
-        revision = config.revision or ""
-        new_text = _update_ini_array(text, '[/Script/WDGame.WDGameSession]', 'DefaultReservedPlayerIds', steam_ids)
-        await self.update_config(revision, new_text)
+        async with self._config_lock:
+            config = await self.get_config()
+            text = config.text or ""
+            revision = config.revision or ""
+            new_text = _update_ini_array(text, '[/Script/WDGame.WDGameSession]', 'DefaultReservedPlayerIds', steam_ids)
+            await self.update_config(revision, new_text)
 
     async def get_bans(self) -> list[str]:
+        # Try live route /v1/bans first (build CL-499480 & CL-501228 serve this)
+        try:
+            data = await self._request("GET", "/v1/bans")
+            if isinstance(data, dict) and "bans" in data and data["bans"]:
+                return [b["steamId"] for b in data["bans"] if isinstance(b, dict) and b.get("steamId")]
+        except Exception:
+            pass
+
+        # Fallback to parsing ServerSettings.ini from /v1/config
         config = await self.get_config()
         text = config.text or ""
         lines = text.split('\n')
@@ -120,11 +132,12 @@ class RCONClient:
         return bans
 
     async def sync_banned_slots(self, steam_ids: list[str]) -> None:
-        config = await self.get_config()
-        text = config.text or ""
-        revision = config.revision or ""
-        new_text = _update_ini_array(text, '[/Script/WDGame.WDGameSession]', 'DefaultBannedPlayerIds', steam_ids)
-        await self.update_config(revision, new_text)
+        async with self._config_lock:
+            config = await self.get_config()
+            text = config.text or ""
+            revision = config.revision or ""
+            new_text = _update_ini_array(text, '[/Script/WDGame.WDGameSession]', 'DefaultBannedPlayerIds', steam_ids)
+            await self.update_config(revision, new_text)
 
     async def broadcast(self, message: str) -> None:
         await self._request("POST", "/v1/broadcast", json={"message": message})

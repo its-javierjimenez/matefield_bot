@@ -130,9 +130,9 @@ class TebexWebhookService:
                     opt = clean_val(v.get("option"))
                     if not opt:
                         continue
-                    if "steam" in ident or (opt.isdigit() and len(opt) == 17 and opt.startswith("7656119")):
+                    if (opt.isdigit() and len(opt) == 17 and opt.startswith("7656119")) or ("steam" in ident and opt.isdigit() and len(opt) == 17):
                         steam_id = opt
-                    elif "discord" in ident or (opt.isdigit() and 17 <= len(opt) <= 20 and not opt.startswith("7656119")):
+                    elif (opt.isdigit() and 17 <= len(opt) <= 20 and not opt.startswith("7656119")) or ("discord" in ident and opt.isdigit() and 17 <= len(opt) <= 20):
                         discord_id = opt
             elif isinstance(p_vars, dict):
                 for k, v in p_vars.items():
@@ -140,9 +140,9 @@ class TebexWebhookService:
                     v_str = clean_val(v)
                     if not v_str:
                         continue
-                    if "steam" in k_lower or (v_str.isdigit() and len(v_str) == 17 and v_str.startswith("7656119")):
+                    if (v_str.isdigit() and len(v_str) == 17 and v_str.startswith("7656119")) or ("steam" in k_lower and v_str.isdigit() and len(v_str) == 17):
                         steam_id = v_str
-                    elif "discord" in k_lower or (v_str.isdigit() and 17 <= len(v_str) <= 20 and not v_str.startswith("7656119")):
+                    elif (v_str.isdigit() and 17 <= len(v_str) <= 20 and not v_str.startswith("7656119")) or ("discord" in k_lower and v_str.isdigit() and 17 <= len(v_str) <= 20):
                         discord_id = v_str
 
             # Product custom options
@@ -153,9 +153,9 @@ class TebexWebhookService:
                     v_str = clean_val(v)
                     if not v_str:
                         continue
-                    if "steam" in k_lower:
+                    if "steam" in k_lower and v_str.isdigit() and len(v_str) == 17:
                         steam_id = v_str
-                    elif "discord" in k_lower:
+                    elif "discord" in k_lower and v_str.isdigit() and 17 <= len(v_str) <= 20:
                         discord_id = v_str
 
         # 3. Subject-level custom fields
@@ -166,9 +166,9 @@ class TebexWebhookService:
                 v_str = clean_val(v)
                 if not v_str:
                     continue
-                if "steam" in k_lower and not steam_id:
+                if "steam" in k_lower and not steam_id and v_str.isdigit() and len(v_str) == 17:
                     steam_id = v_str
-                elif "discord" in k_lower and not discord_id:
+                elif "discord" in k_lower and not discord_id and v_str.isdigit() and 17 <= len(v_str) <= 20:
                     discord_id = v_str
 
         # If steam_id still not found, check if username is a valid Steam64 ID
@@ -437,6 +437,20 @@ class TebexWebhookService:
         ref = str(subject.get("reference") or "").strip()
         initial_payment = subject.get("initial_payment") or {}
         tx_id = str(initial_payment.get("transaction_id") or payload.get("id") or f"start-{ref}").strip()
+        target_tx_id = f"start-{ref}-{tx_id}"
+
+        # Idempotency check: don't double-process duplicate webhook
+        existing_record = (await session.exec(
+            select(PaymentRecord).where(PaymentRecord.transaction_id == target_tx_id)
+        )).first()
+        if existing_record:
+            logger.info(f"[Tebex] Recurring started {target_tx_id} already processed. Skipping duplicate.")
+            return {
+                "status": "already_processed",
+                "event": "recurring-payment.started",
+                "subscription_ref": ref,
+                "transaction_id": target_tx_id
+            }
 
         # Check if membership already exists (from payment.completed)
         membership = None
@@ -506,14 +520,27 @@ class TebexWebhookService:
         subject = payload.get("subject") or {}
         ref = str(subject.get("reference") or "").strip()
         last_payment = subject.get("last_payment") or {}
-        transaction_id = str(last_payment.get("transaction_id") or payload.get("id") or f"renew-{ref}").strip()
+        raw_tx_id = str(last_payment.get("transaction_id") or payload.get("id") or f"renew-{ref}").strip()
+        event_id = str(payload.get("id") or "").strip()
+        prefixed_tx_id = f"renew-{raw_tx_id}-{event_id}" if event_id else f"renew-{raw_tx_id}"
 
-        # Idempotency check
-        existing_record = (await session.exec(
-            select(PaymentRecord).where(PaymentRecord.transaction_id == transaction_id)
+        # Idempotency check: see if this exact renewal has already been handled
+        existing_renewal = (await session.exec(
+            select(PaymentRecord).where(
+                or_(
+                    PaymentRecord.transaction_id == prefixed_tx_id,
+                    (PaymentRecord.transaction_id == raw_tx_id) & (PaymentRecord.status == "RENEWED")
+                )
+            )
         )).first()
-        if existing_record and existing_record.status == "RENEWED":
-            return {"status": "already_processed", "transaction_id": transaction_id}
+        if existing_renewal and existing_renewal.status == "RENEWED":
+            return {"status": "already_processed", "transaction_id": existing_renewal.transaction_id}
+
+        # Check if raw_tx_id is already taken by another record (e.g. initial payment.completed)
+        existing_any = (await session.exec(
+            select(PaymentRecord).where(PaymentRecord.transaction_id == raw_tx_id)
+        )).first()
+        target_tx_id = prefixed_tx_id if existing_any else raw_tx_id
 
         # Locate membership
         membership = None
@@ -555,9 +582,14 @@ class TebexWebhookService:
             session.add(membership)
             await session.commit()
 
+            try:
+                await MembershipsService.sync_memberships_logic(session)
+            except Exception as sync_err:
+                logger.warning(f"[Tebex] RCON sync notice during renewal: {sync_err}")
+
         price_info = subject.get("price") or last_payment.get("price") or {}
         record = PaymentRecord(
-            transaction_id=transaction_id,
+            transaction_id=target_tx_id,
             event_type="recurring-payment.renewed",
             steam_id=steam_id or (membership.steam_id if membership else None),
             discord_id=discord_id,
@@ -573,7 +605,8 @@ class TebexWebhookService:
             "status": "success",
             "event": "recurring-payment.renewed",
             "subscription_ref": ref,
-            "days_added": days_added
+            "days_added": days_added,
+            "transaction_id": target_tx_id
         }
 
     @staticmethod
@@ -585,9 +618,49 @@ class TebexWebhookService:
         subject = payload.get("subject") or {}
         ref = str(subject.get("reference") or "").strip()
         event_type = payload.get("type", "recurring-payment.ended")
+        target_tx_id = f"end-{ref}-{payload.get('id', '')}"
+
+        # Idempotency check
+        existing_record = (await session.exec(
+            select(PaymentRecord).where(PaymentRecord.transaction_id == target_tx_id)
+        )).first()
+        if existing_record:
+            logger.info(f"[Tebex] Recurring ended {target_tx_id} already processed. Skipping duplicate.")
+            return {
+                "status": "already_processed",
+                "event": event_type,
+                "reference": ref,
+                "transaction_id": target_tx_id
+            }
+
+        # Revoke or update active membership associated with this subscription reference
+        revoked_count = 0
+        if ref:
+            stmt = select(Membership).where(
+                Membership.tebex_subscription_id == ref,
+                Membership.is_active == True
+            )
+            memberships = (await session.exec(stmt)).all()
+            now = datetime.now(timezone.utc)
+            for m in memberships:
+                # If end_time is in the future, the user already paid for this cycle!
+                # Do NOT deactivate immediately; let it expire naturally at end_time.
+                # Unlink subscription reference so renewals stop.
+                if m.end_time and (m.end_time if m.end_time.tzinfo else m.end_time.replace(tzinfo=timezone.utc)) > now:
+                    m.tebex_subscription_id = None
+                    session.add(m)
+                else:
+                    await MembershipsService._deactivate_membership(m, session, revoke_special_role=False)
+                    revoked_count += 1
+            if memberships:
+                await session.commit()
+                try:
+                    await MembershipsService.sync_memberships_logic(session)
+                except Exception as e:
+                    logger.warning(f"[Tebex] RCON sync after recurring ended error: {e}")
 
         record = PaymentRecord(
-            transaction_id=f"end-{ref}-{payload.get('id', '')}",
+            transaction_id=target_tx_id,
             event_type=event_type,
             status="CANCELLED",
             raw_payload=raw_payload_str
@@ -598,7 +671,8 @@ class TebexWebhookService:
         return {
             "status": "success",
             "event": event_type,
-            "reference": ref
+            "reference": ref,
+            "revoked_count": revoked_count
         }
 
     @staticmethod
@@ -617,8 +691,21 @@ class TebexWebhookService:
         if status_id in (4, 5) or status_desc.lower() in ("expired", "cancelled"):
             return await TebexWebhookService.process_recurring_ended(payload, raw_payload_str, session)
 
+        target_tx_id = f"status-{ref}-{payload.get('id', '')}"
+        existing_record = (await session.exec(
+            select(PaymentRecord).where(PaymentRecord.transaction_id == target_tx_id)
+        )).first()
+        if existing_record:
+            logger.info(f"[Tebex] Recurring status changed {target_tx_id} already processed. Skipping duplicate.")
+            return {
+                "status": "already_processed",
+                "event": "recurring-payment.status.changed",
+                "reference": ref,
+                "transaction_id": target_tx_id
+            }
+
         record = PaymentRecord(
-            transaction_id=f"status-{ref}-{payload.get('id', '')}",
+            transaction_id=target_tx_id,
             event_type="recurring-payment.status.changed",
             status=f"STATUS_{status_id or status_desc.upper()}",
             raw_payload=raw_payload_str
@@ -643,6 +730,19 @@ class TebexWebhookService:
         subject = payload.get("subject") or {}
         transaction_id = str(subject.get("transaction_id") or payload.get("id") or "").strip()
         event_type = payload.get("type", "payment.refunded")
+        target_tx_id = f"refund-{transaction_id}-{payload.get('id', '')}"
+
+        # Idempotency check
+        existing_record = (await session.exec(
+            select(PaymentRecord).where(PaymentRecord.transaction_id == target_tx_id)
+        )).first()
+        if existing_record:
+            logger.info(f"[Tebex] Refund {target_tx_id} already processed. Skipping duplicate.")
+            return {
+                "status": "already_processed",
+                "event": event_type,
+                "transaction_id": target_tx_id
+            }
 
         steam_id, discord_id, _ = TebexWebhookService.extract_buyer_identifiers(subject)
 
@@ -665,7 +765,7 @@ class TebexWebhookService:
             logger.warning(f"[Tebex] RCON sync after refund error: {e}")
 
         record = PaymentRecord(
-            transaction_id=f"refund-{transaction_id}-{payload.get('id', '')}",
+            transaction_id=target_tx_id,
             event_type=event_type,
             steam_id=steam_id,
             discord_id=discord_id,
