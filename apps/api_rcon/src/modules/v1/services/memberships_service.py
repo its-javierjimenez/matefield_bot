@@ -234,8 +234,14 @@ class MembershipsService:
         if not membership:
             raise HTTPException(status_code=404, detail="Membership not found")
             
+        was_active = membership.is_active
         await session.delete(membership)
         await session.commit()
+        if was_active:
+            try:
+                await MembershipsService.sync_memberships_logic(session)
+            except Exception as e:
+                logger.warning(f"RCON sync notice after deleting membership #{membership_id}: {e}")
         return {"ok": True, "message": "Membership deleted"}
 
     @staticmethod

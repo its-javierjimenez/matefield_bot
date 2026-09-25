@@ -6,11 +6,19 @@ from wardogs_schemas import v1 as schemas
 from src.config import ENVIRONMENT_SETTINGS
 
 
+def _is_array_directive(line: str, key_prefix: str) -> bool:
+    stripped = line.strip()
+    if not stripped or stripped.startswith((';', '#')):
+        return False
+    clean = stripped.lstrip('!+.-')
+    return clean.startswith(f"{key_prefix}=")
+
+
 def _update_ini_array(text: str, section: str, key_prefix: str, items: list[str]) -> str:
-    """Updates an Unreal Engine INI array under the specified section cleanly without duplicating headers or corrupting formatting."""
+    """Updates an Unreal Engine INI array under the specified section cleanly without duplicating headers, corrupting formatting, or removing comments."""
     normalized_text = text.replace('\r\n', '\n').replace('\r', '\n')
     lines = normalized_text.split('\n')
-    new_lines = [line for line in lines if key_prefix not in line]
+    new_lines = [line for line in lines if not _is_array_directive(line, key_prefix)]
 
     insert_idx = -1
     for i, line in enumerate(new_lines):
@@ -24,10 +32,45 @@ def _update_ini_array(text: str, section: str, key_prefix: str, items: list[str]
 
     slot_lines = [f'!{key_prefix}=ClearArray']
     for item in items:
-        slot_lines.append(f'.{key_prefix}={item}')
+        clean_item = str(item).strip().strip('"\'')
+        if clean_item:
+            slot_lines.append(f'.{key_prefix}={clean_item}')
 
     result_lines = new_lines[:insert_idx + 1] + slot_lines + new_lines[insert_idx + 1:]
     return '\n'.join(result_lines)
+
+
+class ReentrantAsyncLock:
+    """An asyncio-compatible reentrant lock allowing the same task to acquire multiple times."""
+    def __init__(self):
+        self._lock = asyncio.Lock()
+        self._owner: Optional[asyncio.Task] = None
+        self._count: int = 0
+
+    async def acquire(self) -> None:
+        current_task = asyncio.current_task()
+        if self._owner == current_task:
+            self._count += 1
+            return
+        await self._lock.acquire()
+        self._owner = current_task
+        self._count = 1
+
+    def release(self) -> None:
+        current_task = asyncio.current_task()
+        if self._owner != current_task:
+            raise RuntimeError("Cannot release unowned lock")
+        self._count -= 1
+        if self._count == 0:
+            self._owner = None
+            self._lock.release()
+
+    async def __aenter__(self):
+        await self.acquire()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.release()
 
 
 class RCONClient:
@@ -40,7 +83,7 @@ class RCONClient:
         }
         self._cache = {}
         self._cache_lock = asyncio.Lock()
-        self._config_lock = asyncio.Lock()
+        self._config_lock = ReentrantAsyncLock()
         self._cache_ttl = 3.0
         self._session: Optional[aiohttp.ClientSession] = None
 
@@ -122,11 +165,11 @@ class RCONClient:
         for line in lines:
             line = line.strip()
             if line.startswith('.DefaultBannedPlayerIds='):
-                val = line.split('=', 1)[1].strip()
+                val = line.split('=', 1)[1].strip().strip('"\'')
                 if val:
                     bans.append(val)
             elif line.startswith('+DefaultBannedPlayerIds='):
-                val = line.split('=', 1)[1].strip()
+                val = line.split('=', 1)[1].strip().strip('"\'')
                 if val:
                     bans.append(val)
         return bans
@@ -153,15 +196,16 @@ class RCONClient:
         return schemas.Config1.model_validate(data)
 
     async def update_config(self, revision: str, new_text: str) -> schemas.ConfigResult:
-        headers = {
-            "If-Match": f'"{revision}"',
-            "Content-Type": "text/plain"
-        }
-        data = await self._request("PUT", "/v1/config?force=true&fullApply=true", headers=headers, data=new_text)
-        if isinstance(data, str):
-            import json
-            data = json.loads(data)
-        return schemas.ConfigResult.model_validate(data)
+        async with self._config_lock:
+            headers = {
+                "If-Match": f'"{revision}"',
+                "Content-Type": "text/plain"
+            }
+            data = await self._request("PUT", "/v1/config?force=true&fullApply=true", headers=headers, data=new_text)
+            if isinstance(data, str):
+                import json
+                data = json.loads(data)
+            return schemas.ConfigResult.model_validate(data)
         
     async def kick_player(self, steam_id: str, reason: str) -> None:
         payload = {"reason": reason}

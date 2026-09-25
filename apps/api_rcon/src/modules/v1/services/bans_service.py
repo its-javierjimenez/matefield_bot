@@ -30,7 +30,8 @@ class BansService:
             db_steam_ids = set([b.steam_id for b in active_bans])
 
             inactive_stmt = select(Ban.steam_id).where(Ban.is_active == False)
-            unbanned_steam_ids = set((await session.exec(inactive_stmt)).all())
+            # Only consider unbanned if they do NOT have any active ban record currently
+            unbanned_steam_ids = set((await session.exec(inactive_stmt)).all()) - db_steam_ids
             
             # 1. RCON to DB (Absorb missing bans, excluding explicitly unbanned players)
             missing_in_db = (rcon_steam_ids - db_steam_ids) - unbanned_steam_ids

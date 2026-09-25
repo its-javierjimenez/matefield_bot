@@ -44,11 +44,11 @@ Ubicación: `apps/api_rcon/tests/test_integration_infallibility.py`
   - Se mantiene activa (`is_active = True`) hasta la fecha `end_time` acordada.
   - Los slots de RCON y roles en Discord permanecen activos hasta su expiración programada.
 
-### 2.5. Preservación de VIPs en Comandos Directos de Servidor (`test_server_service_add_remove_reserved_slot_preserves_db_vips`)
-- **Escenario**: Un administrador agrega o retira un slot reservado manual mediante `/admin slot add/remove` mientras existen más de 128 VIPs en el servidor.
+### 2.5. Preservación de VIPs de DB en Comandos Directos de Servidor (`test_server_service_add_remove_reserved_slot_preserves_db_vips`)
+- **Escenario**: Un administrador agrega o retira un slot reservado manual mediante `/admin slot add/remove`.
 - **Qué valida**:
-  - `ServerService` consulta la base de datos para combinar todos los miembros activos.
-  - Nunca sobreescribe la configuración con el listado en memoria truncado a 128 del RCON.
+  - `ServerService` consulta la base de datos PostgreSQL para incluir y combinar todos los miembros activos registrados.
+  - Asegura que las adiciones o remociones puntuales no descarten a los miembros VIP existentes en la base de datos al regenerar la lista de `DefaultReservedPlayerIds`.
 
 ---
 

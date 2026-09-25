@@ -63,12 +63,18 @@ Servidor mock en FastAPI que replica la API RCON oficial de Wardogs (CL-501228).
 
 ## 2. Infallibilidad y Robustez de Datos
 
-### 2.1. Resolución del Límite de 128 VIPs (RCON Lock & Normalization)
-- **Problema Raíz**: El servidor de juego limita a 128 los slots en memoria (`GET /v1/reserved-slots`), pero admite listas mayores en su archivo de configuración `ServerSettings.ini`. Tareas simultáneas sobreescribían el archivo con snapshots desactualizados y `\r\n` corruptos.
+### 2.1. Concurrencia RCON y Persistencia de Membresías VIP (RCON Lock & Normalization)
+- **Comportamiento Empírico del Servidor (CL-501228 / warcon_api.md)**:
+  - De acuerdo con la documentación técnica y las pruebas en producción (`docs/warcon_api.md:54`), la lista `DefaultReservedPlayerIds` **no tiene límite de longitud** en el servidor de juego (verificado actualmente con más de 160 VIPs registrados en vivo en RCON).
+  - El parámetro `MaxReservedSlots` en `ServerSettings.ini` no limita la cantidad de VIPs en la lista, sino únicamente cuántos espacios de jugadores públicos se retienen para permitirles saltar la cola de espera de conexión.
+  - **Causa Real de las Fluctuaciones Previas**:
+    - Las tareas en segundo plano (`sync_memberships` y `sync_bans`) corrían de forma concurrente cada 5 minutos.
+    - Ambas leían `GET /v1/config`, modificaban su bloque correspondiente y enviaban `PUT /v1/config?force=true&fullApply=true` compitiendo entre sí con revisiones obsoletas, sobreescribiendo alternadamente los cambios de la otra tarea.
+    - La inserción de saltos de línea mezclados (`\r\n` vs `\n`) generaba corrupción o líneas truncadas en la lectura del motor Unreal Engine.
 - **Solución Implementada**:
-  - Se introdujo `_config_lock` (`asyncio.Lock()`) en cada cliente RCON. Toda lectura y escritura en `ServerSettings.ini` (`PUT /v1/config?force=true`) se ejecuta de manera secuencial y atómica.
-  - Se normalizan saltos de línea (`\r\n` -> `\n`) para preservar la sintaxis INI del juego.
-  - Las funciones de slots reservados siempre combinan los datos en memoria con los registros activos en la base de datos PostgreSQL.
+  - Se introdujo `_config_lock` (`asyncio.Lock()`) por cliente RCON. Toda lectura y escritura en `ServerSettings.ini` se serializa de manera estricta y atómica.
+  - Se normalizan los saltos de línea (`\r\n` -> `\n`) antes y después de manipular arrays INI (`!ClearArray` y `.DefaultReservedPlayerIds=...`).
+  - Las rutinas de sincronización preservan la totalidad de registros activos de la base de datos PostgreSQL, garantizando la persistencia íntegra de todos los VIPs sin pérdida de datos.
 
 ### 2.2. Prevención de Resurrección de Baneos (Ban Anti-Resurrection)
 - **Problema Raíz**: Jugadores desbaneados por la administración continuaban en la lista residual de RCON. En el siguiente ciclo de sincronización, la API interpretaba que eran baneos nuevos de RCON y los volvía a insertar como activos en DB.

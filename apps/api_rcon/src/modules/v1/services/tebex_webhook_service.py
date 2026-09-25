@@ -546,19 +546,17 @@ class TebexWebhookService:
         membership = None
         if ref:
             membership = (await session.exec(
-                select(Membership).where(
-                    Membership.tebex_subscription_id == ref,
-                    Membership.is_active == True
-                )
+                select(Membership)
+                .where(Membership.tebex_subscription_id == ref)
+                .order_by(col(Membership.is_active).desc(), col(Membership.id).desc())
             )).first()
 
         steam_id, discord_id, _ = TebexWebhookService.extract_buyer_identifiers(last_payment or subject)
         if not membership and steam_id:
             membership = (await session.exec(
-                select(Membership).where(
-                    Membership.steam_id == steam_id,
-                    Membership.is_active == True
-                )
+                select(Membership)
+                .where(Membership.steam_id == steam_id)
+                .order_by(col(Membership.is_active).desc(), col(Membership.id).desc())
             )).first()
 
         days_added = 30
@@ -647,8 +645,9 @@ class TebexWebhookService:
                 # Do NOT deactivate immediately; let it expire naturally at end_time.
                 # Unlink subscription reference so renewals stop.
                 if m.end_time and (m.end_time if m.end_time.tzinfo else m.end_time.replace(tzinfo=timezone.utc)) > now:
-                    m.tebex_subscription_id = None
-                    session.add(m)
+                    # User already prepaid for this billing cycle; keep active until natural expiry at end_time.
+                    # Keep m.tebex_subscription_id intact for audit history.
+                    pass
                 else:
                     await MembershipsService._deactivate_membership(m, session, revoke_special_role=False)
                     revoked_count += 1
@@ -747,13 +746,14 @@ class TebexWebhookService:
         steam_id, discord_id, _ = TebexWebhookService.extract_buyer_identifiers(subject)
 
         # Deactivate any active memberships linked to this transaction or steam_id
-        stmt = select(Membership).where(Membership.is_active == True)
+        revoked_memberships = []
         if transaction_id:
-            stmt = stmt.where(Membership.tebex_transaction_id == transaction_id)
-        elif steam_id:
-            stmt = stmt.where(Membership.steam_id == steam_id)
+            stmt = select(Membership).where(Membership.is_active == True, Membership.tebex_transaction_id == transaction_id)
+            revoked_memberships = list((await session.exec(stmt)).all())
 
-        revoked_memberships = (await session.exec(stmt)).all()
+        if not revoked_memberships and steam_id:
+            stmt = select(Membership).where(Membership.is_active == True, Membership.steam_id == steam_id)
+            revoked_memberships = list((await session.exec(stmt)).all())
         for m in revoked_memberships:
             await MembershipsService._deactivate_membership(m, session, revoke_special_role=True)
         await session.commit()
