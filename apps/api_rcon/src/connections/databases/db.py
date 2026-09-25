@@ -60,7 +60,8 @@ class Membership(SQLModel, table=True):
     end_time: Optional[datetime] = Field(default=None, sa_column=Column("end_date", DateTime(timezone=True))) # Null means permanent
     is_active: bool = Field(default=True)
     is_booster: bool = Field(default=False)
-    special_role_id: Optional[int] = Field(default=None, sa_column=Column("role_granted_id", BigInteger(), ForeignKey("roles.id")))
+    role_granted_id: Optional[int] = Field(default=None, sa_column=Column("role_granted_id", BigInteger(), ForeignKey("roles.id")))
+    special_role_id: Optional[int] = Field(default=None, sa_column=Column("special_role_id", BigInteger(), ForeignKey("roles.id"), index=True))
     rcon_sync_status: str = Field(default="PENDING", sa_column_kwargs={"server_default": "PENDING"}) # PENDING, SUCCESS, FAILED
     server_id: Optional[int] = Field(default=None, foreign_key="rcon_servers.id")
     tebex_transaction_id: Optional[str] = Field(default=None, index=True)
@@ -69,6 +70,8 @@ class Membership(SQLModel, table=True):
     
     # Relationships
     player: Player = Relationship(back_populates="memberships")
+    role_granted: Optional[Role] = Relationship(sa_relationship_kwargs={"foreign_keys": "[Membership.role_granted_id]"})
+    special_role: Optional[Role] = Relationship(sa_relationship_kwargs={"foreign_keys": "[Membership.special_role_id]"})
 
 class PlayerSession(SQLModel, table=True):
     __tablename__ = "player_sessions"
@@ -145,28 +148,26 @@ class BotConfig(SQLModel, table=True):
     config_value: str
 
 
-class MembershipTypeConfig(SQLModel, table=True):
-    __tablename__ = "membership_type_configs"
-    membership_type: str = Field(primary_key=True)
-    max_quota: Optional[int] = Field(default=None) # Null = infinite
-
-
 class MembershipType(SQLModel, table=True):
     __tablename__ = "membership_types"
     id: Optional[int] = Field(default=None, primary_key=True)
     code: str = Field(unique=True, index=True)
     name: str
     description: Optional[str] = Field(default=None)
-    price_usd: float = Field(default=0.0)
+    price_usd: float = Field(default=0.0)         # Precio final en plataforma / Tebex (con comisiones)
+    base_price_usd: float = Field(default=0.0)    # Precio real / neto base
     billing_type: str = Field(default="ONE_TIME") # "ONE_TIME" or "RECURRING"
     default_days: int = Field(default=30)         # 0 = permanente
     max_quota: Optional[int] = Field(default=None)# None = ilimitado
-    discord_role_id: Optional[str] = Field(default=None)
+    role_id: Optional[int] = Field(default=None, foreign_key="roles.id", index=True)
     server_id: Optional[int] = Field(default=None, foreign_key="rcon_servers.id")
     is_active: bool = Field(default=True)
     tebex_package_id: Optional[int] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
+
+    # Relationships
+    role: Optional[Role] = Relationship()
 
 
 class PaymentRecord(SQLModel, table=True):

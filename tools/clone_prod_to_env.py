@@ -41,35 +41,27 @@ async def clone_data(target_name: str, target_url: str, prod_url: str):
     memberships_raw = await fetch_table_rows(prod_engine, "memberships")
     bans = await fetch_table_rows(prod_engine, "bans")
     bot_config = await fetch_table_rows(prod_engine, "bot_config")
+    membership_types = await fetch_table_rows(prod_engine, "membership_types")
     membership_type_configs = await fetch_table_rows(prod_engine, "membership_type_configs")
     matches = await fetch_table_rows(prod_engine, "matches")
     match_team_stats = await fetch_table_rows(prod_engine, "match_team_stats")
     match_player_stats = await fetch_table_rows(prod_engine, "match_player_stats")
     player_sessions = await fetch_table_rows(prod_engine, "player_sessions")
+    payment_records = await fetch_table_rows(prod_engine, "payment_records")
+    rcon_servers = await fetch_table_rows(prod_engine, "rcon_servers")
 
     await prod_engine.dispose()
 
     # 2. Adaptar Roles al modelo DDD
     roles_adapted = []
     for r in roles_raw:
-        role_id = r["id"]
-        # En PROD id=1 tiene name='1546690312762564648'
-        if role_id == 1:
-            roles_adapted.append({
-                "id": 1,
-                "name": "Fundador Principal",
-                "code": "OWNER_MAIN",
-                "discord_role_id": r["name"],
-                "role_type": "SYSTEM"
-            })
-        else:
-            roles_adapted.append({
-                "id": role_id,
-                "name": r.get("name", f"Rol #{role_id}"),
-                "code": r.get("code") or f"ROLE_{role_id}",
-                "discord_role_id": r.get("discord_role_id") or r.get("name"),
-                "role_type": r.get("role_type", "SPECIAL")
-            })
+        roles_adapted.append({
+            "id": r["id"],
+            "name": r.get("name") or f"Rol #{r['id']}",
+            "code": r.get("code") or f"ROLE_{r['id']}",
+            "discord_role_id": r.get("discord_role_id"),
+            "role_type": r.get("role_type", "SPECIAL")
+        })
 
     # 3. Adaptar Membresías
     memberships_adapted = []
@@ -109,7 +101,7 @@ async def clone_data(target_name: str, target_url: str, prod_url: str):
 
         logger.info(f"Limpiando tablas existentes en {target_name}...")
         tables_to_truncate = [
-            "match_player_stats", "match_team_stats", "player_sessions", "matches",
+            "payment_records", "match_player_stats", "match_team_stats", "player_sessions", "matches",
             "bans", "memberships", "player_roles", "membership_types", "rcon_servers",
             "roles", "players", "teams", "bot_config", "membership_type_configs"
         ]
@@ -146,28 +138,50 @@ async def clone_data(target_name: str, target_url: str, prod_url: str):
                 "VALUES (:steam_id, :discord_id, :custom_welcome_message, :observations, :in_game_name, :avatar_url)"
             ), players)
 
-        # Insertar RCON Servers (Semilla Servidor Principal)
-        logger.info("Semillando servidor RCON principal...")
-        await conn.execute(text(
-            "INSERT INTO rcon_servers (id, name, ip, port, password, scheme, is_active, is_default) "
-            "VALUES (1, 'Servidor Principal SAO', '169.155.127.77', 9001, 'dVt2ajQzYqGKnDft', 'http', true, true) "
-            "ON CONFLICT (id) DO NOTHING;"
-        ))
-        await conn.execute(text("SELECT setval('rcon_servers_id_seq', (SELECT COALESCE(MAX(id), 1) FROM rcon_servers));"))
+        # Insertar RCON Servers
+        if rcon_servers:
+            logger.info(f"Insertando {len(rcon_servers)} rcon_servers...")
+            await conn.execute(text(
+                "INSERT INTO rcon_servers (id, name, ip, port, password, scheme, is_active, is_default, created_at, updated_at) "
+                "VALUES (:id, :name, :ip, :port, :password, :scheme, :is_active, :is_default, :created_at, :updated_at)"
+            ), rcon_servers)
+            await conn.execute(text("SELECT setval('rcon_servers_id_seq', (SELECT COALESCE(MAX(id), 1) FROM rcon_servers));"))
+        else:
+            logger.info("Semillando servidor RCON principal por defecto...")
+            await conn.execute(text(
+                "INSERT INTO rcon_servers (id, name, ip, port, password, scheme, is_active, is_default) "
+                "VALUES (1, 'Servidor Principal SAO', '169.155.127.77', 9001, 'dVt2ajQzYqGKnDft', 'http', true, true) "
+                "ON CONFLICT (id) DO NOTHING;"
+            ))
+            await conn.execute(text("SELECT setval('rcon_servers_id_seq', (SELECT COALESCE(MAX(id), 1) FROM rcon_servers));"))
 
-        # Insertar Membership Types estándar
-        logger.info("Semillando membership_types...")
-        vip_types = [
-            {"code": "VIP_COMUN", "name": "VIP Común", "default_days": 30, "discord_role_id": "1546845168169259060", "is_active": True},
-            {"code": "VIP_EXPRESS", "name": "VIP Express", "default_days": 15, "discord_role_id": "1546846355656417311", "is_active": True},
-            {"code": "VIP_PERMANENTE", "name": "VIP Permanente", "default_days": 0, "discord_role_id": "1548089245195968572", "is_active": True},
-            {"code": "VIP_SEED", "name": "VIP Seeder", "default_days": 3, "discord_role_id": "1546846355656417311", "is_active": True},
-        ]
-        await conn.execute(text(
-            "INSERT INTO membership_types (code, name, default_days, discord_role_id, is_active) "
-            "VALUES (:code, :name, :default_days, :discord_role_id, :is_active) "
-            "ON CONFLICT (code) DO NOTHING;"
-        ), vip_types)
+        # Insertar Membership Types de PROD
+        if membership_types:
+            logger.info(f"Insertando {len(membership_types)} membership_types de PROD...")
+            await conn.execute(text(
+                "INSERT INTO membership_types ("
+                "   id, code, name, description, price_usd, billing_type, default_days, max_quota, "
+                "   discord_role_id, server_id, is_active, tebex_package_id, created_at, updated_at"
+                ") VALUES ("
+                "   :id, :code, :name, :description, :price_usd, :billing_type, :default_days, :max_quota, "
+                "   :discord_role_id, :server_id, :is_active, :tebex_package_id, :created_at, :updated_at"
+                ")"
+            ), membership_types)
+            await conn.execute(text("SELECT setval('membership_types_id_seq', (SELECT COALESCE(MAX(id), 1) FROM membership_types));"))
+
+        # Insertar Payment Records de PROD
+        if payment_records:
+            logger.info(f"Insertando {len(payment_records)} payment_records...")
+            await conn.execute(text(
+                "INSERT INTO payment_records ("
+                "   id, transaction_id, event_type, steam_id, discord_id, package_id, package_name, "
+                "   amount, currency, status, raw_payload, created_at"
+                ") VALUES ("
+                "   :id, :transaction_id, :event_type, :steam_id, :discord_id, :package_id, :package_name, "
+                "   :amount, :currency, :status, :raw_payload, :created_at"
+                ")"
+            ), payment_records)
+            await conn.execute(text("SELECT setval('payment_records_id_seq', (SELECT COALESCE(MAX(id), 1) FROM payment_records));"))
 
         # Insertar Player Roles
         if player_roles:

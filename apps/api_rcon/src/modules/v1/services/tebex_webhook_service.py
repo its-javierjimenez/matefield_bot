@@ -577,6 +577,20 @@ class TebexWebhookService:
             else:
                 membership.end_time = now_utc + timedelta(days=days_added)
             membership.is_active = True
+            if membership.role_granted_id:
+                vip_pr = (await session.exec(select(PlayerRole).where(
+                    PlayerRole.steam_id == membership.steam_id,
+                    PlayerRole.role_id == membership.role_granted_id
+                ))).first()
+                if not vip_pr:
+                    session.add(PlayerRole(steam_id=membership.steam_id, role_id=membership.role_granted_id))
+            if membership.special_role_id:
+                sp_pr = (await session.exec(select(PlayerRole).where(
+                    PlayerRole.steam_id == membership.steam_id,
+                    PlayerRole.role_id == membership.special_role_id
+                ))).first()
+                if not sp_pr:
+                    session.add(PlayerRole(steam_id=membership.steam_id, role_id=membership.special_role_id))
             session.add(membership)
             await session.commit()
 

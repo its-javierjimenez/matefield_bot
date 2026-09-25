@@ -115,12 +115,14 @@ class APIClient:
     async def set_welcome_message(self, steam_id: str, message: str) -> None:
         await self._request("POST", f"/api/v1/db/players/steam/{steam_id}/welcome-message", json={"message": message})
 
-    async def add_membership(self, steam_id: str, membership_type: str, days: Optional[int] = None, special_role: Optional[str] = None, is_booster: bool = False, server_id: Optional[int] = None) -> None:
+    async def add_membership(self, steam_id: str, membership_type: str, days: Optional[int] = None, special_role: Optional[str] = None, special_role_id: Optional[int] = None, role_granted_id: Optional[int] = None, is_booster: bool = False, server_id: Optional[int] = None) -> None:
         req = schemas.AddMembershipRequest(
             steam_id=steam_id,
             membership_type=membership_type,
             days=days,
             special_role=special_role,
+            special_role_id=special_role_id,
+            role_granted_id=role_granted_id,
             is_booster=is_booster,
             server_id=server_id
         )

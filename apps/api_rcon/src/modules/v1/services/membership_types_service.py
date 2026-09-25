@@ -5,7 +5,7 @@ from sqlmodel import select, func, col
 from sqlmodel.ext.asyncio.session import AsyncSession
 from fastapi import HTTPException
 
-from src.connections.databases.db import MembershipType, Membership, RconServer, MembershipTypeConfig
+from src.connections.databases.db import MembershipType, Membership, RconServer, Role
 from src.modules.v1.schemas.dtos import (
     CreateMembershipTypeRequest,
     UpdateMembershipTypeRequest,
@@ -44,6 +44,16 @@ class MembershipTypesService:
             servers = (await session.exec(servers_stmt)).all()
             server_names = {s.id: s.name for s in servers if s.id is not None}
 
+        # Resolve role names and discord_role_ids
+        role_ids = [t.role_id for t in types if t.role_id is not None]
+        role_names: Dict[int, str] = {}
+        role_discord_ids: Dict[int, str] = {}
+        if role_ids:
+            roles_stmt = select(Role).where(col(Role.id).in_(role_ids))
+            roles = (await session.exec(roles_stmt)).all()
+            role_names = {r.id: r.name for r in roles if r.id is not None}
+            role_discord_ids = {r.id: r.discord_role_id for r in roles if r.id is not None and r.discord_role_id}
+
         result = []
         for t in types:
             code_upper = t.code.upper()
@@ -53,11 +63,14 @@ class MembershipTypesService:
                 "name": t.name,
                 "description": t.description,
                 "price_usd": t.price_usd,
+                "base_price_usd": t.base_price_usd if t.base_price_usd is not None else t.price_usd,
                 "billing_type": t.billing_type,
                 "default_days": t.default_days,
                 "max_quota": t.max_quota,
                 "current_usage": usage_map.get(code_upper, 0),
-                "discord_role_id": t.discord_role_id,
+                "discord_role_id": role_discord_ids.get(t.role_id) if t.role_id else None,
+                "role_id": t.role_id,
+                "role_name": role_names.get(t.role_id),
                 "server_id": t.server_id,
                 "server_name": server_names.get(t.server_id) if t.server_id else "Global (Todos)",
                 "tebex_package_id": t.tebex_package_id,
@@ -90,20 +103,48 @@ class MembershipTypesService:
             if not server:
                 raise HTTPException(status_code=404, detail=f"Servidor RCON con ID {req.server_id} no encontrado")
 
+        role_to_link_id = req.role_id
+        if req.discord_role_id and not role_to_link_id:
+            dr_str = str(req.discord_role_id).strip()
+            existing_role = (await session.exec(select(Role).where(Role.discord_role_id == dr_str))).first()
+            if existing_role:
+                role_to_link_id = existing_role.id
+            else:
+                new_role = Role(
+                    code=f"ROLE_{dr_str}",
+                    name=req.name.strip(),
+                    discord_role_id=dr_str,
+                    role_type="VIP"
+                )
+                session.add(new_role)
+                await session.commit()
+                await session.refresh(new_role)
+                role_to_link_id = new_role.id
+
+        role_obj = None
+        if role_to_link_id is not None:
+            role_obj = await session.get(Role, role_to_link_id)
+            if not role_obj:
+                raise HTTPException(status_code=404, detail=f"Rol con ID {role_to_link_id} no encontrado")
+
         billing_type = req.billing_type.upper() if req.billing_type else "ONE_TIME"
         if billing_type not in ("ONE_TIME", "RECURRING"):
             raise HTTPException(status_code=400, detail="billing_type debe ser 'ONE_TIME' o 'RECURRING'")
+
+        price_usd = max(0.0, float(req.price_usd))
+        base_price_usd = max(0.0, float(req.base_price_usd)) if req.base_price_usd is not None else price_usd
 
         now = datetime.now(timezone.utc)
         m_type = MembershipType(
             code=normalized_code,
             name=req.name.strip(),
             description=req.description,
-            price_usd=max(0.0, float(req.price_usd)),
+            price_usd=price_usd,
+            base_price_usd=base_price_usd,
             billing_type=billing_type,
             default_days=req.default_days if req.default_days is not None else 30,
             max_quota=req.max_quota,
-            discord_role_id=str(req.discord_role_id).strip() if req.discord_role_id else None,
+            role_id=role_to_link_id,
             server_id=req.server_id,
             tebex_package_id=req.tebex_package_id,
             is_active=req.is_active,
@@ -114,14 +155,6 @@ class MembershipTypesService:
         await session.commit()
         await session.refresh(m_type)
 
-        # Also keep membership_type_configs in sync for backwards compatibility
-        config = (await session.exec(
-            select(MembershipTypeConfig).where(MembershipTypeConfig.membership_type == normalized_code)
-        )).first()
-        if not config:
-            session.add(MembershipTypeConfig(membership_type=normalized_code, max_quota=req.max_quota))
-            await session.commit()
-
         return {
             "ok": True,
             "message": f"Tipo de membresía '{m_type.name}' creado exitosamente",
@@ -131,11 +164,14 @@ class MembershipTypesService:
                 "name": m_type.name,
                 "description": m_type.description,
                 "price_usd": m_type.price_usd,
+                "base_price_usd": m_type.base_price_usd,
                 "billing_type": m_type.billing_type,
                 "default_days": m_type.default_days,
                 "max_quota": m_type.max_quota,
                 "current_usage": 0,
-                "discord_role_id": m_type.discord_role_id,
+                "discord_role_id": role_obj.discord_role_id if role_obj else None,
+                "role_id": m_type.role_id,
+                "role_name": role_obj.name if role_obj else None,
                 "server_id": m_type.server_id,
                 "tebex_package_id": m_type.tebex_package_id,
                 "is_active": m_type.is_active,
@@ -158,12 +194,40 @@ class MembershipTypesService:
         elif req.server_id is None and "server_id" in req.model_fields_set:
             m_type.server_id = None
 
+        if "role_id" in req.model_fields_set or "discord_role_id" in req.model_fields_set:
+            new_role_id = req.role_id
+            if req.discord_role_id and not new_role_id:
+                dr_str = str(req.discord_role_id).strip()
+                existing_role = (await session.exec(select(Role).where(Role.discord_role_id == dr_str))).first()
+                if existing_role:
+                    new_role_id = existing_role.id
+                else:
+                    new_role = Role(
+                        code=f"ROLE_{dr_str}",
+                        name=m_type.name,
+                        discord_role_id=dr_str,
+                        role_type="VIP"
+                    )
+                    session.add(new_role)
+                    await session.commit()
+                    await session.refresh(new_role)
+                    new_role_id = new_role.id
+            if new_role_id is not None:
+                role = await session.get(Role, new_role_id)
+                if not role:
+                    raise HTTPException(status_code=404, detail=f"Rol con ID {new_role_id} no encontrado")
+                m_type.role_id = new_role_id
+            elif "role_id" in req.model_fields_set and req.role_id is None:
+                m_type.role_id = None
+
         if req.name is not None:
             m_type.name = req.name.strip()
         if req.description is not None:
             m_type.description = req.description
         if req.price_usd is not None:
             m_type.price_usd = max(0.0, float(req.price_usd))
+        if req.base_price_usd is not None:
+            m_type.base_price_usd = max(0.0, float(req.base_price_usd))
         if req.billing_type is not None:
             b_type = req.billing_type.upper()
             if b_type not in ("ONE_TIME", "RECURRING"):
@@ -173,8 +237,6 @@ class MembershipTypesService:
             m_type.default_days = req.default_days
         if "max_quota" in req.model_fields_set:
             m_type.max_quota = req.max_quota
-        if "discord_role_id" in req.model_fields_set:
-            m_type.discord_role_id = str(req.discord_role_id).strip() if req.discord_role_id else None
         if "tebex_package_id" in req.model_fields_set:
             m_type.tebex_package_id = req.tebex_package_id
         if req.is_active is not None:
@@ -185,14 +247,7 @@ class MembershipTypesService:
         await session.commit()
         await session.refresh(m_type)
 
-        # Sync quota to MembershipTypeConfig
-        config = (await session.exec(
-            select(MembershipTypeConfig).where(MembershipTypeConfig.membership_type == m_type.code.upper())
-        )).first()
-        if config:
-            config.max_quota = m_type.max_quota
-            session.add(config)
-            await session.commit()
+        linked_role = await session.get(Role, m_type.role_id) if m_type.role_id else None
 
         return {
             "ok": True,
@@ -203,10 +258,13 @@ class MembershipTypesService:
                 "name": m_type.name,
                 "description": m_type.description,
                 "price_usd": m_type.price_usd,
+                "base_price_usd": m_type.base_price_usd,
                 "billing_type": m_type.billing_type,
                 "default_days": m_type.default_days,
                 "max_quota": m_type.max_quota,
-                "discord_role_id": m_type.discord_role_id,
+                "discord_role_id": linked_role.discord_role_id if linked_role else None,
+                "role_id": m_type.role_id,
+                "role_name": linked_role.name if linked_role else None,
                 "server_id": m_type.server_id,
                 "tebex_package_id": m_type.tebex_package_id,
                 "is_active": m_type.is_active,
@@ -231,30 +289,30 @@ class MembershipTypesService:
 
     @staticmethod
     async def _ensure_defaults(session: AsyncSession) -> None:
-        """Seeds initial default types if the membership_types table is empty, or links tebex IDs."""
+        """Seeds initial default types if the membership_types table is empty, or updates links."""
         count = (await session.exec(select(func.count(col(MembershipType.id))))).one()
-        if count == 0:
-            existing_configs = (await session.exec(select(MembershipTypeConfig))).all()
-            quota_map = {c.membership_type.upper(): c.max_quota for c in existing_configs}
+        all_roles = (await session.exec(select(Role))).all()
+        roles_by_code = {r.code.upper(): r.id for r in all_roles if r.code}
 
+        if count == 0:
             defaults = [
-                ("VIP_COMUN", "VIP Común", "Membresía estándar mensual con slot reservado", 6.0, 30, 7682027),
-                ("VIP_EXPRESS", "VIP Express", "Pase rápido quincenal con slot reservado", 4.0, 15, 7682061),
-                ("VIP_PERMANENTE", "VIP Permanente", "Membresía vitalicia sin expiración", 0.0, 0, None),
+                ("VIP_COMUN", "VIP Común", "Membresía estándar mensual con slot reservado", 6.0, 5.0, 30, 7682027, roles_by_code.get("VIP_COMUN") or roles_by_code.get("VIP")),
+                ("VIP_EXPRESS", "VIP Express", "Pase rápido quincenal con slot reservado", 4.0, 3.0, 15, 7682061, roles_by_code.get("VIP_EXPRESS")),
+                ("VIP_PERMANENTE", "VIP Permanente", "Membresía vitalicia sin expiración", 0.0, 0.0, 0, None, roles_by_code.get("VIP_PERMANENTE")),
             ]
 
             now = datetime.now(timezone.utc)
-            for code, name, desc, price, days, tebex_id in defaults:
-                quota = quota_map.get(code)
+            for code, name, desc, price, base_price, days, tebex_id, r_id in defaults:
                 session.add(MembershipType(
                     code=code,
                     name=name,
                     description=desc,
                     price_usd=price,
+                    base_price_usd=base_price,
                     billing_type="ONE_TIME",
                     default_days=days,
-                    max_quota=quota,
-                    discord_role_id=None,
+                    max_quota=None,
+                    role_id=r_id,
                     server_id=None,
                     tebex_package_id=tebex_id,
                     is_active=True,
@@ -263,20 +321,32 @@ class MembershipTypesService:
                 ))
             await session.commit()
         else:
-            # Check and link tebex_package_id if missing on existing defaults
             all_types = (await session.exec(select(MembershipType))).all()
             updated = False
             for m in all_types:
-                if m.code == "VIP_COMUN" and not m.tebex_package_id:
-                    m.tebex_package_id = 7682027
-                    m.price_usd = 6.0
-                    session.add(m)
-                    updated = True
-                elif m.code == "VIP_EXPRESS" and not m.tebex_package_id:
-                    m.tebex_package_id = 7682061
-                    m.price_usd = 4.0
-                    m.default_days = 15
-                    session.add(m)
-                    updated = True
+                if m.code == "VIP_COMUN":
+                    if not m.tebex_package_id:
+                        m.tebex_package_id = 7682027
+                        updated = True
+                    if m.base_price_usd is None or m.base_price_usd == 0.0:
+                        m.base_price_usd = 5.0
+                        updated = True
+                    if not m.role_id and (roles_by_code.get("VIP_COMUN") or roles_by_code.get("VIP")):
+                        m.role_id = roles_by_code.get("VIP_COMUN") or roles_by_code.get("VIP")
+                        updated = True
+                elif m.code == "VIP_EXPRESS":
+                    if not m.tebex_package_id:
+                        m.tebex_package_id = 7682061
+                        updated = True
+                    if m.base_price_usd is None or m.base_price_usd == 0.0:
+                        m.base_price_usd = 3.0
+                        updated = True
+                    if not m.role_id and roles_by_code.get("VIP_EXPRESS"):
+                        m.role_id = roles_by_code.get("VIP_EXPRESS")
+                        updated = True
+                elif m.code == "VIP_PERMANENTE":
+                    if not m.role_id and roles_by_code.get("VIP_PERMANENTE"):
+                        m.role_id = roles_by_code.get("VIP_PERMANENTE")
+                        updated = True
             if updated:
                 await session.commit()

@@ -79,6 +79,22 @@ Una decisión arquitectónica fundamental de esta versión es la separación est
 - En versiones anteriores existía una separación ficticia e inconsistente entre "Owner" y "Admin", lo que causaba desincronizaciones en la base de datos y en los permisos de Discord.
 - **Regla de Negocio Actual**: El concepto de "Owner" no existe como entidad separada. Todos los miembros del staff con permisos de administración son tratados de forma unificada bajo la categoría **ADMIN / SUPERVISOR**. Los roles de tipo `SYSTEM` otorgan control administrativo completo sin excepciones arbitrarias.
 
+### D. Vinculación de `MembershipType` con `roles.id` y Doble Precio
+- Anteriormente existía duplicidad entre `membership_types` y la tabla `roles`, además de configuraciones dispersas en `bot_config` y la tabla obsoleta `membership_type_configs`.
+- **Refactorización**:
+  - `membership_types.role_id` referencia directamente a `roles.id`, unificando el paquete con su rol de tipo `VIP`. La columna redundante `discord_role_id` fue completamente eliminada de `membership_types` en la migración `k7g8b9c0d1e2`. El ID de Discord se resuelve dinámicamente desde el rol asociado.
+  - La tabla `membership_type_configs` fue eliminada y los parámetros obsoletos (`ROLE_MAP_*`, `ROLE_DAYS_*`) fueron purgados de `bot_config`.
+  - **Doble Precio**: Se soportan transparentemente `base_price_usd` (precio neto real, ej. $5.00 / $3.00) y `price_usd` (precio listado en Tebex con comisiones de plataforma, ej. $6.00 / $4.00), visualizados en `/membership_type list` sin desajustar los webhooks ni cobros de Tebex.
+
+### E. Ciclo de Vida en `player_roles` según `role_type` y Roles Especiales Adjuntos
+- La tabla `memberships` cuenta con dos claves foráneas explícitas hacia `roles.id`:
+  - `role_granted_id`: El rol VIP correspondiente a la membresía adquirida (de `membership_types.role_id`).
+  - `special_role_id`: Un rol especial adicional o conmemorativo que puede adjuntarse a la membresía (ej. "VIP Fundador" o "Fundador").
+- La tabla asociativa `player_roles` almacena la relación universal jugador-rol `(steam_id, role_id)`.
+- Al expirar una membresía, solo los roles con `role_type == 'VIP'` (`role_granted_id`) son revocados de `player_roles` y de Discord cuando el jugador no tiene otra membresía activa que los otorgue.
+- Los roles especiales adjuntos (`special_role_id`) y del sistema (`role_type in ('SPECIAL', 'SYSTEM')`) son **inmunes a la expiración** de suscripciones; nunca se eliminan automáticamente salvo por reembolso/disputa bancaria en Tebex o revocación manual de un administrador. Además, al renovar o extender una membresía existente, el rol especial adjunto se hereda automáticamente.
+- En `/player profile`, solo los roles con `role_type == 'SPECIAL'` aparecen listados en "Roles Especiales", y los datos confidenciales ("Rango RCON" y "Observaciones Internas") solo son visibles si quien ejecuta el comando es un Administrador.
+
 ---
 
 ## 4. Filosofía de Comandos del Bot: "Entidades Primero"

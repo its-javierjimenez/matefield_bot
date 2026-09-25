@@ -494,3 +494,110 @@ async def test_player_link_channel_admin(monkeypatch):
     assert "Panel de vinculación publicado exitosamente" in ctx.respond.call_args[0][0]
 
 
+@pytest.mark.asyncio
+async def test_player_profile_admin_vs_player(monkeypatch):
+    from src.plugins.account import Profile, plugin
+
+    cmd_cls = getattr(Profile, "metadata").owner
+    
+    player_data = {
+        "steam_id": "76561198058686447",
+        "in_game_name": "Fr4nc0",
+        "discord_id": "111222333",
+        "active_role": "VIP",
+        "special_roles": ["Fundador"],
+        "observations": "Notas privadas de staff",
+        "active_memberships": [{"type": "VIP_COMUN", "end_time": "2026-11-10T03:00:00+00:00"}]
+    }
+
+    plugin._client = MagicMock()
+    plugin._client.model.api.get_player_by_discord = AsyncMock(return_value={"steam_id": "76561198058686447"})
+    plugin._client.model.api.get_player_by_steam = AsyncMock(return_value=player_data)
+    plugin._client.model.api.get_player_historical_stats = AsyncMock(return_value={
+        "matches_played": 10, "total_kills": 20, "total_deaths": 5, "total_cash": 1000
+    })
+
+    # 1. Non-admin user querying profile (self)
+    cmd = cmd_cls()
+    cmd.usuario = None
+    cmd.steam_id = None
+    ctx = MagicMock()
+    ctx.user.id = 111222333
+    ctx.defer = AsyncMock()
+    ctx.respond = AsyncMock()
+
+    monkeypatch.setattr("src.plugins.account.check_is_admin", AsyncMock(return_value=False))
+
+    await cmd.callback(ctx)
+
+    ctx.respond.assert_called_once()
+    embed = ctx.respond.call_args[1]["embed"]
+    field_names = [f.name for f in embed.fields]
+    assert "⭐ Rango RCON" not in field_names
+    assert "📝 Observaciones Internas" not in field_names
+    assert "🏷️ Roles Especiales" in field_names
+    special_field = next(f for f in embed.fields if f.name == "🏷️ Roles Especiales")
+    assert "Fundador" in special_field.value
+
+    # 2. Admin querying profile
+    ctx.respond.reset_mock()
+    monkeypatch.setattr("src.plugins.account.check_is_admin", AsyncMock(return_value=True))
+
+    await cmd.callback(ctx)
+
+    ctx.respond.assert_called_once()
+    embed_admin = ctx.respond.call_args[1]["embed"]
+    admin_field_names = [f.name for f in embed_admin.fields]
+    assert "⭐ Rango RCON" in admin_field_names
+    assert "📝 Observaciones Internas" in admin_field_names
+    rcon_field = next(f for f in embed_admin.fields if f.name == "⭐ Rango RCON")
+    assert rcon_field.value == "VIP"
+    obs_field = next(f for f in embed_admin.fields if f.name == "📝 Observaciones Internas")
+    assert "Notas privadas de staff" in obs_field.value
+
+
+@pytest.mark.asyncio
+async def test_membership_sync_command(monkeypatch):
+    from src.plugins.memberships import ForceSyncMemberships, plugin
+    
+    cmd_cls = getattr(ForceSyncMemberships, "metadata").owner
+    cmd = cmd_cls()
+    
+    ctx = MagicMock()
+    ctx.guild_id = 999
+    ctx.app = MagicMock()
+    ctx.defer = AsyncMock()
+    ctx.respond = AsyncMock()
+    plugin._client = MagicMock()
+
+    mock_stats = {
+        "success": True,
+        "active_rcon_slots": 141,
+        "expired_count": 2,
+        "users_checked": 50,
+        "roles_added": 3,
+        "roles_removed": 1,
+        "whitelist_skipped": 1
+    }
+    
+    monkeypatch.setattr(
+        "src.plugins.tasks.execute_membership_sync",
+        AsyncMock(return_value=mock_stats)
+    )
+
+    await cmd.callback(ctx)
+
+    ctx.defer.assert_called_once()
+    ctx.respond.assert_called_once()
+    embed = ctx.respond.call_args[1]["embed"]
+    assert "Sincronización Completa" in embed.title
+    field_names = [f.name for f in embed.fields]
+    assert "🎮 Slots Reservados RCON" in field_names
+    assert "⏰ Membresías Expiradas" in field_names
+    assert "➕ Roles Añadidos" in field_names
+    assert "➖ Roles Removidos" in field_names
+    assert "🛡️ Whitelist" in field_names
+
+
+
+

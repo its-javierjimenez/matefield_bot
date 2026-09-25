@@ -92,9 +92,10 @@ class PlayersService:
                 
         # Semantic evaluation: SYSTEM roles map to ADMIN (no isolated owner)
         for sr in special_roles:
-            if sr.role_type == "SYSTEM":
+            sr_type = str(sr.role_type or "").strip().upper()
+            if sr_type == "SYSTEM" or sr_type.startswith("SYSTEM"):
                 active_roles.append("ADMIN")
-            elif sr.role_type == "VIP":
+            elif sr_type == "VIP" or sr_type.startswith("VIP"):
                 active_roles.append("VIP")
             else:
                 active_roles.append(sr.code)
@@ -102,12 +103,10 @@ class PlayersService:
         primary_role = None
         if any(r in ("ADMIN", "OWNER", "SUPERVISOR") for r in active_roles):
             primary_role = "ADMIN"
-        elif any("VIP" in r for r in active_roles):
+        elif any("VIP" in r or "FUNDADOR" in r for r in active_roles):
             primary_role = "VIP"
         elif active_roles:
             primary_role = active_roles[0]
-            
-
 
         return {
             "name": player.in_game_name,
@@ -119,7 +118,7 @@ class PlayersService:
             "active_role": primary_role,
             "memberships": active_memberships,
             "active_memberships": active_memberships,
-            "special_roles": [r.code for r in special_roles]
+            "special_roles": [r.name if (r.name and not r.name.isdigit()) else r.code for r in special_roles if r.role_type == "SPECIAL"]
         }
 
     @staticmethod

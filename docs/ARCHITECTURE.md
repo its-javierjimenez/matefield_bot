@@ -118,6 +118,7 @@ Servidor mock en FastAPI que replica la API RCON oficial de Wardogs (CL-501228).
 | `players` | Identidad del usuario (Steam ID <-> Discord ID) | `steam_id` (PK), `discord_id` (Unique, Index) |
 | `memberships` | Suscripciones VIP y slots reservados | `id` (PK), `steam_id` (FK, Index), `type` (Index), `is_active` |
 | `roles` | Catálogo de roles de dominio (SYSTEM, VIP, PUBLIC, SPECIAL) | `id` (PK), `code` (Unique), `discord_role_id` (Index) |
+| `membership_types` | Catálogo de paquetes VIP, doble precio (base y Tebex) y enlace a rol | `id` (PK), `code` (Unique), `role_id` (FK), `price_usd`, `base_price_usd` |
 | `player_roles` | Asociación muchos-a-muchos entre jugadores y roles | `steam_id` (PK, FK), `role_id` (PK, FK) |
 | `bans` | Registro histórico de suspensiones RCON/Discord | `id` (PK), `steam_id` (FK, Index), `is_active` |
 | `matches` | Registro histórico de partidas completadas | `id` (PK UUID), `map`, `start_time`, `end_time` |

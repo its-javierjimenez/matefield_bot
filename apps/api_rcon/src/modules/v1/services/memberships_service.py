@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlmodel import select, func, col, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.connections.databases.db import Player, Membership, Role, PlayerRole, BotConfig, MembershipTypeConfig, MembershipType
+from src.connections.databases.db import Player, Membership, Role, PlayerRole, BotConfig, MembershipType
 from src.connections.apis.rcon import RCONManager
 from src.modules.v1.schemas.dtos import AddMembershipRequest, EditMembershipRequest, CompensateRequest
 
@@ -33,10 +33,6 @@ class MembershipsService:
 
         # Check quota if it's a new membership or one that's inactive
         max_quota = m_type.max_quota if m_type else None
-        if max_quota is None:
-            legacy_config = (await session.exec(select(MembershipTypeConfig).where(MembershipTypeConfig.membership_type == norm_type))).first()
-            if legacy_config:
-                max_quota = legacy_config.max_quota
 
         if max_quota is not None:
             usage_stmt = select(func.count(col(Membership.id))).where(func.upper(Membership.membership_type) == norm_type, Membership.is_active == True)
@@ -71,9 +67,12 @@ class MembershipsService:
 
         if existing_membership:
             if existing_membership.end_time:
-                if existing_membership.end_time > start_date:
+                m_end = existing_membership.end_time
+                if m_end.tzinfo is None:
+                    m_end = m_end.replace(tzinfo=timezone.utc)
+                if m_end > start_date:
                     # Still active, accumulate remaining time to the new membership
-                    remaining_time = existing_membership.end_time - start_date
+                    remaining_time = m_end - start_date
                     end_date = start_date + remaining_time + timedelta(days=days_to_add) if days_to_add > 0 else None
                     
             # Expire the old membership to keep history intact
@@ -81,6 +80,43 @@ class MembershipsService:
             existing_membership.end_time = start_date # Mark it as ended now
             session.add(existing_membership)
         
+        # Resolve VIP role from m_type or direct req.role_granted_id
+        vip_role_id = req.role_granted_id or (m_type.role_id if m_type else None)
+        if not vip_role_id:
+            fallback_role = (await session.exec(select(Role).where(func.upper(Role.code) == norm_type))).first()
+            if fallback_role:
+                vip_role_id = fallback_role.id
+
+        # Determine attached special role
+        attached_special_role_id = req.special_role_id
+        if not attached_special_role_id and req.special_role:
+            role_identifier = req.special_role.strip()
+            if role_identifier.isdigit() and len(role_identifier) < 10:
+                sr_obj = await session.get(Role, int(role_identifier))
+                if sr_obj:
+                    attached_special_role_id = sr_obj.id
+            if not attached_special_role_id:
+                norm_sr_code = role_identifier.upper().replace(" ", "_")
+                sr_obj = (await session.exec(select(Role).where(
+                    or_(
+                        Role.name == role_identifier,
+                        Role.discord_role_id == role_identifier,
+                        Role.code == role_identifier,
+                        Role.code == norm_sr_code,
+                        func.upper(Role.name) == role_identifier.upper()
+                    )
+                ))).first()
+                if sr_obj:
+                    attached_special_role_id = sr_obj.id
+                else:
+                    new_sr = Role(code=role_identifier.upper().replace(" ", "_"), name=role_identifier, discord_role_id=role_identifier, role_type="SPECIAL")
+                    session.add(new_sr)
+                    await session.commit()
+                    await session.refresh(new_sr)
+                    attached_special_role_id = new_sr.id
+        elif not attached_special_role_id and existing_membership and existing_membership.special_role_id:
+            attached_special_role_id = existing_membership.special_role_id
+
         membership = Membership(
             steam_id=req.steam_id,
             membership_type=req.membership_type,
@@ -88,31 +124,31 @@ class MembershipsService:
             end_time=end_date,
             is_active=True,
             is_booster=req.is_booster or False,
+            role_granted_id=vip_role_id,
+            special_role_id=attached_special_role_id,
             server_id=server_id,
             tebex_transaction_id=req.tebex_transaction_id,
             tebex_subscription_id=req.tebex_subscription_id,
             payment_source=req.payment_source or "MANUAL"
         )
         
-        # Link special role if passed or configured in MembershipType
-        role_identifier = req.special_role or (m_type.discord_role_id if m_type and m_type.discord_role_id else None)
-        if role_identifier:
-            role = (await session.exec(select(Role).where(
-                or_(Role.name == role_identifier, Role.discord_role_id == role_identifier, Role.code == role_identifier)
+        # Link VIP role to player_roles
+        if membership.role_granted_id:
+            vip_pr = (await session.exec(select(PlayerRole).where(
+                PlayerRole.steam_id == req.steam_id,
+                PlayerRole.role_id == membership.role_granted_id
             ))).first()
-            if not role:
-                role = Role(code=role_identifier.upper().replace(" ", "_"), name=role_identifier, discord_role_id=role_identifier, role_type="SPECIAL")
-                session.add(role)
-                await session.commit()
-                await session.refresh(role)
-                
-            membership.special_role_id = role.id
-                
-            player_role = (await session.exec(select(PlayerRole).where(PlayerRole.steam_id == req.steam_id, PlayerRole.role_id == role.id))).first()
-            if not player_role:
-                assert role.id is not None
-                player_role = PlayerRole(steam_id=req.steam_id, role_id=role.id)
-                session.add(player_role)
+            if not vip_pr:
+                session.add(PlayerRole(steam_id=req.steam_id, role_id=membership.role_granted_id))
+
+        # Link special badge role to player_roles
+        if membership.special_role_id:
+            sp_pr = (await session.exec(select(PlayerRole).where(
+                PlayerRole.steam_id == req.steam_id,
+                PlayerRole.role_id == membership.special_role_id
+            ))).first()
+            if not sp_pr:
+                session.add(PlayerRole(steam_id=req.steam_id, role_id=membership.special_role_id))
                 
         session.add(membership)
         await session.commit()
@@ -122,12 +158,51 @@ class MembershipsService:
     async def _deactivate_membership(m: Membership, session: AsyncSession, revoke_special_role: bool = False) -> None:
         """
         Desactiva una membresía (is_active = False).
-        Por regla de negocio, los roles especiales (ej. VIP Fundador, insignias) son permanentes
-        en la cuenta del jugador y perduran para siempre aunque la membresía expire.
-        Solo se revocan de PlayerRole si revoke_special_role=True (exclusivamente ante reembolsos o disputas en Tebex).
+        - Si la membresía tiene un role_granted_id asignado (VIP), verifica si el jugador
+          tiene otra membresía activa que otorgue ese mismo role_id.
+          Si no tiene otra, elimina ese PlayerRole (VIP).
+        - Por regla de negocio, los roles con role_type in ('SPECIAL', 'SYSTEM') (ej. Fundador, Staff)
+          son permanentes en la cuenta del jugador y NO se revocan ante expiración de suscripción.
+          Solo se revocan si revoke_special_role=True (reembolsos o disputas en Tebex).
         """
         m.is_active = False
         session.add(m)
+
+        # 1. Handle VIP role revocation from player_roles
+        vip_role_id = m.role_granted_id
+        if not vip_role_id:
+            m_type = (await session.exec(
+                select(MembershipType).where(func.upper(MembershipType.code) == m.membership_type.upper())
+            )).first()
+            vip_role_id = m_type.role_id if m_type else None
+
+        if vip_role_id:
+            # Check if any OTHER active membership for this player grants the same role_id
+            other_active_types = (await session.exec(
+                select(Membership.id)
+                .outerjoin(MembershipType, func.upper(Membership.membership_type) == func.upper(MembershipType.code))
+                .where(
+                    Membership.steam_id == m.steam_id,
+                    Membership.is_active == True,
+                    Membership.id != m.id,
+                    or_(
+                        Membership.role_granted_id == vip_role_id,
+                        MembershipType.role_id == vip_role_id
+                    )
+                )
+            )).first()
+
+            if not other_active_types:
+                target_role = await session.get(Role, vip_role_id)
+                if target_role and target_role.role_type == "VIP":
+                    pr = (await session.exec(select(PlayerRole).where(
+                        PlayerRole.steam_id == m.steam_id,
+                        PlayerRole.role_id == vip_role_id
+                    ))).first()
+                    if pr:
+                        await session.delete(pr)
+
+        # 2. Handle special badge role revocation (only if explicit dispute/refund)
         if revoke_special_role and m.special_role_id:
             other_active = (await session.exec(select(Membership).where(
                 Membership.steam_id == m.steam_id,
@@ -153,9 +228,40 @@ class MembershipsService:
             norm_type = req.membership_type.strip().upper()
             membership.membership_type = req.membership_type
             
+            # Synchronize role_granted_id and player_roles with new membership type
+            m_type = (await session.exec(select(MembershipType).where(func.upper(MembershipType.code) == norm_type))).first()
+            if m_type and m_type.role_id:
+                old_role_id = membership.role_granted_id
+                if old_role_id != m_type.role_id:
+                    membership.role_granted_id = m_type.role_id
+                    if membership.is_active:
+                        if old_role_id:
+                            other_active = (await session.exec(
+                                select(Membership.id).where(
+                                    Membership.steam_id == membership.steam_id,
+                                    Membership.is_active == True,
+                                    Membership.id != membership.id,
+                                    Membership.role_granted_id == old_role_id
+                                )
+                            )).first()
+                            if not other_active:
+                                old_r = await session.get(Role, old_role_id)
+                                if old_r and old_r.role_type == "VIP":
+                                    old_pr = (await session.exec(select(PlayerRole).where(
+                                        PlayerRole.steam_id == membership.steam_id,
+                                        PlayerRole.role_id == old_role_id
+                                    ))).first()
+                                    if old_pr:
+                                        await session.delete(old_pr)
+                        new_pr = (await session.exec(select(PlayerRole).where(
+                            PlayerRole.steam_id == membership.steam_id,
+                            PlayerRole.role_id == m_type.role_id
+                        ))).first()
+                        if not new_pr:
+                            session.add(PlayerRole(steam_id=membership.steam_id, role_id=m_type.role_id))
+            
             # Si se edita el tipo y no se pasaron días explícitos, ajustar la fecha de acuerdo al tipo (achicarse o agrandarse)
             if req.days is None:
-                m_type = (await session.exec(select(MembershipType).where(func.upper(MembershipType.code) == norm_type))).first()
                 if m_type is not None:
                     type_days = m_type.default_days
                 else:
@@ -201,6 +307,20 @@ class MembershipsService:
                 await MembershipsService._deactivate_membership(membership, session)
             else:
                 membership.is_active = True
+                if membership.role_granted_id:
+                    vip_pr = (await session.exec(select(PlayerRole).where(
+                        PlayerRole.steam_id == membership.steam_id,
+                        PlayerRole.role_id == membership.role_granted_id
+                    ))).first()
+                    if not vip_pr:
+                        session.add(PlayerRole(steam_id=membership.steam_id, role_id=membership.role_granted_id))
+                if membership.special_role_id:
+                    sp_pr = (await session.exec(select(PlayerRole).where(
+                        PlayerRole.steam_id == membership.steam_id,
+                        PlayerRole.role_id == membership.special_role_id
+                    ))).first()
+                    if not sp_pr:
+                        session.add(PlayerRole(steam_id=membership.steam_id, role_id=membership.special_role_id))
                 session.add(membership)
 
         if req.is_booster is not None:
@@ -235,6 +355,8 @@ class MembershipsService:
             raise HTTPException(status_code=404, detail="Membership not found")
             
         was_active = membership.is_active
+        if was_active:
+            await MembershipsService._deactivate_membership(membership, session, revoke_special_role=False)
         await session.delete(membership)
         await session.commit()
         if was_active:
@@ -272,10 +394,20 @@ class MembershipsService:
         results = []
         for m in memberships:
             special_role_name = None
+            special_discord_role_id = None
             if m.special_role_id:
                 r = await session.get(Role, m.special_role_id)
                 if r:
                     special_role_name = r.name
+                    special_discord_role_id = r.discord_role_id
+
+            role_granted_name = None
+            role_granted_discord_id = None
+            if m.role_granted_id:
+                rg = await session.get(Role, m.role_granted_id)
+                if rg:
+                    role_granted_name = rg.name
+                    role_granted_discord_id = rg.discord_role_id
             
             results.append({
                 "id": m.id,
@@ -286,8 +418,12 @@ class MembershipsService:
                 "server_id": m.server_id,
                 "start_date": m.start_time.isoformat(),
                 "end_date": m.end_time.isoformat() if m.end_time else None,
+                "role_granted_id": m.role_granted_id,
+                "role_granted_name": role_granted_name,
+                "role_granted_discord_id": role_granted_discord_id,
                 "special_role": special_role_name,
                 "special_role_id": m.special_role_id,
+                "special_discord_role_id": special_discord_role_id,
                 "rcon_sync_status": "SUCCESS" if m.is_active else "INACTIVE",
             })
         
@@ -361,11 +497,14 @@ class MembershipsService:
         for sid, mtype in all_active_m:
             m_types_by_steam.setdefault(sid, []).append(mtype)
 
-        # Batch query all special roles by steam_id to avoid N+1 queries
+        # Batch query all special roles by steam_id (only SPECIAL roles that are Discord-managed)
         pr_stmt = (
             select(PlayerRole.steam_id, Role.discord_role_id)
             .join(Role, PlayerRole.role_id == Role.id)
-            .where(Role.discord_role_id != None)
+            .where(
+                Role.discord_role_id != None,
+                Role.role_type == "SPECIAL"
+            )
         )
         all_pr = (await session.exec(pr_stmt)).all()
         roles_by_steam: Dict[str, List[int]] = {}
@@ -382,13 +521,19 @@ class MembershipsService:
             })
             
         all_roles = (await session.exec(select(Role))).all()
-        role_maps = {r.code: int(r.discord_role_id) for r in all_roles if r.discord_role_id and str(r.discord_role_id).isdigit()}
-        
-        # Also include discord_role_id from MembershipType if configured
+        roles_by_id = {r.id: r for r in all_roles if r.id is not None}
+        role_maps: Dict[str, int] = {}
+        for r in all_roles:
+            if r.role_type == "VIP" and r.discord_role_id and str(r.discord_role_id).isdigit():
+                role_maps[r.code] = int(r.discord_role_id)
+
         all_types = (await session.exec(select(MembershipType))).all()
         for mt in all_types:
-            if mt.discord_role_id and str(mt.discord_role_id).isdigit():
-                role_maps[mt.code] = int(mt.discord_role_id)
+            dr_id = None
+            if mt.role_id and mt.role_id in roles_by_id:
+                dr_id = roles_by_id[mt.role_id].discord_role_id
+            if dr_id and str(dr_id).isdigit():
+                role_maps[mt.code] = int(dr_id)
 
         managed_special_roles = [
             int(r.discord_role_id)
@@ -399,7 +544,9 @@ class MembershipsService:
         return {
             "sync_data": discord_sync_data, 
             "role_maps": role_maps,
-            "managed_special_roles": managed_special_roles
+            "managed_special_roles": managed_special_roles,
+            "expired_count": len(expired),
+            "active_rcon_slots": len(active_steam_ids)
         }
 
     @staticmethod

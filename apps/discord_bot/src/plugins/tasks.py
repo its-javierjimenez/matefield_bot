@@ -1,3 +1,4 @@
+from typing import Any
 import crescent
 import time
 import asyncio
@@ -171,6 +172,125 @@ async def vip_monitor():
     except Exception as e:
         logger.error(f"[VIP Monitor] Error en la automatización: {e}")
 
+async def execute_membership_sync(
+    app: hikari.GatewayBot,
+    model: Model,
+    target_guild_id: int | None = None
+) -> dict[str, Any]:
+    """
+    Ejecuta la sincronización completa de membresías:
+    1. Llama a API sync_memberships() (desactiva expiradas e inyecta slots en RCON).
+    2. Reconcilia roles de Discord (añade activos, remueve expirados, respeta whitelist).
+    Retorna métricas del proceso.
+    """
+    if not model.api or not app:
+        return {"success": False, "error": "API o Bot no inicializado"}
+
+    res = await model.api.sync_memberships()
+    sync_data = res.get("sync_data", [])
+    role_maps = res.get("role_maps", {})
+    managed_special_roles = res.get("managed_special_roles", [])
+    expired_count = res.get("expired_count", 0)
+    active_rcon_slots = res.get("active_rcon_slots", 0)
+
+    configs = await model.api.get_bot_configs()
+    wl_str = configs.get("SYNC_WHITELIST", "")
+    whitelist = set(wl_str.split(",")) if wl_str else set()
+
+    all_managed_roles = {int(r) for r in set(role_maps.values()).union(set(managed_special_roles)) if str(r).isdigit()}
+
+    # El rol de link y los roles de ban nunca deben ser removidos por la sincronización de membresías
+    link_role_str = configs.get("LINK_ROLE_ID")
+    if link_role_str and link_role_str.isdigit():
+        all_managed_roles.discard(int(link_role_str))
+
+    for k, v in configs.items():
+        if (k == "BAN_ROLE_DEFAULT" or k.startswith("BAN_ROLE_")) and v.isdigit():
+            all_managed_roles.discard(int(v))
+
+    stats: dict[str, Any] = {
+        "success": True,
+        "expired_count": expired_count,
+        "active_rcon_slots": active_rcon_slots,
+        "users_checked": 0,
+        "roles_added": 0,
+        "roles_removed": 0,
+        "whitelist_skipped": 0,
+    }
+
+    if not all_managed_roles:
+        return stats
+
+    if target_guild_id:
+        target_guilds = [target_guild_id]
+    else:
+        target_guilds = []
+        for g_id in app.cache.get_guilds_view():
+            roles_view = app.cache.get_roles_view_for_guild(g_id)
+            if roles_view and not any(r in roles_view for r in all_managed_roles):
+                continue
+            target_guilds.append(g_id)
+
+    if not target_guilds:
+        return stats
+
+    for user_data in sync_data:
+        discord_id_str = user_data.get("discord_id")
+
+        if not discord_id_str:
+            continue
+
+        if discord_id_str in whitelist:
+            stats["whitelist_skipped"] += 1
+            logger.info(f"[Sync] Usuario {discord_id_str} está en Whitelist, saltando sincronización.")
+            continue
+
+        active_memberships = user_data.get("active_memberships", [])
+        special_roles = user_data.get("special_roles", [])
+        discord_id = int(discord_id_str)
+        stats["users_checked"] += 1
+
+        roles_to_have = []
+        for m_type in active_memberships:
+            r_id = role_maps.get(m_type)
+            if r_id:
+                roles_to_have.append(int(r_id))
+
+        for sr in special_roles:
+            roles_to_have.append(int(sr))
+
+        for guild_id in target_guilds:
+            try:
+                await asyncio.sleep(0.05)
+                member = app.cache.get_member(guild_id, discord_id)
+                if not member:
+                    member = await app.rest.fetch_member(guild_id, discord_id)
+
+                if member:
+                    current_roles = set(member.role_ids)
+
+                    # Remove managed roles they shouldn't have
+                    for r_id in all_managed_roles:
+                        if r_id in current_roles and r_id not in roles_to_have:
+                            await app.rest.remove_role_from_member(guild_id, discord_id, r_id)
+                            stats["roles_removed"] += 1
+                            logger.info(f"[Sync] Rol {r_id} removido de {discord_id} (Expiró/Revocado)")
+
+                    # Add roles they should have
+                    for r_id in roles_to_have:
+                        if r_id not in current_roles:
+                            await app.rest.add_role_to_member(guild_id, discord_id, r_id)
+                            stats["roles_added"] += 1
+                            logger.info(f"[Sync] Rol {r_id} añadido a {discord_id} (Sincronizado)")
+
+            except hikari.NotFoundError:
+                pass
+            except Exception as e:
+                logger.error(f"[Sync] Error actualizando roles de {discord_id}: {e}")
+
+    return stats
+
+
 # Tarea de sincronización de membresías y roles
 @plugin.include
 @tasks.loop(minutes=5)
@@ -179,90 +299,7 @@ async def membership_monitor():
         return
         
     try:
-        res = await plugin.model.api.sync_memberships()
-        sync_data = res.get("sync_data", [])
-        role_maps = res.get("role_maps", {})
-        managed_special_roles = res.get("managed_special_roles", [])
-        
-        configs = await plugin.model.api.get_bot_configs()
-        wl_str = configs.get("SYNC_WHITELIST", "")
-        whitelist = set(wl_str.split(",")) if wl_str else set()
-        
-        all_managed_roles = {int(r) for r in set(role_maps.values()).union(set(managed_special_roles)) if str(r).isdigit()}
-        
-        # El rol de link y los roles de ban nunca deben ser removidos por la sincronización de membresías
-        link_role_str = configs.get("LINK_ROLE_ID")
-        if link_role_str and link_role_str.isdigit():
-            all_managed_roles.discard(int(link_role_str))
-            
-        for k, v in configs.items():
-            if (k == "BAN_ROLE_DEFAULT" or k.startswith("BAN_ROLE_")) and v.isdigit():
-                all_managed_roles.discard(int(v))
-        
-        if not all_managed_roles:
-            return
-
-        target_guilds = []
-        for g_id in plugin.app.cache.get_guilds_view():
-            roles_view = plugin.app.cache.get_roles_view_for_guild(g_id)
-            if roles_view and not any(r in roles_view for r in all_managed_roles):
-                continue
-            target_guilds.append(g_id)
-
-        if not target_guilds:
-            return
-            
-        for user_data in sync_data:
-            discord_id_str = user_data.get("discord_id")
-            
-            if not discord_id_str:
-                continue
-                
-            if discord_id_str in whitelist:
-                logger.info(f"[Sync] Usuario {discord_id_str} está en Whitelist, saltando sincronización.")
-                continue
-                
-            active_memberships = user_data.get("active_memberships", [])
-            special_roles = user_data.get("special_roles", [])
-            
-            discord_id = int(discord_id_str)
-            
-            roles_to_have = []
-            for m_type in active_memberships:
-                r_id = role_maps.get(m_type)
-                if r_id:
-                    roles_to_have.append(int(r_id))
-                    
-            for sr in special_roles:
-                roles_to_have.append(int(sr))
-                    
-            for guild_id in target_guilds:
-                try:
-                    await asyncio.sleep(0.05)
-                    member = plugin.app.cache.get_member(guild_id, discord_id)
-                    if not member:
-                        member = await plugin.app.rest.fetch_member(guild_id, discord_id)
-                    
-                    if member:
-                        current_roles = set(member.role_ids)
-                        
-                        # Remove managed roles they shouldn't have
-                        for r_id in all_managed_roles:
-                            if r_id in current_roles and r_id not in roles_to_have:
-                                await plugin.app.rest.remove_role_from_member(guild_id, discord_id, r_id)
-                                logger.info(f"[Sync] Rol {r_id} removido de {discord_id} (Expiró/Revocado)")
-                                
-                        # Add roles they should have
-                        for r_id in roles_to_have:
-                            if r_id not in current_roles:
-                                await plugin.app.rest.add_role_to_member(guild_id, discord_id, r_id)
-                                logger.info(f"[Sync] Rol {r_id} añadido a {discord_id} (Sincronizado)")
-                                
-                except hikari.NotFoundError:
-                    pass
-                except Exception as e:
-                    logger.error(f"[Sync] Error actualizando roles de {discord_id}: {e}")
-                    
+        await execute_membership_sync(plugin.app, plugin.model)
     except Exception as e:
         logger.error(f"[Sync] Error en la automatización: {e}")
 

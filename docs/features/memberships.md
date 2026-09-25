@@ -11,7 +11,10 @@ Las membresías otorgan beneficios técnicos dentro del servidor de juego, primo
   - `start_date` (`start_time`) y `end_date` (`end_time` - NULL para permanente).
   - `is_active`: Flag booleano de vigencia.
   - `is_booster`: Flag booleano que indica si la membresía corresponde a un Server Booster (Nitro) de Discord. Permite auditar qué membresías son producto de boosts y cuáles de compras directas.
-  - `role_granted_id` (`special_role_id`): Relación opcional a un rol especial adicional de la tabla `roles`.
+  - `role_granted_id`: Clave foránea a `roles.id` que representa el rol VIP principal otorgado por la membresía (derivado de `membership_types.role_id`).
+  - `special_role_id`: Clave foránea opcional a `roles.id` que permite adjuntar un rol especial o conmemorativo con la membresía (ej. "VIP Fundador").
+  - `server_id`: Ámbito de servidor RCON (NULL para alcance global en todos los servidores).
+  - `payment_source`: MANUAL o TEBEX.
 - **Detección y Gestión de Boosters (Nitro)**:
   - Al otorgar una membresía (`/membership add`), el parámetro `booster` es opcional. Si se omite, el bot consulta directamente el estado del usuario en Discord (`member.premium_since is not None`) y marca automáticamente la casilla. Si el administrador prefiere forzar un valor específico (`True` o `False`), puede sobreescribirlo manualmente.
   - Se puede modificar el estado de booster en cualquier momento con `/membership edit`.
@@ -76,10 +79,40 @@ El sistema cuenta con mecanismos para recompensar tiempo a los jugadores ante im
    - **En el Bot y Servidor de Juego (Beneficios):** La rutina de renovación de webhooks (`recurring-payment.renewed`) evalúa la fecha actual contra `end_time`. Si `end_time > now` (es decir, el usuario aún tiene días a favor por una compensación previa), los nuevos días de la suscripción se **acumulan al final** de la fecha compensada (`membership.end_time = m_end + timedelta(days=days_added)`). El jugador **nunca pierde** los días regalados.
    - **En la Pasarela Bancaria de Tebex (Facturación):** El cobro financiero se rige por el calendario propio de Tebex/Stripe/PayPal (factura automáticamente cada 30 días según su ciclo). La compensación no retrasa el cobro en la pasarela externa, pero garantiza que el usuario acumula el tiempo en su cuenta del juego y, si cancela la suscripción en Tebex, conservará el acceso hasta agotar el último día acumulado.
 
-## 7. Ciclo de Vida: Membresías Temporales vs Roles Especiales Permanentes
+## 7. Catálogo de Membresías (`MembershipType`) y Vinculación con Roles
 
-El sistema separa con precisión el acceso temporal al servidor de las credenciales o insignias vitalicias de la cuenta:
+Para eliminar duplicidades y configuraciones dispersas, los paquetes de membresía se administran en la tabla `membership_types`:
+- **Campos Principales**:
+  - `code`: Identificador textual único (ej. `VIP_COMUN`, `VIP_EXPRESS`).
+  - `name`: Nombre comercial visible en el catálogo.
+  - `price_usd`: Precio de venta en la plataforma (Tebex) que incluye tarifas y comisiones (ej. $6.00 USD para Común, $4.00 USD para Express).
+  - `base_price_usd`: Precio real neto sin comisiones (ej. $5.00 USD para Común, $3.00 USD para Express).
+  - `role_id`: Clave foránea a la tabla `roles` (`roles.id`). Vincula directamente el paquete con su rol de tipo `VIP`. La columna redundante `discord_role_id` fue eliminada para garantizar que `membership_types` referencie exclusivamente a la tabla `roles`; el ID de Discord se resuelve dinámicamente desde el rol asociado.
+  - `default_days`: Días de duración por defecto (0 = permanente).
+  - `max_quota`: Cupo máximo simultáneo (control de saturación de slots).
+  - `tebex_package_id`: ID del paquete en Tebex para conciliación de webhooks.
 
-- **Membresías Temporales (`Membership`)**: Controlan el acceso a slots reservados en el juego (RCON) y roles temporales en Discord mientras estén activas (`is_active = True` y `end_time > now`). Al cumplirse la fecha de vencimiento, pasan a inactivas y se retira el slot reservado y el rol de suscripción en Discord.
-- **Roles Especiales Permanentes (`Role` y `PlayerRole`)**: Representan títulos, privilegios de por vida o insignias (como "VIP Fundador", "Veterano" o "Staff"). Al adquirirse (mediante un paquete de Tebex que incluya el rol o asignación administrativa), quedan vinculados permanentemente al Steam ID del jugador en la tabla `player_roles`.
-- **Regla Estricta de Revocación**: La expiración natural o finalización de una membresía **nunca retira el rol especial** de la cuenta del jugador (el fundador conserva su distinción y beneficios permanentes para siempre). El rol especial **solo se revoca automáticamente** en caso de **reembolso o disputa bancaria en Tebex** (`payment.refunded` / `payment.dispute.won`, donde se revierte el dinero), o de forma manual por un administrador mediante `/roles remove`.
+### Doble Precio Transparente
+En los listados del bot (`/membership_type list`), el usuario ve claramente ambos precios:
+`💵 Precio: $5.00 USD (Tebex: $6.00 USD c/comisiones)`
+Esto permite mantener compatibilidad total con la pasarela de pagos Tebex sin distorsionar el valor real neto del servicio.
+
+## 8. Ciclo de Vida: Membresías Temporales vs Roles en `player_roles`
+
+La tabla asociativa `player_roles` vincula a un jugador (`steam_id`) con cualquier rol (`role_id`). El comportamiento del ciclo de vida se rige estrictamente por `role.role_type`:
+
+1. **Roles VIP de Membresía (`role_type == 'VIP'`)**:
+   - Se otorgan automáticamente al crearse o activarse una membresía vinculada a ese paquete (`membership.role_granted_id = m_type.role_id`).
+   - Al expirar una membresía, el sistema verifica si el jugador posee alguna **otra** membresía activa que otorgue ese mismo rol.
+   - Si no tiene otra membresía activa, el rol VIP se elimina automáticamente de `player_roles` y se revoca de Discord.
+
+2. **Roles Especiales Adjuntos (`special_role_id` y `role_type in ('SPECIAL', 'SYSTEM')`)**:
+   - Al otorgar una membresía (`/membership add` o API), se puede adjuntar opcionalmente un rol especial (ej. "VIP Fundador" / "Fundador").
+   - El sistema guarda `membership.special_role_id = role.id` y otorga dicho rol en `player_roles`.
+   - **Inmunidad ante Expiración**: La caducidad de la suscripción VIP temporal **NUNCA** revoca el rol especial adjunto de `player_roles` ni de Discord. El rol especial permanece en la cuenta del jugador como insignia vitalicia.
+   - **Herencia en Renovación**: Al renovar o extender una membresía existente que poseía un rol especial adjunto, este se hereda automáticamente a la nueva membresía.
+   - Solo se revoca ante un reembolso o disputa bancaria explícita en Tebex (`payment.refunded` / `payment.dispute.won`) o remoción manual por un administrador.
+
+3. **Privacidad en Perfiles (`/player profile`)**:
+   - Los roles especiales reales (`role_type == 'SPECIAL'`) se listan en el campo **"Roles Especiales"** (sin mezclar roles VIP).
+   - El **"Rango RCON"** y las **"Observaciones Internas"** solo son visibles si quien ejecuta el comando es un Administrador; para usuarios regulares, ambos campos permanecen ocultos.

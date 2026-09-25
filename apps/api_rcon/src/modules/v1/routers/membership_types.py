@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.security.guard import verify_api_key_guard
-from src.connections.databases.db import get_session
+from src.connections.databases.db import get_session, Role
 from src.modules.v1.schemas.dtos import (
     CreateMembershipTypeRequest,
     UpdateMembershipTypeRequest,
@@ -37,16 +37,20 @@ async def get_membership_type(
     m_type = await MembershipTypesService.get_type(identifier, session)
     if not m_type:
         raise HTTPException(status_code=404, detail="Tipo de membresía no encontrado")
+    role_obj = await session.get(Role, m_type.role_id) if m_type.role_id else None
     return {
         "id": m_type.id,
         "code": m_type.code,
         "name": m_type.name,
         "description": m_type.description,
         "price_usd": m_type.price_usd,
+        "base_price_usd": m_type.base_price_usd,
         "billing_type": m_type.billing_type,
         "default_days": m_type.default_days,
         "max_quota": m_type.max_quota,
-        "discord_role_id": m_type.discord_role_id,
+        "discord_role_id": role_obj.discord_role_id if role_obj else None,
+        "role_id": m_type.role_id,
+        "role_name": role_obj.name if role_obj else None,
         "server_id": m_type.server_id,
         "tebex_package_id": m_type.tebex_package_id,
         "is_active": m_type.is_active,

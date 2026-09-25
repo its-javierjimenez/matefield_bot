@@ -232,12 +232,13 @@ class UnlinkAccount:
                     if link_role_id and link_role_id.isdigit():
                         all_managed_roles.add(int(link_role_id))
                     
-                    member = await plugin.app.rest.fetch_member(guild_id, int(discord_id))
+                    bot_app = getattr(ctx, "app", None) or plugin.app
+                    member = await bot_app.rest.fetch_member(guild_id, int(discord_id))
                     if member:
                         current_roles = set(member.role_ids)
                         for r_id in all_managed_roles:
                             if r_id in current_roles:
-                                await plugin.app.rest.remove_role_from_member(guild_id, int(discord_id), r_id)
+                                await bot_app.rest.remove_role_from_member(guild_id, int(discord_id), r_id)
                 except Exception as e:
                     logger.warning(f"Failed to remove roles during unlink for {discord_id}: {e}")
                     
@@ -365,16 +366,13 @@ class Profile:
         embed.add_field(name="🏷️ Roles Especiales", value=roles_str, inline=True)
         
         
-        embed.add_field(name="⭐ Rango RCON", value=active_role, inline=False)
-        
-        # Check permissions for observations
+        # Rango RCON y Observaciones Internas solo son visibles si un administrador usa el comando
         is_admin = await check_is_admin(ctx)
-        is_owner = (target_discord_id == str(ctx.user.id)) if target_discord_id else False
-        
-        if is_admin or is_owner:
+        if is_admin:
+            embed.add_field(name="⭐ Rango RCON", value=active_role, inline=False)
             obs = steam_data.get("observations")
             if obs:
-                embed.add_field(name="📝 Observaciones Internas", value=f"`\n{obs}\n`", inline=False)
+                embed.add_field(name="📝 Observaciones Internas", value=f"```{obs}```", inline=False)
 
         
         # Stats

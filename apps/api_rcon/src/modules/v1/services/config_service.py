@@ -7,7 +7,7 @@ from sqlmodel import select, func, col
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.connections.databases.db import (
-    BotConfig, MembershipTypeConfig, Membership, Player, Role,
+    BotConfig, MembershipType, Membership, Player, Role,
     PlayerRole, Team, Match, MatchTeamStats, MatchPlayerStats
 )
 from src.modules.v1.schemas.dtos import SetBotConfigRequest, QuotaUpdateRequest
@@ -46,7 +46,6 @@ class ConfigService:
 
     @staticmethod
     async def get_quotas(session: AsyncSession) -> Dict[str, Any]:
-        from src.connections.databases.db import MembershipType
         from src.modules.v1.services.membership_types_service import MembershipTypesService
         await MembershipTypesService._ensure_defaults(session)
 
@@ -67,7 +66,6 @@ class ConfigService:
 
     @staticmethod
     async def update_quota(membership_type: str, max_quota: Optional[int], session: AsyncSession) -> Dict[str, Any]:
-        from src.connections.databases.db import MembershipType
         normalized_type = membership_type.strip().upper()
         
         # Update MembershipType
@@ -75,17 +73,10 @@ class ConfigService:
         if m_type:
             m_type.max_quota = max_quota
             session.add(m_type)
-        
-        # Update legacy MembershipTypeConfig
-        config = (await session.exec(select(MembershipTypeConfig).where(MembershipTypeConfig.membership_type == normalized_type))).first()
-        if not config:
-            config = MembershipTypeConfig(membership_type=normalized_type, max_quota=max_quota)
-            session.add(config)
+            await session.commit()
         else:
-            config.max_quota = max_quota
-            session.add(config)
+            raise HTTPException(status_code=404, detail=f"Tipo de membresía '{normalized_type}' no encontrado")
             
-        await session.commit()
         return {"success": True, "membership_type": normalized_type, "max_quota": max_quota}
 
     @staticmethod
@@ -95,6 +86,7 @@ class ConfigService:
             "roles": Role,
             "player_roles": PlayerRole,
             "memberships": Membership,
+            "membership_types": MembershipType,
             "teams": Team,
             "matches": Match,
             "match_team_stats": MatchTeamStats,

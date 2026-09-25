@@ -158,7 +158,14 @@ class DbMemberships:
                 status = "🟢 Activa" if m['is_active'] else "🔴 Inactiva"
                 booster_str = " | ⚡ **Booster**" if m.get('is_booster') else ""
                 end_str = m['end_date'][:10] if m['end_date'] else "Permanente"
-                sp_str = f" | **Especial:** <@&{m.get('special_role')}>" if m.get('special_role') else ""
+                sp_discord_role_id = m.get("special_discord_role_id")
+                sp_name = m.get("special_role")
+                if sp_discord_role_id:
+                    sp_str = f" | **Especial:** <@&{sp_discord_role_id}>"
+                elif sp_name:
+                    sp_str = f" | **Especial:** `{sp_name}`"
+                else:
+                    sp_str = ""
                 embed.add_field(
                     name=f"[ID: {m.get('id', '?')}] SteamID: {m['steam_id']}", 
                     value=f"**Tipo:** {m['type']} | **Estado:** {status}{booster_str}\n**Vence:** {end_str}{sp_str}", 
@@ -209,10 +216,17 @@ def build_player_memberships_view(
 
             sp_role_id = m.get("special_role_id")
             sp_role_name = m.get("special_role")
-            if sp_role_name:
-                sp_role_str = f"<@&{sp_role_name}> (`{sp_role_id}`)"
+            sp_discord_role_id = m.get("special_discord_role_id")
+            if sp_discord_role_id and sp_role_name:
+                sp_role_str = f"<@&{sp_discord_role_id}> ({sp_role_name})"
+            elif sp_role_name and sp_role_id:
+                sp_role_str = f"`{sp_role_name}` (`{sp_role_id}`)"
+            elif sp_discord_role_id:
+                sp_role_str = f"<@&{sp_discord_role_id}>"
+            elif sp_role_name:
+                sp_role_str = f"`{sp_role_name}`"
             elif sp_role_id:
-                sp_role_str = f"<@&{sp_role_id}> (`{sp_role_id}`)"
+                sp_role_str = f"DB ID: `{sp_role_id}`"
             else:
                 sp_role_str = "Ninguno"
 
@@ -481,70 +495,50 @@ class DbExportMemberships:
 @plugin.include
 @crescent.hook(admin_only)
 @membership_group.child
-@crescent.command(name="sync", description="[DEV] Otorga membresías a usuarios vinculados basándose en sus roles de Discord")
-class ForceSyncRolesToMemberships:
+@crescent.command(name="sync", description="Fuerza la sincronización completa de membresías en BD, slots RCON y roles de Discord")
+class ForceSyncMemberships:
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
-        configs = await plugin.model.api.get_bot_configs()
-        role_maps = {} # role_id_str -> db_type
+        from src.plugins.tasks import execute_membership_sync
         
-        for key, value in configs.items():
-            if key.startswith("ROLE_MAP_"):
-                db_type = key.replace("ROLE_MAP_", "")
-                role_maps[value] = db_type
-                
-        if not role_maps:
-            await ctx.respond("ℹ️ No hay mapeos de roles configurados en /config map_membership_role.")
-            return
-            
-        res = await plugin.model.api.get_paginated_players(page=1, limit=1000, linked="linked")
-        players = res.get("players", [])
-        
-        if not players:
-            await ctx.respond("ℹ️ No hay jugadores vinculados en la base de datos.")
-            return
-            
-        imported = 0
-        guild_id = ctx.guild_id
-        if not guild_id:
-            await ctx.respond("❌ Este comando debe usarse en un servidor.")
-            return
-            
-        skipped = 0
-        for p in players:
-            discord_id = p.get("discord_id")
-            steam_id = p.get("steam_id")
-            if not discord_id or not steam_id:
-                logger.info(f"[ForceSync] Saltando jugador sin discord_id o steam_id: {p}")
-                continue
-                
+        try:
+            bot_app = getattr(ctx, "app", None)
             try:
-                member = await plugin.app.rest.fetch_member(guild_id, int(discord_id))
-            except Exception as e:
-                logger.info(f"[ForceSync] No se pudo obtener member para discord_id {discord_id}: {e}")
-                continue
+                if not bot_app:
+                    bot_app = plugin.app
+            except Exception:
+                pass
+
+            bot_model = None
+            try:
+                bot_model = plugin.model
+            except Exception:
+                pass
+            if not bot_model:
+                bot_model = getattr(ctx, "model", None)
+
+            stats = await execute_membership_sync(bot_app, bot_model, target_guild_id=ctx.guild_id)
+            if not stats.get("success"):
+                await ctx.respond(f"❌ Error en sincronización: {stats.get('error', 'Error desconocido')}")
+                return
+
+            embed = hikari.Embed(
+                title="🔄 Sincronización Completa de Membresías",
+                description="Se ha ejecutado la sincronización en base de datos, servidores de juego (RCON) y Discord.",
+                color=0x2ECC71
+            )
+            embed.add_field(name="🎮 Slots Reservados RCON", value=f"`{stats.get('active_rcon_slots', 0)}` activos inyectados", inline=True)
+            embed.add_field(name="⏰ Membresías Expiradas", value=f"`{stats.get('expired_count', 0)}` desactivadas", inline=True)
+            embed.add_field(name="👥 Jugadores Evaluados", value=f"`{stats.get('users_checked', 0)}` cuentas vinculadas", inline=True)
+            embed.add_field(name="➕ Roles Añadidos", value=f"`{stats.get('roles_added', 0)}` otorgados", inline=True)
+            embed.add_field(name="➖ Roles Removidos", value=f"`{stats.get('roles_removed', 0)}` revocados", inline=True)
+            if stats.get('whitelist_skipped', 0) > 0:
+                embed.add_field(name="🛡️ Whitelist", value=f"`{stats.get('whitelist_skipped', 0)}` protegidos", inline=True)
                 
-            member_role_ids = [str(r) for r in member.role_ids]
-            logger.info(f"[ForceSync] Jugador {discord_id} tiene roles: {member_role_ids}")
-            
-            for role_id_str, db_type in role_maps.items():
-                if role_id_str in member_role_ids:
-                    try:
-                        await plugin.model.api.add_membership(steam_id, db_type)
-                        logger.info(f"[ForceSync] Otorgada membresía {db_type} a steam_id {steam_id}")
-                        imported += 1
-                    except Exception as e:
-                        if "Membership already active" in str(e):
-                            skipped += 1
-                            logger.info(f"[ForceSync] Omitido: {steam_id} ya tiene membresía activa.")
-                        else:
-                            logger.error(f"[ForceSync] Falló add_membership para {steam_id}: {e}")
-                        
-        msg = f"✅ Sincronización completada. Se otorgaron {imported} membresías nuevas."
-        if skipped > 0:
-            msg += f"\n⚠️ Se omitieron {skipped} membresías porque los usuarios ya la tenían activa."
-            
-        await ctx.respond(msg)
+            await ctx.respond(embed=embed)
+        except Exception as e:
+            logger.error(f"Error durante /membership sync: {e}", exc_info=True)
+            await ctx.respond(f"❌ Error al ejecutar la sincronización: {e}")
 
 
 @plugin.include
@@ -608,6 +602,7 @@ class DbMembershipTypeList:
                 code = t.get("code", "")
                 name = t.get("name", code)
                 price = t.get("price_usd", 0.0)
+                base_price = t.get("base_price_usd")
                 billing = "Mensualidad" if t.get("billing_type") == "RECURRING" else "Pago Único"
                 days = t.get("default_days", 30)
                 days_str = "Permanente" if days == 0 else f"{days} días"
@@ -616,15 +611,28 @@ class DbMembershipTypeList:
                 quota_str = f"{used_q}/{max_q}" if max_q is not None else f"{used_q} (Ilimitado)"
                 server_name = t.get("server_name", "Global (Todos)")
                 role_id = t.get("discord_role_id")
-                role_str = f"<@&{role_id}>" if role_id else "Ninguno"
+                role_name = t.get("role_name")
+                
+                if role_id:
+                    role_str = f"<@&{role_id}>"
+                elif role_name:
+                    role_str = f"DB: `{role_name}`"
+                else:
+                    role_str = "Ninguno"
+
                 status_icon = "🟢" if t.get("is_active", True) else "🔴 (Inactivo)"
 
+                if base_price is not None and base_price > 0 and base_price != price:
+                    price_line = f"💵 **Precio:** ${base_price:.2f} USD *(Tebex: ${price:.2f} USD c/comisiones)* ({billing})\n"
+                else:
+                    price_line = f"💵 **Precio:** ${price:.2f} USD ({billing})\n"
+
                 field_value = (
-                    f"💵 **Precio:** ${price:.2f} USD ({billing})\n"
+                    price_line +
                     f"⏳ **Duración:** {days_str}\n"
                     f"👥 **Cupos Activos:** {quota_str}\n"
                     f"🌐 **Servidor:** {server_name}\n"
-                    f"🛡️ **Rol Discord:** {role_str}\n"
+                    f"🛡️ **Rol:** {role_str}\n"
                     f"🏷️ **Estado:** {status_icon}"
                 )
                 embed.add_field(name=f"#{t.get('id')} - {name} (`{code}`)", value=field_value, inline=True)
@@ -641,10 +649,12 @@ class DbMembershipTypeList:
 class DbMembershipTypeCreate:
     codigo = crescent.option(str, "Código único (ej: VIP_GOLD, VIP_SERVER1)")
     nombre = crescent.option(str, "Nombre amigable (ej: VIP Oro Global)")
-    precio = crescent.option(float, "Precio en USD (ej: 9.99)", default=0.0)
+    precio = crescent.option(float, "Precio de venta/Tebex en USD (ej: 6.00)", default=0.0)
+    precio_base = crescent.option(float, "Precio neto real sin comisiones en USD (ej: 5.00, opcional)", default=None)
     dias = crescent.option(int, "Días de duración por defecto (0 = permanente)", default=30)
     cupo = crescent.option(int, "Cupo máximo simultáneo (opcional: dejar vacío o 0 para ilimitado)", default=0)
     rol = crescent.option(hikari.Role, "Rol de Discord a asignar automáticamente (opcional)", default=None)
+    rol_db_id = crescent.option(int, "ID de Rol en DB a asociar (opcional)", default=None)
     servidor = crescent.option(int, "ID de servidor RCON específico (opcional: vacío = Global)", default=None)
     facturacion = crescent.option(
         str,
@@ -662,15 +672,18 @@ class DbMembershipTypeCreate:
         try:
             max_q = self.cupo if self.cupo and self.cupo > 0 else None
             role_id = str(self.rol.id) if self.rol else None
+            base_p = self.precio_base if self.precio_base is not None else self.precio
             res = await plugin.model.api.create_membership_type(
                 code=self.codigo,
                 name=self.nombre,
                 description=self.descripcion,
                 price_usd=self.precio,
+                base_price_usd=base_p,
                 billing_type=str(self.facturacion),
                 default_days=self.dias,
                 max_quota=max_q,
                 discord_role_id=role_id,
+                role_id=self.rol_db_id,
                 server_id=self.servidor
             )
             msg = res.get("message", "Tipo de membresía creado.")
@@ -686,10 +699,12 @@ class DbMembershipTypeCreate:
 class DbMembershipTypeEdit:
     tipo_id = crescent.option(int, "ID numérico del tipo de membresía a editar")
     nombre = crescent.option(str, "Nuevo nombre comercial (opcional)", default=None)
-    precio = crescent.option(float, "Nuevo precio en USD (opcional)", default=None)
+    precio = crescent.option(float, "Nuevo precio Tebex en USD (opcional)", default=None)
+    precio_base = crescent.option(float, "Nuevo precio neto real en USD (opcional)", default=None)
     dias = crescent.option(int, "Nuevos días por defecto (0 = permanente, opcional)", default=None)
     cupo = crescent.option(int, "Nuevo cupo máximo (0 para ilimitado, opcional)", default=None)
     rol = crescent.option(hikari.Role, "Nuevo rol de Discord a vincular (opcional)", default=None)
+    rol_db_id = crescent.option(int, "Nuevo ID de Rol en DB a asociar (opcional)", default=None)
     servidor = crescent.option(int, "Nuevo ID de servidor RCON (opcional)", default=None)
     facturacion = crescent.option(
         str,
@@ -710,12 +725,16 @@ class DbMembershipTypeEdit:
                 kwargs["name"] = self.nombre
             if self.precio is not None:
                 kwargs["price_usd"] = self.precio
+            if self.precio_base is not None:
+                kwargs["base_price_usd"] = self.precio_base
             if self.dias is not None:
                 kwargs["default_days"] = self.dias
             if self.cupo is not None:
                 kwargs["max_quota"] = self.cupo if self.cupo > 0 else None
             if self.rol is not None:
                 kwargs["discord_role_id"] = str(self.rol.id)
+            if self.rol_db_id is not None:
+                kwargs["role_id"] = self.rol_db_id
             if self.servidor is not None:
                 kwargs["server_id"] = self.servidor
             if self.facturacion is not None:
