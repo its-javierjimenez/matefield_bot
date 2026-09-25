@@ -482,29 +482,36 @@ async def check_expired_bans():
             if db_player and db_player.get("discord_id") and ban_roles:
                 discord_id = int(db_player["discord_id"])
                 try:
-                    if not plugin.app.cache.get_guilds_view():
-                        continue
-                    
-                    guild_id = list(plugin.app.cache.get_guilds_view().keys())[0]
-                    try:
-                        member = await plugin.app.rest.fetch_member(guild_id, discord_id)
-                    except Exception:
-                        member = plugin.app.cache.get_member(guild_id, discord_id)
-                    
-                    if not member:
-                        continue
-                    
-                    for role_id in ban_roles:
-                        if role_id in member.role_ids:
-                            await member.remove_role(role_id, reason="Ban Expirado")
-                            logger.info(f"[Bans] Rol quitado a {discord_id}")
-                    
-                    unset_role_str = configs.get("BAN_UNSET_ROLE_ID")
-                    if unset_role_str and unset_role_str.isdigit():
-                        unset_rid = int(unset_role_str)
-                        if unset_rid not in member.role_ids:
-                            await member.add_role(unset_rid, reason="Ban Expirado: rol restituido")
-                            logger.info(f"[Bans] Rol de desbaneo restituido a {discord_id}")
+                    target_guilds = []
+                    for g_id in plugin.app.cache.get_guilds_view():
+                        roles_view = plugin.app.cache.get_roles_view_for_guild(g_id)
+                        if roles_view and not any(r in roles_view for r in ban_roles):
+                            continue
+                        target_guilds.append(g_id)
+
+                    for guild_id in target_guilds:
+                        try:
+                            try:
+                                member = await plugin.app.rest.fetch_member(guild_id, discord_id)
+                            except Exception:
+                                member = plugin.app.cache.get_member(guild_id, discord_id)
+                            
+                            if not member:
+                                continue
+                            
+                            for role_id in ban_roles:
+                                if role_id in member.role_ids:
+                                    await member.remove_role(role_id, reason="Ban Expirado")
+                                    logger.info(f"[Bans] Rol quitado a {discord_id}")
+                            
+                            unset_role_str = configs.get("BAN_UNSET_ROLE_ID")
+                            if unset_role_str and unset_role_str.isdigit():
+                                unset_rid = int(unset_role_str)
+                                if unset_rid not in member.role_ids:
+                                    await member.add_role(unset_rid, reason="Ban Expirado: rol restituido")
+                                    logger.info(f"[Bans] Rol de desbaneo restituido a {discord_id}")
+                        except Exception as e:
+                            logger.error(f"[Bans] Error actualizando rol a {discord_id} en guild {guild_id}: {e}")
                 except Exception as e:
                     logger.error(f"[Bans] Error quitando rol a {discord_id}: {e}")
                     
@@ -545,9 +552,15 @@ async def sync_ban_roles():
         res = await plugin.model.api.get_paginated_players(page=1, limit=1000, linked="linked")
         players = res.get("players", [])
         
-        if not plugin.app.cache.get_guilds_view():
+        target_guilds = []
+        for g_id in plugin.app.cache.get_guilds_view():
+            roles_view = plugin.app.cache.get_roles_view_for_guild(g_id)
+            if roles_view and perm_role_id not in roles_view:
+                continue
+            target_guilds.append(g_id)
+
+        if not target_guilds:
             return
-        guild_id = list(plugin.app.cache.get_guilds_view().keys())[0]
         
         for p in players:
             steam_id = p.get("steam_id")
@@ -563,19 +576,20 @@ async def sync_ban_roles():
             if steam_id in active_steam_ids:
                 target_role = perm_role_id
                 
-                try:
+                for guild_id in target_guilds:
                     try:
-                        member = await plugin.app.rest.fetch_member(guild_id, discord_id)
-                    except Exception:
-                        member = plugin.app.cache.get_member(guild_id, discord_id)
-                    if member:
-                        if target_role not in member.role_ids:
-                            await member.add_role(target_role, reason="Ban sincronizado desde RCON/DB")
-                            logger.info(f"[Bans] Rol permanente asignado a {discord_id} por sync.")
-                        if unset_role_id and unset_role_id in member.role_ids:
-                            await member.remove_role(unset_role_id, reason="Ban sincronizado: rol revocado")
-                            logger.info(f"[Bans] Rol unset_ban revocado a {discord_id} por sync.")
-                except Exception as e:
-                    pass
+                        try:
+                            member = await plugin.app.rest.fetch_member(guild_id, discord_id)
+                        except Exception:
+                            member = plugin.app.cache.get_member(guild_id, discord_id)
+                        if member:
+                            if target_role not in member.role_ids:
+                                await member.add_role(target_role, reason="Ban sincronizado desde RCON/DB")
+                                logger.info(f"[Bans] Rol permanente asignado a {discord_id} por sync.")
+                            if unset_role_id and unset_role_id in member.role_ids:
+                                await member.remove_role(unset_role_id, reason="Ban sincronizado: rol revocado")
+                                logger.info(f"[Bans] Rol unset_ban revocado a {discord_id} por sync.")
+                    except Exception as e:
+                        pass
     except Exception as e:
         logger.error(f"[Bans Task] Error sincronizando roles de ban: {e}")

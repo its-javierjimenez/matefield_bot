@@ -171,6 +171,13 @@ class RCONClient:
         payload = {"steamId": steam_id, "reason": reason}
         await self._request("POST", "/v1/bans", json=payload)
 
+    async def unban_player(self, steam_id: str) -> None:
+        try:
+            await self._request("DELETE", f"/v1/bans/{steam_id}")
+        except Exception:
+            # Server returns 404 if player is already unbanned
+            pass
+
     async def switch_faction(self, steam_id: str, faction: str) -> None:
         payload = {"faction": faction}
         await self._request("POST", f"/v1/players/{steam_id}/faction", json=payload)

@@ -115,7 +115,7 @@ async def poll_rcon():
                         if not db_player:
                             db_player = Player(steam_id=p.steamId, discord_id=None, in_game_name=p.name)
                             session.add(db_player)
-                            await session.commit()
+                            await session.flush()
                         elif p.name and db_player.in_game_name != p.name:
                             db_player.in_game_name = p.name
                             session.add(db_player)
@@ -132,7 +132,7 @@ async def poll_rcon():
                                 if not team:
                                     team = Team(name=faction_name, code=faction_code)
                                     session.add(team)
-                                    await session.commit()
+                                    await session.flush()
                                     await session.refresh(team)
                                 team_id = team.id
 
@@ -210,7 +210,7 @@ async def poll_rcon():
                                 if not team:
                                     team = Team(name=faction_name, code=faction_code)
                                     session.add(team)
-                                    await session.commit()
+                                    await session.flush()
                                     await session.refresh(team)
                                     
                                 # Update Team Stats

@@ -348,23 +348,31 @@ class MembershipsService:
         players_stmt = select(Player).where(Player.discord_id != None)
         players = (await session.exec(players_stmt)).all()
         
+        # Batch query all active memberships by steam_id to avoid N+1 queries
+        active_m_stmt = select(Membership.steam_id, Membership.membership_type).where(Membership.is_active == True)
+        all_active_m = (await session.exec(active_m_stmt)).all()
+        m_types_by_steam: Dict[str, List[str]] = {}
+        for sid, mtype in all_active_m:
+            m_types_by_steam.setdefault(sid, []).append(mtype)
+
+        # Batch query all special roles by steam_id to avoid N+1 queries
+        pr_stmt = (
+            select(PlayerRole.steam_id, Role.discord_role_id)
+            .join(Role, PlayerRole.role_id == Role.id)
+            .where(Role.discord_role_id != None)
+        )
+        all_pr = (await session.exec(pr_stmt)).all()
+        roles_by_steam: Dict[str, List[int]] = {}
+        for sid, dr_id in all_pr:
+            if dr_id and str(dr_id).isdigit():
+                roles_by_steam.setdefault(sid, []).append(int(dr_id))
+
         discord_sync_data = []
         for p in players:
-            m_stmt = select(Membership.membership_type).where(Membership.steam_id == p.steam_id, Membership.is_active == True)
-            m_types = (await session.exec(m_stmt)).all()
-            
-            pr_stmt = select(PlayerRole.role_id).where(PlayerRole.steam_id == p.steam_id)
-            p_roles = (await session.exec(pr_stmt)).all()
-            special_roles = []
-            for r_id in p_roles:
-                r = await session.get(Role, r_id)
-                if r and r.discord_role_id:
-                    special_roles.append(int(r.discord_role_id))
-            
             discord_sync_data.append({
                 "discord_id": p.discord_id,
-                "active_memberships": list(m_types),
-                "special_roles": special_roles
+                "active_memberships": m_types_by_steam.get(p.steam_id, []),
+                "special_roles": roles_by_steam.get(p.steam_id, [])
             })
             
         all_roles = (await session.exec(select(Role))).all()
@@ -376,7 +384,11 @@ class MembershipsService:
             if mt.discord_role_id and str(mt.discord_role_id).isdigit():
                 role_maps[mt.code] = int(mt.discord_role_id)
 
-        managed_special_roles = []
+        managed_special_roles = [
+            int(r.discord_role_id)
+            for r in all_roles
+            if r.role_type == "SPECIAL" and r.discord_role_id and str(r.discord_role_id).isdigit()
+        ]
             
         return {
             "sync_data": discord_sync_data, 

@@ -28,9 +28,12 @@ class BansService:
             stmt = select(Ban).where(Ban.is_active == True, Ban.rcon_sync_status != "DISCORD_ONLY")
             active_bans = (await session.exec(stmt)).all()
             db_steam_ids = set([b.steam_id for b in active_bans])
+
+            inactive_stmt = select(Ban.steam_id).where(Ban.is_active == False)
+            unbanned_steam_ids = set((await session.exec(inactive_stmt)).all())
             
-            # 1. RCON to DB (Absorb missing bans)
-            missing_in_db = rcon_steam_ids - db_steam_ids
+            # 1. RCON to DB (Absorb missing bans, excluding explicitly unbanned players)
+            missing_in_db = (rcon_steam_ids - db_steam_ids) - unbanned_steam_ids
             for sid in missing_in_db:
                 player = await session.get(Player, sid)
                 if not player:
@@ -41,6 +44,15 @@ class BansService:
                 new_ban = Ban(steam_id=sid, reason="", is_active=True, rcon_sync_status="SUCCESS")
                 session.add(new_ban)
                 db_steam_ids.add(sid)
+
+            # Purge any unbanned players still lingering on RCON
+            stale_rcon_bans = rcon_steam_ids.intersection(unbanned_steam_ids)
+            for sid in stale_rcon_bans:
+                for s_info, client in active_servers:
+                    try:
+                        await client.unban_player(sid)
+                    except Exception:
+                        pass
                 
             # 2. DB to RCON (Push our full combined list to all active servers)
             active_steam_ids = list(db_steam_ids)
@@ -107,6 +119,14 @@ class BansService:
             session.add(b)
         await session.commit()
         
+        # Real-time unban on RCON servers via DELETE /v1/bans/{steamId}
+        active_servers = await RCONManager.get_all_active_servers(session)
+        for s_info, client in active_servers:
+            try:
+                await client.unban_player(steam_id)
+            except Exception as e:
+                logger.warning(f"Failed to execute real-time unban on {s_info.name}: {e}")
+
         await BansService.sync_bans(session)
         return {"ok": True}
 

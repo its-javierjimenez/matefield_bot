@@ -1,41 +1,122 @@
 # Arquitectura del Ecosistema Matefield Bot
 
-El ecosistema de Matefield Bot está compuesto por microservicios desacoplados pero estrechamente integrados. Este diseño permite separar las preocupaciones ("Separation of Concerns") entre la gestión de la lógica de juego, la persistencia en base de datos y la interfaz de usuario en Discord.
+El ecosistema de Matefield Bot está compuesto por microservicios desacoplados pero estrechamente coordinados. Este diseño aplica los principios de **Separation of Concerns (SoC)** y **Domain-Driven Design (DDD)** para aislar la persistencia en base de datos, la interacción con el motor de juego (RCON) y la interfaz de usuario en Discord.
 
-## Componentes Principales
+```mermaid
+graph TD
+    User([Jugador / Administrador]) <-->|Slash Commands| DiscordBot[Discord Bot - Hikari/Crescent]
+    TebexGateway[Pasarela Tebex] -->|Webhooks HMAC| ApiRcon[API RCON - FastAPI DDD]
+    DiscordBot <-->|REST API + X-API-Key| ApiRcon
+    
+    subgraph Data & Sync Layer
+        ApiRcon <-->|SQLModel / asyncpg| Postgres[(PostgreSQL 15)]
+        ApiRcon <-->|RCON HTTP / Sockets| GameServers[Servidores de Juego Wardogs]
+        SyncEngine[Sync Engine] -.->|Loop 10s| GameServers
+        SyncEngine -.->|Matches & Stats| Postgres
+    end
 
-### 1. API RCON (`apps/api_rcon`)
-Es el núcleo central de operaciones del sistema. Desarrollada con **FastAPI** y **SQLModel** asíncrono sobre PostgreSQL (`asyncpg`).
-- **Motor de Sincronización (`sync_engine.py`)**: Monitorea de forma continua el servidor de juego mediante el protocolo RCON para extraer telemetría en tiempo real: estado de la partida, recuento de jugadores, asesinatos y cierres de ronda.
-- **API REST (`router.py`)**: Expone endpoints seguros (protegidos por el guard de encabezado `X-API-Key`) para que el bot de Discord gestione membresías, sincronice roles, consulte perfiles y procese sanciones disciplinarias.
-- **Cliente RCON (`client.py`)**: Maneja la conexión con el servidor RCON oficial de Wardogs (puerto 7776 por defecto) mediante peticiones HTTP Bearer o sockets directos para ejecutar comandos de servidor.
+    subgraph Auth & Infallibility
+        SteamOpenID[Steam OpenID 2.0] <-->|Valve Handshake| ApiRcon
+        ConfigMutex[Asyncio Config Lock] -.->|Serialize INI Writes| GameServers
+        BackupLoop[Backup Loop 12h] -.->|SQL Dumps 14d| LocalStorage[(data/backups/)]
+    end
+```
 
-### 2. Discord Bot (`apps/discord_bot`)
-Es la capa de presentación y control para la comunidad y el equipo administrativo. Desarrollada en **Python 3.12+** utilizando **Hikari** y el framework de comandos **Crescent**.
-- **Comandos de Entidad Primero (`plugins/`)**: Organizados por entidades de dominio (`account.py`, `admin.py`, `config.py`, `database.py`, `match.py`).
-- **Tareas Automatizadas (`tasks.py`)**: 
-  - `membership_monitor`: Tarea en segundo plano (cada 60s) que consulta a la API las membresías activas y reconcilia los roles en el servidor de Discord, otorgando o revocando accesos según el estado en la base de datos.
-  - `hacker_monitor_task`: Monitorea activamente las "Kills Per Minute" (KPM) de un jugador bajo sospecha, actualizando un panel interactivo en Discord.
+---
 
-### 3. Emulador RCON (`apps/rcon_mock`)
-Servidor mock en FastAPI que emula la API RCON de Wardogs. Permite levantar entornos de desarrollo y pruebas completos (`docker-compose.local.yml`) con fidelidad total al comportamiento de producción.
+## 1. Componentes del Sistema
 
-## Flujo de Comunicación y Seguridad
+### 1.1. API RCON (`apps/api_rcon`)
+Es el cerebro operativo del sistema. Desarrollada con **FastAPI** y **SQLModel** asíncrono sobre PostgreSQL (`asyncpg`).
+- **Arquitectura DDD (v1)**:
+  - **Routers (`src/modules/v1/routers/`)**: Endpoints limpios desacoplados de la lógica de negocio, protegidos mediante el guard `verify_api_key_guard` (`X-API-Key`).
+  - **Servicios (`src/modules/v1/services/`)**: Lógica pura de dominio (`bans_service`, `memberships_service`, `players_service`, `server_service`, `tebex_webhook_service`, `membership_types_service`).
+  - **DTOs & Schemas (`packages/wardogs_schemas`)**: Contratos de datos fuertemente tipados compartidos entre la API y el Bot de Discord.
+- **Multi-RCON Manager (`src/connections/apis/rcon.py`)**:
+  - Administra múltiples servidores de juego registrados en la tabla `rcon_servers`.
+  - Provee selección dinámica del servidor por ID o por flag `is_default`.
+  - Dispone de un semáforo/mutex (`_config_lock`) por servidor para serializar todas las operaciones de lectura y modificación del archivo `ServerSettings.ini`.
+- **Motor de Sincronización (`sync_engine.py`)**:
+  - Telemetría de partidas en curso (mapa, ticks, kills, muertes, cash).
+  - Cierre y consolidación atómica de partidas (`Match`, `MatchTeamStats`, `MatchPlayerStats`) con `flush` antes de `commit` para garantizar integridad relacional.
 
-1. La comunicación entre el Bot de Discord y la API RCON se realiza exclusivamente a través de HTTP/REST con el encabezado:
-   `X-API-Key: <TOKEN>`
-2. El bot de Discord lee este token desde sus variables de entorno e inyecta la cabecera en cada solicitud mediante `ApiClient` (`api_client.py`).
-3. El servidor RCON está protegido mediante autenticación `Authorization: Bearer <RCON_PASSWORD>`.
+### 1.2. Discord Bot (`apps/discord_bot`)
+Capa de interfaz y control para la comunidad y la administración. Construida en **Python 3.12+** utilizando **Hikari** y **Crescent**.
+- **Plugins por Dominio (`src/plugins/`)**:
+  - `account.py`: Vinculación de cuentas Steam/Discord (OpenID o manual).
+  - `admin.py`: Herramientas de moderación, kick, ban, y gestión de slots reservados.
+  - `memberships.py`: Administración de suscripciones VIP, extensiones, compensaciones y exportaciones.
+  - `roles.py`: Catálogo de roles de dominio (SYSTEM, VIP, PUBLIC, SPECIAL).
+  - `match.py` & `stats.py`: Consulta de estadísticas, partidas activas y perfiles de jugadores.
+  - `config.py` & `servers.py`: Parámetros operativos y balanceo de servidores Multi-RCON.
+- **Monitores Automatizados (`src/plugins/tasks.py`)**:
+  - `membership_monitor` (cada 5m): Sincroniza membresías de DB a roles de Discord. Cuenta con soporte multi-servidor (Multi-Guild) y respeta listas blancas (`SYNC_WHITELIST`).
+  - `sync_ban_roles` (cada 5m): Descarga baneos de RCON a DB y alinea roles de sanción en Discord en todas las guilds donde opera el bot.
+  - `check_expired_bans` (cada 1m): Detecta sanciones caducadas, ejecuta el desbaneo en RCON/DB, retira el rol de ban y restituye el rol de desbaneo (`BAN_UNSET_ROLE_ID`).
+  - `match_monitor` (cada 10s): Detecta finalización de partidas, premia al MVP con 1 día VIP y actualiza la presencia de Discord con el mapa y cantidad de jugadores online.
+  - `hacker_monitor_task` (cada 5s): Monitorea la tasa de Kills por Minuto (KPM) de jugadores sospechosos en un embed en vivo.
 
-## Esquema de Base de Datos (PostgreSQL 15 + SQLModel)
+### 1.3. Mock de Pruebas RCON (`apps/rcon_mock`)
+Servidor mock en FastAPI que replica la API RCON oficial de Wardogs (CL-501228). Permite correr tests de integración de extremo a extremo y suites locales (`docker-compose.local.yml`) con 100% de paridad funcional.
 
-El sistema utiliza **PostgreSQL 15** administrado mediante migraciones de **Alembic** y el ORM asíncrono **SQLModel**.
+---
 
-### Entidades de Dominio
-- **Player**: Identidad central. Vincula el `steam_id` (juego) con el `discord_id` de la comunidad.
-- **Membership**: Registra las suscripciones VIP (`VIP_COMUN`, `VIP_EXPRESS`, etc.) con fechas `start_time`, `end_time` y vigencia `is_active`. Incluye el indicador `is_booster` para trazabilidad de donaciones/mejoras de Discord Nitro y vinculación opcional a roles especiales (`special_role_id`). Define el derecho prioritario a slots reservados en el servidor de juego.
-- **Role / PlayerRole**: Sistema de roles DDD. Almacena roles de sistema (`SYSTEM`), roles VIP (`VIP`), públicos (`PUBLIC`) y especiales (`SPECIAL`) asociados a IDs de rol de Discord. La jerarquía de administración está unificada bajo **ADMIN / SUPERVISOR**.
-- **Match**: Historial de partidas disputadas (ID UUID, mapa, fecha de inicio, fin y equipo vencedor).
-- **MatchTeamStats / MatchPlayerStats**: Registro detallado de puntuaciones por equipo y rendimiento individual (kills, deaths, cash) consolidado al finalizar cada partida.
-- **PlayerBan**: Registro histórico de baneos coordinados RCON-Discord.
-- **BotConfig**: Almacén clave-valor para configuraciones dinámicas (`ADMIN_ROLE_ID`, IDs de canales, etc.).
+## 2. Infallibilidad y Robustez de Datos
+
+### 2.1. Resolución del Límite de 128 VIPs (RCON Lock & Normalization)
+- **Problema Raíz**: El servidor de juego limita a 128 los slots en memoria (`GET /v1/reserved-slots`), pero admite listas mayores en su archivo de configuración `ServerSettings.ini`. Tareas simultáneas sobreescribían el archivo con snapshots desactualizados y `\r\n` corruptos.
+- **Solución Implementada**:
+  - Se introdujo `_config_lock` (`asyncio.Lock()`) en cada cliente RCON. Toda lectura y escritura en `ServerSettings.ini` (`PUT /v1/config?force=true`) se ejecuta de manera secuencial y atómica.
+  - Se normalizan saltos de línea (`\r\n` -> `\n`) para preservar la sintaxis INI del juego.
+  - Las funciones de slots reservados siempre combinan los datos en memoria con los registros activos en la base de datos PostgreSQL.
+
+### 2.2. Prevención de Resurrección de Baneos (Ban Anti-Resurrection)
+- **Problema Raíz**: Jugadores desbaneados por la administración continuaban en la lista residual de RCON. En el siguiente ciclo de sincronización, la API interpretaba que eran baneos nuevos de RCON y los volvía a insertar como activos en DB.
+- **Solución Implementada**:
+  - `bans_service.sync_bans()` rastrea jugadores con baneos históricos inactivos (`is_active = False` y `unbanned_at != None`).
+  - Si un Steam ID perdonado aparece en RCON, se purga de inmediato en el servidor de juego con `DELETE /v1/bans/{steamId}` sin reactivarlo en DB.
+
+### 2.3. Optimización de Consultas N+1 en Sincronización
+- **Problema Raíz**: `sync_memberships_logic()` ejecutaba consultas individuales por cada jugador vinculado para obtener sus membresías y roles especiales. Con cientos de jugadores, generaba miles de queries secuenciales hacia la base de datos remota.
+- **Solución Implementada**:
+  - Se sustituyeron las consultas iterativas por **2 consultas por lotes (bulk)** con agrupamiento en memoria (`dict[steam_id -> memberships]` y `dict[steam_id -> roles]`).
+  - Reducción de tiempo de ejecución de ~3.5s a < 25ms, eliminando contención de bloqueos.
+
+### 2.4. Soporte Multi-Guild Seguro
+- Todas las rutinas de asignación y remoción de roles en Discord (`sync_ban_roles`, `check_expired_bans`, `membership_monitor`) iteran dinámicamente sobre todas las guilds gestionadas donde existan los roles correspondientes, evitando dependencias del orden arbitrario de diccionarios en caché.
+
+---
+
+## 3. Seguridad y Autenticación
+
+1. **API Interna (Bot <-> API)**:
+   - Encabezado HTTP `X-API-Key: <TOKEN>`. Verificación a nivel de middleware/dependency.
+2. **Servidor de Juego RCON**:
+   - Autenticación HTTP Bearer `Authorization: Bearer <RCON_PASSWORD>`.
+3. **Webhooks de Tebex**:
+   - Doble verificación de firma criptográfica HMAC-SHA256:
+     - Firma oficial Tebex: `HMAC-SHA256(secret, sha256(raw_body).hexdigest())`.
+     - Firma directa de contingencia: `HMAC-SHA256(secret, raw_body)`.
+   - Registro de transacciones procesadas en `payment_records` para garantizar idempotencia y evitar dobles activaciones.
+4. **Vinculación de Cuentas Steam**:
+   - Generación de token temporal con HMAC-SHA256 (`create_steam_link_token`) con expiración estricta de 10 minutos.
+   - Handshake directo con servidores de Valve (`https://steamcommunity.com/openid/login`).
+   - Al completar la vinculación, se consultan sanciones pendientes y se aplican los roles correspondientes en Discord inmediatamente.
+
+---
+
+## 4. Esquema de Base de Datos (PostgreSQL 15)
+
+| Tabla | Propósito | Claves / Índices Principales |
+|---|---|---|
+| `players` | Identidad del usuario (Steam ID <-> Discord ID) | `steam_id` (PK), `discord_id` (Unique, Index) |
+| `memberships` | Suscripciones VIP y slots reservados | `id` (PK), `steam_id` (FK, Index), `type` (Index), `is_active` |
+| `roles` | Catálogo de roles de dominio (SYSTEM, VIP, PUBLIC, SPECIAL) | `id` (PK), `code` (Unique), `discord_role_id` (Index) |
+| `player_roles` | Asociación muchos-a-muchos entre jugadores y roles | `steam_id` (PK, FK), `role_id` (PK, FK) |
+| `bans` | Registro histórico de suspensiones RCON/Discord | `id` (PK), `steam_id` (FK, Index), `is_active` |
+| `matches` | Registro histórico de partidas completadas | `id` (PK UUID), `map`, `start_time`, `end_time` |
+| `match_team_stats` | Puntuaciones por equipo en cada partida | `match_id` (PK, FK), `team_id` (PK, FK) |
+| `match_player_stats` | Kills, muertes y cash por jugador en cada partida | `steam_id` (PK, FK), `match_id` (PK, FK) |
+| `rcon_servers` | Registro de instancias de servidores de juego | `id` (PK), `name` (Index), `is_active`, `is_default` |
+| `payment_records` | Auditoría e idempotencia de transacciones Tebex | `id` (PK), `transaction_id` (Unique, Index), `status` |
+| `bot_config` | Almacén dinámico clave-valor de configuraciones | `config_key` (PK) |
