@@ -1,0 +1,884 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#07090c" />
+  <title>MATEFIELD · Vinculación con Steam</title>
+  <link rel="icon" type="image/png" href="/static/images/BANNER_ICONO_SERVIDOR.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Rajdhani:wght@600;700;800&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg: #07090c;
+      --panel: rgba(20, 24, 30, 0.94);
+      --panel-card: rgba(28, 33, 42, 0.85);
+      --panel-border: rgba(255, 255, 255, 0.08);
+      --brand-gold: #f0b800;
+      --brand-gold-glow: rgba(240, 184, 0, 0.28);
+      --text: #f5f7fa;
+      --muted: #9ba3af;
+      --green: #4ade80;
+      --green-bg: rgba(34, 197, 94, 0.12);
+      --green-border: rgba(74, 222, 128, 0.25);
+      --discord: #5865f2;
+      --discord-hover: #4752c4;
+      --steam-dark: #171a21;
+      --steam-blue: #1b2838;
+      --steam-grad: linear-gradient(135deg, #171a21 0%, #1b2838 50%, #2a475e 100%);
+      --shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      min-height: 100%;
+    }
+
+    body {
+      min-height: 100vh;
+      overflow-x: hidden;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 50% 12%, rgba(240, 184, 0, 0.12), transparent 45%),
+        linear-gradient(180deg, rgba(7, 9, 12, 0.86) 0%, rgba(9, 12, 16, 0.95) 55%, rgba(6, 8, 10, 0.99) 100%),
+        url('/static/images/BANNER_FONDO_INVITACION.png') center top / cover no-repeat fixed;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .page {
+      width: min(1360px, 100%);
+      min-height: 100vh;
+      position: relative;
+      padding: 36px 32px 30px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .top-nav {
+      position: absolute;
+      top: 32px;
+      right: 40px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: #b0b7c3;
+      font-family: Rajdhani, sans-serif;
+      font-size: 13px;
+      letter-spacing: .24em;
+      font-weight: 700;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .top-nav .sep {
+      color: rgba(255, 255, 255, 0.2);
+    }
+
+    .top-nav .bar {
+      width: 50px;
+      height: 2px;
+      background: var(--brand-gold);
+      margin-left: 6px;
+      box-shadow: 0 0 10px var(--brand-gold-glow);
+    }
+
+    /* ========================================================
+       BRAND HEADER
+       ======================================================== */
+    .brand {
+      margin-bottom: 24px;
+      text-align: center;
+      user-select: none;
+    }
+
+    .brand-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+    }
+
+    .brand-logo-frame {
+      width: 90px;
+      height: 90px;
+      border-radius: 20px;
+      background: rgba(15, 18, 24, 0.92);
+      border: 2px solid rgba(240, 184, 0, 0.45);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6), 0 0 25px var(--brand-gold-glow);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px;
+      flex-shrink: 0;
+      transition: transform 0.25s ease, box-shadow 0.25s ease;
+    }
+
+    .brand-logo-frame:hover {
+      transform: scale(1.05);
+      box-shadow: 0 14px 34px rgba(0, 0, 0, 0.7), 0 0 35px rgba(240, 184, 0, 0.45);
+    }
+
+    .brand-logo-img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      border-radius: 14px;
+    }
+
+    .brand-text {
+      text-align: left;
+    }
+
+    .brand-name {
+      font-family: Rajdhani, sans-serif;
+      font-size: clamp(52px, 6vw, 84px);
+      line-height: .86;
+      letter-spacing: .02em;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: #ffffff;
+      text-shadow: 0 4px 14px rgba(0, 0, 0, 0.7);
+    }
+
+    .brand-sub {
+      margin-top: 8px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-family: Rajdhani, sans-serif;
+      font-size: clamp(14px, 1.4vw, 19px);
+      letter-spacing: .22em;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #e2e8f0;
+    }
+
+    .brand-sub .highlight {
+      letter-spacing: .16em;
+      color: #0b0d10;
+      background: var(--brand-gold);
+      padding: 2px 9px 2px;
+      font-weight: 800;
+      border-radius: 3px;
+      box-shadow: 0 0 12px var(--brand-gold-glow);
+    }
+
+    .tagline {
+      margin-top: 14px;
+      color: #9ba3af;
+      font-family: Rajdhani, sans-serif;
+      text-transform: uppercase;
+      letter-spacing: .32em;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    /* ========================================================
+       MAIN SUCCESS CARD
+       ======================================================== */
+    .card {
+      width: min(620px, calc(100vw - 32px));
+      padding: 36px 36px 32px;
+      border: 1px solid var(--panel-border);
+      border-top: 2px solid var(--brand-gold);
+      border-radius: 20px;
+      background: var(--panel);
+      box-shadow: var(--shadow), 0 0 40px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(12px);
+      position: relative;
+      animation: cardAppear 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes cardAppear {
+      from {
+        opacity: 0;
+        transform: translateY(18px) scale(0.98);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    .success-icon-badge {
+      width: 82px;
+      height: 82px;
+      margin: 0 auto 20px;
+      position: relative;
+      border-radius: 22px;
+      background: var(--steam-grad);
+      border: 1.5px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.6), 0 0 24px rgba(74, 222, 128, 0.18);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .steam-badge-img {
+      width: 48px;
+      height: 48px;
+      object-fit: contain;
+      filter: brightness(0) invert(1);
+    }
+
+    .check-pill {
+      position: absolute;
+      width: 30px;
+      height: 30px;
+      right: -7px;
+      bottom: -7px;
+      border-radius: 50%;
+      background: var(--green);
+      color: #052e16;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 17px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5), 0 0 16px rgba(74, 222, 128, 0.5);
+      border: 2.5px solid #0f131a;
+    }
+
+    h1 {
+      text-align: center;
+      font-size: clamp(24px, 3vw, 30px);
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -.02em;
+      color: #ffffff;
+    }
+
+    .lead {
+      max-width: 490px;
+      margin: 12px auto 26px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 14.5px;
+      line-height: 1.55;
+    }
+
+    .lead strong {
+      color: #f1f5f9;
+    }
+
+    /* ========================================================
+       ACCOUNTS LINKED SECTION
+       ======================================================== */
+    .accounts {
+      display: grid;
+      grid-template-columns: 1fr 48px 1fr;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 22px;
+    }
+
+    .account-card {
+      min-height: 98px;
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      background: var(--panel-card);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      transition: border-color 0.2s ease, background 0.2s ease;
+    }
+
+    .account-card:hover {
+      border-color: rgba(255, 255, 255, 0.15);
+      background: rgba(33, 39, 50, 0.95);
+    }
+
+    .avatar-container {
+      position: relative;
+      width: 50px;
+      height: 50px;
+      flex-shrink: 0;
+    }
+
+    .avatar-img {
+      width: 50px;
+      height: 50px;
+      border-radius: 13px;
+      object-fit: cover;
+      background: #111419;
+      border: 1.5px solid rgba(255, 255, 255, 0.1);
+      display: block;
+    }
+
+    .platform-mini-badge {
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      right: -4px;
+      bottom: -4px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 2px solid #14181f;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+    }
+
+    .platform-mini-badge.discord {
+      background: var(--discord);
+    }
+
+    .platform-mini-badge.steam {
+      background: #171a21;
+    }
+
+    .mini-steam-icon {
+      width: 12px;
+      height: 12px;
+      filter: brightness(0) invert(1);
+    }
+
+    .account-info {
+      min-width: 0;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .account-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      font-weight: 700;
+      color: #94a3b8;
+    }
+
+    .account-name {
+      font-size: 14.5px;
+      font-weight: 700;
+      color: #ffffff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .account-sub {
+      font-size: 11.5px;
+      color: #94a3b8;
+      font-family: monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .account-id-text {
+      font-size: 10px;
+      color: #64748b;
+      font-family: monospace;
+    }
+
+    /* Steam ID interactive chip */
+    .steam-id-chip {
+      margin-top: 3px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+      padding: 2px 7px;
+      font-size: 11px;
+      color: #cbd5e1;
+      cursor: pointer;
+      width: fit-content;
+      position: relative;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+
+    .steam-id-chip:hover {
+      background: rgba(240, 184, 0, 0.15);
+      border-color: rgba(240, 184, 0, 0.35);
+    }
+
+    .chip-label {
+      font-size: 9.5px;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+    }
+
+    .chip-val {
+      font-family: monospace;
+      font-size: 10.5px;
+      color: #e2e8f0;
+    }
+
+    .copy-svg {
+      color: #94a3b8;
+      transition: color 0.15s ease;
+    }
+
+    .steam-id-chip:hover .copy-svg {
+      color: var(--brand-gold);
+    }
+
+    .tooltip {
+      position: absolute;
+      top: -26px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #0f172a;
+      color: var(--green);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      border: 1px solid var(--green-border);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .tooltip.show {
+      opacity: 1;
+    }
+
+    .profile-link {
+      margin-top: 4px;
+      color: #60a5fa;
+      font-size: 11px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      transition: color 0.15s ease;
+    }
+
+    .profile-link:hover {
+      color: #93c5fd;
+      text-decoration: underline;
+    }
+
+    /* Connector arrow */
+    .connector-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+    }
+
+    .connector-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: rgba(240, 184, 0, 0.12);
+      border: 1px solid rgba(240, 184, 0, 0.3);
+      color: var(--brand-gold);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 16px var(--brand-gold-glow);
+    }
+
+    .connector-pill {
+      font-family: Rajdhani, sans-serif;
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: .12em;
+      color: var(--brand-gold);
+    }
+
+    /* Status banner */
+    .status-banner {
+      padding: 10px 16px;
+      border-radius: 10px;
+      background: var(--green-bg);
+      border: 1px solid var(--green-border);
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 20px;
+      box-shadow: inset 0 0 20px rgba(74, 222, 128, 0.05);
+    }
+
+    .status-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--green);
+      color: #052e16;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+
+    .note {
+      text-align: center;
+      color: #94a3b8;
+      font-size: 13.5px;
+      line-height: 1.5;
+      margin-bottom: 24px;
+    }
+
+    /* Buttons */
+    .buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    button, .button {
+      width: 100%;
+      border: 0;
+      min-height: 48px;
+      border-radius: 10px;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      transition: transform .15s ease, filter .15s ease, background .15s ease, box-shadow .15s ease;
+    }
+
+    button:hover, .button:hover {
+      transform: translateY(-1.5px);
+    }
+
+    button:active, .button:active {
+      transform: translateY(0);
+    }
+
+    .primary {
+      color: #ffffff;
+      background: linear-gradient(135deg, var(--discord) 0%, var(--discord-hover) 100%);
+      box-shadow: 0 8px 24px rgba(88, 101, 242, 0.35);
+    }
+
+    .primary:hover {
+      box-shadow: 0 12px 28px rgba(88, 101, 242, 0.45);
+      filter: brightness(1.08);
+    }
+
+    .secondary {
+      color: #e2e8f0;
+      background: #1e242d;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .secondary:hover {
+      background: #252c38;
+      border-color: rgba(255, 255, 255, 0.16);
+    }
+
+    #closeHint {
+      display: none;
+      margin-top: 10px;
+      color: #94a3b8;
+      text-align: center;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    /* ========================================================
+       FOOTER BRANDING
+       ======================================================== */
+    .footer-left, .footer-right {
+      position: absolute;
+      bottom: 26px;
+      color: #717b8c;
+      font-family: Rajdhani, sans-serif;
+      text-transform: uppercase;
+      letter-spacing: .28em;
+      font-size: 11px;
+      line-height: 1.55;
+      font-weight: 700;
+    }
+
+    .footer-left {
+      left: 40px;
+    }
+
+    .footer-left::after {
+      content: "";
+      display: inline-block;
+      width: 48px;
+      height: 2px;
+      background: var(--brand-gold);
+      margin: 0 0 3px 14px;
+      box-shadow: 0 0 8px var(--brand-gold-glow);
+    }
+
+    .footer-right {
+      right: 40px;
+      text-align: right;
+      padding-right: 18px;
+    }
+
+    .footer-right::after {
+      content: "";
+      position: absolute;
+      width: 2px;
+      top: 0;
+      bottom: 0;
+      right: 0;
+      background: var(--brand-gold);
+      box-shadow: 0 0 8px var(--brand-gold-glow);
+    }
+
+    /* Responsive */
+    @media (max-width: 900px) {
+      .top-nav, .footer-left, .footer-right {
+        display: none;
+      }
+      .page {
+        padding-inline: 16px;
+        justify-content: flex-start;
+      }
+      .brand {
+        margin-top: 20px;
+      }
+      .brand-logo-frame {
+        width: 72px;
+        height: 72px;
+      }
+      .card {
+        padding: 26px 20px 24px;
+      }
+    }
+
+    @media (max-width: 620px) {
+      .accounts {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+      .connector-wrap {
+        transform: rotate(90deg);
+        margin: 4px 0;
+      }
+      .connector-pill {
+        display: none;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main class="page">
+    <div class="top-nav" aria-hidden="true">
+      <span>COMUNIDAD</span>
+      <span class="sep">|</span>
+      <span>JUEGA</span>
+      <span class="sep">|</span>
+      <span>COMPITE</span>
+      <span class="sep">|</span>
+      <span>CRECE</span>
+      <span class="bar"></span>
+    </div>
+
+    <header class="brand" aria-label="MATEFIELD Comunidad Latinoamericana">
+      <div class="brand-row">
+        <div class="brand-logo-frame" aria-hidden="true">
+          <img src="/static/images/BANNER_ICONO_SERVIDOR.png" alt="MATEFIELD Logo" class="brand-logo-img" />
+        </div>
+        <div class="brand-text">
+          <div class="brand-name">MATEFIELD</div>
+          <div class="brand-sub">
+            <span>COMUNIDAD</span>
+            <span class="highlight">LATINOAMERICANA</span>
+          </div>
+        </div>
+      </div>
+      <div class="tagline">JUGADORES · COMUNIDAD · MÁS QUE UN JUEGO</div>
+    </header>
+
+    <section class="card" aria-labelledby="success-title">
+      <div class="success-icon-badge" aria-hidden="true">
+        <img src="/static/images/steam_icon_black.png" alt="Steam" class="steam-badge-img" />
+        <span class="check-pill">✓</span>
+      </div>
+
+      <h1 id="success-title">¡Bienvenido, {{STEAM_NAME}}!</h1>
+
+      <p class="lead">
+        Tu cuenta oficial de <strong>Steam</strong> ha sido autorizada exitosamente
+        y vinculada a tu usuario de <strong>Discord</strong>.
+      </p>
+
+      <div class="accounts">
+        <!-- Discord Account -->
+        <div class="account-card">
+          <div class="avatar-container">
+            <img src="{{DISCORD_AVATAR}}" id="discordAvatar" class="avatar-img" alt="Discord Avatar" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
+            <div class="platform-mini-badge discord" title="Discord">
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="white">
+                <path d="M18.6 5.2A15 15 0 0 0 15 4.1l-.45.9a13 13 0 0 0-5.1 0L9 4.1a15 15 0 0 0-3.6 1.1C3.1 8.5 2.5 11.7 2.8 15a14.5 14.5 0 0 0 4.4 2.2l1.1-1.5a9.7 9.7 0 0 1-1.7-.8l.4-.3a12.4 12.4 0 0 0 10 0l.4.3a9.7 9.7 0 0 1-1.7.8l1.1 1.5a14.5 14.5 0 0 0 4.4-2.2c.4-3.8-.7-7-2.6-9.8ZM9 13.5c-.9 0-1.6-.8-1.6-1.8S8.1 10 9 10s1.6.8 1.6 1.7-.7 1.8-1.6 1.8Zm6 0c-.9 0-1.6-.8-1.6-1.8S14.1 10 15 10s1.6.8 1.6 1.7-.7 1.8-1.6 1.8Z"/>
+              </svg>
+            </div>
+          </div>
+          <div class="account-info">
+            <span class="account-label">Discord</span>
+            <strong class="account-name" id="discordName">{{DISCORD_NAME}}</strong>
+            <span class="account-sub" id="discordTag">{{DISCORD_TAG}}</span>
+            <span class="account-id-text" id="discordId">ID: {{DISCORD_ID}}</span>
+          </div>
+        </div>
+
+        <!-- Connector Arrow -->
+        <div class="connector-wrap" aria-hidden="true">
+          <div class="connector-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+          </div>
+          <span class="connector-pill">LINKED</span>
+        </div>
+
+        <!-- Steam Account -->
+        <div class="account-card">
+          <div class="avatar-container">
+            <img src="{{STEAM_AVATAR}}" id="steamAvatar" class="avatar-img" alt="Steam Avatar" onerror="this.src='/static/images/steam_icon_black.png'" />
+            <div class="platform-mini-badge steam" title="Steam">
+              <img src="/static/images/steam_icon_black.png" alt="Steam" class="mini-steam-icon" />
+            </div>
+          </div>
+          <div class="account-info">
+            <span class="account-label">Steam</span>
+            <strong class="account-name" id="steamName">{{STEAM_NAME}}</strong>
+            <div class="steam-id-chip" id="copySteamBtn" title="Clic para copiar Steam ID 64" onclick="copySteamId()">
+              <span class="chip-label">ID:</span>
+              <code class="chip-val" id="steamId">{{STEAM_ID}}</code>
+              <svg class="copy-svg" viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+                <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+              </svg>
+              <span class="tooltip" id="copyTooltip">¡Copiado!</span>
+            </div>
+            <a href="{{STEAM_PROFILE_URL}}" id="steamProfileLink" target="_blank" rel="noopener noreferrer" class="profile-link">
+              Ver perfil ↗
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <div class="status-banner">
+        <span class="status-icon">✓</span>
+        <span>Cuentas vinculadas correctamente en la base de datos</span>
+      </div>
+
+      <div class="note">
+        Ya tienes acceso a los roles y funciones de la comunidad en nuestro servidor.<br>
+        ¡Nos vemos en el campo de batalla de MATEFIELD!
+      </div>
+
+      <div class="buttons">
+        <a class="button primary" href="https://discord.gg/matefield" target="_blank" rel="noopener noreferrer" aria-label="Volver a Discord">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="white" aria-hidden="true">
+            <path d="M18.6 5.2A15 15 0 0 0 15 4.1l-.45.9a13 13 0 0 0-5.1 0L9 4.1a15 15 0 0 0-3.6 1.1C3.1 8.5 2.5 11.7 2.8 15a14.5 14.5 0 0 0 4.4 2.2l1.1-1.5a9.7 9.7 0 0 1-1.7-.8l.4-.3a12.4 12.4 0 0 0 10 0l.4.3a9.7 9.7 0 0 1-1.7.8l1.1 1.5a14.5 14.5 0 0 0 4.4-2.2c.4-3.8-.7-7-2.6-9.8ZM9 13.5c-.9 0-1.6-.8-1.6-1.8S8.1 10 9 10s1.6.8 1.6 1.7-.7 1.8-1.6 1.8Zm6 0c-.9 0-1.6-.8-1.6-1.8S14.1 10 15 10s1.6.8 1.6 1.7-.7 1.8-1.6 1.8Z"/>
+          </svg>
+          Volver a Discord
+        </a>
+
+        <button class="button secondary" id="closeButton" type="button">
+          Cerrar ventana
+        </button>
+
+        <div id="closeHint" role="status">
+          El navegador no permitió cerrar la pestaña automáticamente por motivos de seguridad.
+          Puedes cerrarla manualmente.
+        </div>
+      </div>
+    </section>
+
+    <div class="footer-left" aria-hidden="true">
+      LATINOAMÉRICA<br>
+      EN CADA PARTIDA
+    </div>
+
+    <div class="footer-right" aria-hidden="true">
+      GENTE<br>
+      MAPAS<br>
+      HISTORIAS<br>
+      COMUNIDAD
+    </div>
+  </main>
+
+  <script>
+    // Soporte para lectura opcional de URL params si se abre como archivo estático
+    const params = new URLSearchParams(window.location.search);
+    const discord = params.get("discord");
+    const tag = params.get("tag");
+    const discordId = params.get("discord_id");
+    const steam = params.get("steam");
+    const steamId = params.get("steam_id");
+    const steamAvatar = params.get("steam_avatar");
+    const discordAvatar = params.get("discord_avatar");
+
+    if (discord) document.getElementById("discordName").textContent = discord;
+    if (tag) document.getElementById("discordTag").textContent = tag;
+    if (discordId) document.getElementById("discordId").textContent = "ID: " + discordId;
+    if (steam) {
+      document.getElementById("steamName").textContent = steam;
+      const wName = document.getElementById("welcomeName");
+      if (wName) wName.textContent = steam;
+    }
+    if (steamId) {
+      document.getElementById("steamId").textContent = steamId;
+      const link = document.getElementById("steamProfileLink");
+      if (link) link.href = "https://steamcommunity.com/profiles/" + steamId;
+    }
+    if (steamAvatar) {
+      const img = document.getElementById("steamAvatar");
+      if (img) img.src = steamAvatar;
+    }
+    if (discordAvatar) {
+      const img = document.getElementById("discordAvatar");
+      if (img) img.src = discordAvatar;
+    }
+
+    function copySteamId() {
+      const idElem = document.getElementById("steamId");
+      if (!idElem) return;
+      const text = idElem.textContent.trim();
+      navigator.clipboard.writeText(text).then(() => {
+        const tooltip = document.getElementById("copyTooltip");
+        if (tooltip) {
+          tooltip.classList.add("show");
+          setTimeout(() => tooltip.classList.remove("show"), 1800);
+        }
+      });
+    }
+
+    document.getElementById("closeButton").addEventListener("click", () => {
+      window.close();
+      setTimeout(() => {
+        if (!window.closed) {
+          const hint = document.getElementById("closeHint");
+          if (hint) hint.style.display = "block";
+        }
+      }, 200);
+    });
+  </script>
+</body>
+</html>

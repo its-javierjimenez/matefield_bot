@@ -9,17 +9,30 @@ def create_steam_link_token(
     discord_id: str,
     secret_key: str,
     guild_id: Optional[str] = None,
-    expires_in: int = 600
+    expires_in: int = 600,
+    discord_username: Optional[str] = None,
+    discord_tag: Optional[str] = None,
+    discord_avatar: Optional[str] = None,
+    **extra
 ) -> str:
     """
     Genera un token seguro firmado con HMAC-SHA256 para el flujo de vinculación de Steam OpenID.
     Por defecto expira en 10 minutos (600 segundos).
     """
-    payload = {
+    payload: Dict[str, Any] = {
         "discord_id": str(discord_id),
         "guild_id": str(guild_id) if guild_id else None,
         "exp": int(time.time()) + expires_in
     }
+    if discord_username:
+        payload["discord_username"] = str(discord_username)
+    if discord_tag:
+        payload["discord_tag"] = str(discord_tag)
+    if discord_avatar:
+        payload["discord_avatar"] = str(discord_avatar)
+    for k, v in extra.items():
+        if v is not None:
+            payload[k] = v
     payload_bytes = json.dumps(payload, separators=(',', ':')).encode('utf-8')
     payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode('ascii').rstrip('=')
     

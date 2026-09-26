@@ -1,6 +1,7 @@
 import crescent
 import hikari
 import logging
+from typing import Optional
 from src.model import Model
 from src.hooks import check_is_admin, vip_or_admin, admin_only
 
@@ -9,6 +10,21 @@ logger = logging.getLogger(__name__)
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 from src.groups import player_group
 from wardogs_schemas.steam_token import create_steam_link_token
+
+
+def _build_user_steam_link(user: hikari.User, guild_id: Optional[hikari.Snowflake] = None) -> str:
+    secret_key = plugin.model.api.api_key
+    disc_tag = f"#{user.discriminator}" if user.discriminator and user.discriminator != "0" else f"@{user.username}"
+    token = create_steam_link_token(
+        discord_id=str(user.id),
+        secret_key=secret_key,
+        guild_id=str(guild_id) if guild_id else None,
+        discord_username=user.global_name or user.username,
+        discord_tag=disc_tag,
+        discord_avatar=str(user.display_avatar_url)
+    )
+    public_url = plugin.model.public_api_url.rstrip("/")
+    return f"{public_url}/api/v1/auth/steam/login?token={token}"
 
 
 @plugin.include
@@ -23,14 +39,7 @@ class LinkAccount:
 
         # 1. Flujo automático sin parámetros: Genera enlace seguro de Steam OpenID
         if not self.steam_id and not self.usuario:
-            secret_key = plugin.model.api.api_key
-            token = create_steam_link_token(
-                discord_id=str(ctx.user.id),
-                secret_key=secret_key,
-                guild_id=str(ctx.guild_id) if ctx.guild_id else None
-            )
-            public_url = plugin.model.public_api_url.rstrip("/")
-            link_url = f"{public_url}/api/v1/auth/steam/login?token={token}"
+            link_url = _build_user_steam_link(ctx.user, ctx.guild_id)
 
             embed = hikari.Embed(
                 title="🎮 Vinculación con Steam",
@@ -168,14 +177,7 @@ async def on_steam_link_button_click(event: hikari.InteractionCreateEvent) -> No
         return
     if event.interaction.custom_id == "btn_start_steam_link":
         try:
-            secret_key = plugin.model.api.api_key
-            token = create_steam_link_token(
-                discord_id=str(event.interaction.user.id),
-                secret_key=secret_key,
-                guild_id=str(event.interaction.guild_id) if event.interaction.guild_id else None
-            )
-            public_url = plugin.model.public_api_url.rstrip("/")
-            link_url = f"{public_url}/api/v1/auth/steam/login?token={token}"
+            link_url = _build_user_steam_link(event.interaction.user, event.interaction.guild_id)
             
             embed = hikari.Embed(
                 title="🎮 Vinculación con Steam",

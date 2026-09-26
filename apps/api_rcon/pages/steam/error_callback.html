@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#07090c" />
+  <title>MATEFIELD · Error de vinculación</title>
+  <link rel="icon" type="image/png" href="/static/images/BANNER_ICONO_SERVIDOR.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Rajdhani:wght@600;700;800&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg: #07090c;
+      --panel: rgba(20, 24, 30, 0.94);
+      --panel-border: rgba(255, 255, 255, 0.08);
+      --brand-gold: #f0b800;
+      --brand-gold-glow: rgba(240, 184, 0, 0.28);
+      --text: #f5f7fa;
+      --muted: #9ba3af;
+      --danger: #ef4444;
+      --danger-bg: rgba(239, 68, 68, 0.12);
+      --danger-border: rgba(239, 68, 68, 0.28);
+      --discord: #5865f2;
+      --discord-hover: #4752c4;
+      --steam-grad: linear-gradient(135deg, #171a21 0%, #1b2838 50%, #2a475e 100%);
+      --shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      min-height: 100%;
+    }
+
+    body {
+      min-height: 100vh;
+      overflow-x: hidden;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 50% 12%, rgba(239, 68, 68, 0.1), transparent 45%),
+        linear-gradient(180deg, rgba(7, 9, 12, 0.86) 0%, rgba(9, 12, 16, 0.95) 55%, rgba(6, 8, 10, 0.99) 100%),
+        url('/static/images/BANNER_FONDO_INVITACION.png') center top / cover no-repeat fixed;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .page {
+      width: min(1360px, 100%);
+      min-height: 100vh;
+      position: relative;
+      padding: 36px 32px 30px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .top-nav {
+      position: absolute;
+      top: 32px;
+      right: 40px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: #b0b7c3;
+      font-family: Rajdhani, sans-serif;
+      font-size: 13px;
+      letter-spacing: .24em;
+      font-weight: 700;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .top-nav .sep {
+      color: rgba(255, 255, 255, 0.2);
+    }
+
+    .top-nav .bar {
+      width: 50px;
+      height: 2px;
+      background: var(--brand-gold);
+      margin-left: 6px;
+      box-shadow: 0 0 10px var(--brand-gold-glow);
+    }
+
+    /* Brand Header */
+    .brand {
+      margin-bottom: 24px;
+      text-align: center;
+      user-select: none;
+    }
+
+    .brand-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+    }
+
+    .brand-logo-frame {
+      width: 90px;
+      height: 90px;
+      border-radius: 20px;
+      background: rgba(15, 18, 24, 0.92);
+      border: 2px solid rgba(240, 184, 0, 0.45);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6), 0 0 25px var(--brand-gold-glow);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px;
+      flex-shrink: 0;
+      transition: transform 0.25s ease;
+    }
+
+    .brand-logo-frame:hover {
+      transform: scale(1.05);
+    }
+
+    .brand-logo-img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      border-radius: 14px;
+    }
+
+    .brand-text {
+      text-align: left;
+    }
+
+    .brand-name {
+      font-family: Rajdhani, sans-serif;
+      font-size: clamp(52px, 6vw, 84px);
+      line-height: .86;
+      letter-spacing: .02em;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: #ffffff;
+      text-shadow: 0 4px 14px rgba(0, 0, 0, 0.7);
+    }
+
+    .brand-sub {
+      margin-top: 8px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-family: Rajdhani, sans-serif;
+      font-size: clamp(14px, 1.4vw, 19px);
+      letter-spacing: .22em;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #e2e8f0;
+    }
+
+    .brand-sub .highlight {
+      letter-spacing: .16em;
+      color: #0b0d10;
+      background: var(--brand-gold);
+      padding: 2px 9px 2px;
+      font-weight: 800;
+      border-radius: 3px;
+      box-shadow: 0 0 12px var(--brand-gold-glow);
+    }
+
+    .tagline {
+      margin-top: 14px;
+      color: #9ba3af;
+      font-family: Rajdhani, sans-serif;
+      text-transform: uppercase;
+      letter-spacing: .32em;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    /* Error Card */
+    .card {
+      width: min(580px, calc(100vw - 32px));
+      padding: 36px 36px 32px;
+      border: 1px solid var(--panel-border);
+      border-top: 2px solid var(--danger);
+      border-radius: 20px;
+      background: var(--panel);
+      box-shadow: var(--shadow), 0 0 40px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(12px);
+      position: relative;
+      animation: cardAppear 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes cardAppear {
+      from {
+        opacity: 0;
+        transform: translateY(18px) scale(0.98);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    .error-icon-badge {
+      width: 82px;
+      height: 82px;
+      margin: 0 auto 20px;
+      position: relative;
+      border-radius: 22px;
+      background: var(--steam-grad);
+      border: 1.5px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.6), 0 0 24px rgba(239, 68, 68, 0.18);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .steam-badge-img {
+      width: 48px;
+      height: 48px;
+      object-fit: contain;
+      filter: brightness(0) invert(1);
+    }
+
+    .error-pill {
+      position: absolute;
+      width: 30px;
+      height: 30px;
+      right: -7px;
+      bottom: -7px;
+      border-radius: 50%;
+      background: var(--danger);
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 16px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5), 0 0 16px rgba(239, 68, 68, 0.5);
+      border: 2.5px solid #0f131a;
+    }
+
+    h1 {
+      text-align: center;
+      font-size: clamp(22px, 3vw, 28px);
+      font-weight: 800;
+      line-height: 1.2;
+      letter-spacing: -.02em;
+      color: #ffffff;
+    }
+
+    .lead {
+      max-width: 480px;
+      margin: 12px auto 24px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 14.5px;
+      line-height: 1.55;
+    }
+
+    /* Error Box */
+    .error-box {
+      border-radius: 12px;
+      background: var(--danger-bg);
+      border: 1px solid var(--danger-border);
+      padding: 16px 18px;
+      margin-bottom: 22px;
+      box-shadow: inset 0 0 20px rgba(239, 68, 68, 0.05);
+    }
+
+    .error-badge-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+      color: var(--danger);
+    }
+
+    .error-dot {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--danger);
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 900;
+      flex-shrink: 0;
+    }
+
+    .error-badge-row strong {
+      font-size: 14px;
+      letter-spacing: .02em;
+    }
+
+    .error-msg-text {
+      color: #fca5a5;
+      font-size: 13.5px;
+      line-height: 1.5;
+      font-weight: 500;
+      margin-bottom: 6px;
+    }
+
+    .error-detail-text {
+      color: #cbd5e1;
+      font-size: 12px;
+      line-height: 1.45;
+      opacity: 0.9;
+    }
+
+    /* Recovery instructions */
+    .help-section {
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 24px;
+    }
+
+    .help-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--brand-gold);
+      font-family: Rajdhani, sans-serif;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .help-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 13px;
+      color: #94a3af;
+      line-height: 1.4;
+    }
+
+    .help-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .help-list code {
+      background: rgba(255, 255, 255, 0.08);
+      color: #f1f5f9;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-family: monospace;
+    }
+
+    /* Buttons */
+    .buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    button, .button {
+      width: 100%;
+      border: 0;
+      min-height: 48px;
+      border-radius: 10px;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      transition: transform .15s ease, filter .15s ease, background .15s ease, box-shadow .15s ease;
+    }
+
+    button:hover, .button:hover {
+      transform: translateY(-1.5px);
+    }
+
+    button:active, .button:active {
+      transform: translateY(0);
+    }
+
+    .primary {
+      color: #ffffff;
+      background: linear-gradient(135deg, var(--discord) 0%, var(--discord-hover) 100%);
+      box-shadow: 0 8px 24px rgba(88, 101, 242, 0.35);
+    }
+
+    .primary:hover {
+      box-shadow: 0 12px 28px rgba(88, 101, 242, 0.45);
+      filter: brightness(1.08);
+    }
+
+    .secondary {
+      color: #e2e8f0;
+      background: #1e242d;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .secondary:hover {
+      background: #252c38;
+      border-color: rgba(255, 255, 255, 0.16);
+    }
+
+    #closeHint {
+      display: none;
+      margin-top: 10px;
+      color: #94a3b8;
+      text-align: center;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    /* Footer Branding */
+    .footer-left, .footer-right {
+      position: absolute;
+      bottom: 26px;
+      color: #717b8c;
+      font-family: Rajdhani, sans-serif;
+      text-transform: uppercase;
+      letter-spacing: .28em;
+      font-size: 11px;
+      line-height: 1.55;
+      font-weight: 700;
+    }
+
+    .footer-left {
+      left: 40px;
+    }
+
+    .footer-left::after {
+      content: "";
+      display: inline-block;
+      width: 48px;
+      height: 2px;
+      background: var(--brand-gold);
+      margin: 0 0 3px 14px;
+      box-shadow: 0 0 8px var(--brand-gold-glow);
+    }
+
+    .footer-right {
+      right: 40px;
+      text-align: right;
+      padding-right: 18px;
+    }
+
+    .footer-right::after {
+      content: "";
+      position: absolute;
+      width: 2px;
+      top: 0;
+      bottom: 0;
+      right: 0;
+      background: var(--brand-gold);
+      box-shadow: 0 0 8px var(--brand-gold-glow);
+    }
+
+    /* Responsive */
+    @media (max-width: 900px) {
+      .top-nav, .footer-left, .footer-right {
+        display: none;
+      }
+      .page {
+        padding-inline: 16px;
+        justify-content: flex-start;
+      }
+      .brand {
+        margin-top: 20px;
+      }
+      .brand-logo-frame {
+        width: 72px;
+        height: 72px;
+      }
+      .card {
+        padding: 26px 20px 24px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main class="page">
+    <div class="top-nav" aria-hidden="true">
+      <span>COMUNIDAD</span>
+      <span class="sep">|</span>
+      <span>JUEGA</span>
+      <span class="sep">|</span>
+      <span>COMPITE</span>
+      <span class="sep">|</span>
+      <span>CRECE</span>
+      <span class="bar"></span>
+    </div>
+
+    <header class="brand" aria-label="MATEFIELD Comunidad Latinoamericana">
+      <div class="brand-row">
+        <div class="brand-logo-frame" aria-hidden="true">
+          <img src="/static/images/BANNER_ICONO_SERVIDOR.png" alt="MATEFIELD Logo" class="brand-logo-img" />
+        </div>
+        <div class="brand-text">
+          <div class="brand-name">MATEFIELD</div>
+          <div class="brand-sub">
+            <span>COMUNIDAD</span>
+            <span class="highlight">LATINOAMERICANA</span>
+          </div>
+        </div>
+      </div>
+      <div class="tagline">JUGADORES · COMUNIDAD · MÁS QUE UN JUEGO</div>
+    </header>
+
+    <section class="card" aria-labelledby="error-title">
+      <div class="error-icon-badge" aria-hidden="true">
+        <img src="/static/images/steam_icon_black.png" alt="Steam" class="steam-badge-img" />
+        <span class="error-pill">✕</span>
+      </div>
+
+      <h1 id="error-title">{{ERROR_TITLE}}</h1>
+
+      <p class="lead">
+        Ocurrió un problema durante el proceso de autorización con Steam.
+        Tu cuenta de Discord no ha sido alterada.
+      </p>
+
+      <div class="error-box" role="alert">
+        <div class="error-badge-row">
+          <span class="error-dot">!</span>
+          <strong id="errorBoxTitle">{{ERROR_TITLE}}</strong>
+        </div>
+        <div class="error-msg-text" id="errorMessage">{{ERROR_MESSAGE}}</div>
+        <div class="error-detail-text" id="errorDetail">{{ERROR_DETAIL}}</div>
+      </div>
+
+      <div class="help-section">
+        <div class="help-title">¿Cómo solucionar esto?</div>
+        <ul class="help-list">
+          <li>
+            <span>1.</span>
+            <span>Regresa a nuestro servidor de Discord y ejecuta el comando <code>/player link</code>.</span>
+          </li>
+          <li>
+            <span>2.</span>
+            <span>Asegúrate de completar el inicio de sesión en Steam antes de 10 minutos.</span>
+          </li>
+          <li>
+            <span>3.</span>
+            <span>Si el problema persiste, contacta con un administrador o soporte en Discord.</span>
+          </li>
+        </ul>
+      </div>
+
+      <div class="buttons">
+        <a class="button primary" href="https://discord.gg/matefield" target="_blank" rel="noopener noreferrer" aria-label="Volver a Discord">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="white" aria-hidden="true">
+            <path d="M18.6 5.2A15 15 0 0 0 15 4.1l-.45.9a13 13 0 0 0-5.1 0L9 4.1a15 15 0 0 0-3.6 1.1C3.1 8.5 2.5 11.7 2.8 15a14.5 14.5 0 0 0 4.4 2.2l1.1-1.5a9.7 9.7 0 0 1-1.7-.8l.4-.3a12.4 12.4 0 0 0 10 0l.4.3a9.7 9.7 0 0 1-1.7.8l1.1 1.5a14.5 14.5 0 0 0 4.4-2.2c.4-3.8-.7-7-2.6-9.8ZM9 13.5c-.9 0-1.6-.8-1.6-1.8S8.1 10 9 10s1.6.8 1.6 1.7-.7 1.8-1.6 1.8Zm6 0c-.9 0-1.6-.8-1.6-1.8S14.1 10 15 10s1.6.8 1.6 1.7-.7 1.8-1.6 1.8Z"/>
+          </svg>
+          Volver a Discord
+        </a>
+
+        <button class="button secondary" id="closeButton" type="button">
+          Cerrar ventana
+        </button>
+
+        <div id="closeHint" role="status">
+          El navegador no permitió cerrar la pestaña automáticamente por motivos de seguridad.
+          Puedes cerrarla manualmente.
+        </div>
+      </div>
+    </section>
+
+    <div class="footer-left" aria-hidden="true">
+      LATINOAMÉRICA<br>
+      EN CADA PARTIDA
+    </div>
+
+    <div class="footer-right" aria-hidden="true">
+      GENTE<br>
+      MAPAS<br>
+      HISTORIAS<br>
+      COMUNIDAD
+    </div>
+  </main>
+
+  <script>
+    // Soporte para lectura opcional de URL params si se abre como archivo estático
+    const params = new URLSearchParams(window.location.search);
+    const error = params.get("error");
+    const detail = params.get("detail");
+    const title = params.get("title");
+
+    if (title) {
+      document.getElementById("error-title").textContent = title;
+      const bTitle = document.getElementById("errorBoxTitle");
+      if (bTitle) bTitle.textContent = title;
+    }
+    if (error) {
+      document.getElementById("errorMessage").textContent = error;
+    }
+    if (detail) {
+      document.getElementById("errorDetail").textContent = detail;
+    }
+
+    document.getElementById("closeButton").addEventListener("click", () => {
+      window.close();
+      setTimeout(() => {
+        if (!window.closed) {
+          const hint = document.getElementById("closeHint");
+          if (hint) hint.style.display = "block";
+        }
+      }, 200);
+    });
+  </script>
+</body>
+</html>

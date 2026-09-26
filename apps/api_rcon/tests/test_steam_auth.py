@@ -82,6 +82,9 @@ async def test_steam_callback_success(client: AsyncClient, session: AsyncSession
         assert "¡Bienvenido, GamerPro!" in resp.text
         assert steam_id in resp.text
         assert discord_id in resp.text
+        assert "/static/images/BANNER_ICONO_SERVIDOR.png" in resp.text
+        assert "/static/images/steam_icon_black.png" in resp.text
+        assert "https://steamcdn.test/avatar.jpg" in resp.text
         
         # Verificar en DB
         player = await session.get(Player, steam_id)
@@ -89,4 +92,55 @@ async def test_steam_callback_success(client: AsyncClient, session: AsyncSession
         assert player.discord_id == discord_id
         assert player.in_game_name == "GamerPro"
         assert player.avatar_url == "https://steamcdn.test/avatar.jpg"
+
+@pytest.mark.asyncio
+async def test_steam_callback_with_discord_metadata_and_static_files(client: AsyncClient, session: AsyncSession):
+    secret = "secret_key"
+    discord_id = "999888777"
+    steam_id = "76561198000000999"
+    token = create_steam_link_token(
+        discord_id=discord_id,
+        secret_key=secret,
+        guild_id="111222333",
+        discord_username="MateoFPS",
+        discord_tag="#8314",
+        discord_avatar="https://discordcdn.test/mateo.png",
+        expires_in=600
+    )
+    
+    mock_post_resp = MagicMock()
+    mock_post_resp.text = "ns:http://specs.openid.net/auth/2.0\nis_valid:true\n"
+    
+    mock_steam_summary = {
+        "personaname": "MateoFPS_Steam",
+        "avatarfull": "https://steamcdn.test/mateo_steam.jpg",
+        "profileurl": f"https://steamcommunity.com/profiles/{steam_id}"
+    }
+
+    with patch("src.config.ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY", secret), \
+         patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_post_resp)), \
+         patch("src.modules.v1.routers.auth.get_player_summary", new=AsyncMock(return_value=mock_steam_summary)):
+        
+        params = {
+            "token": token,
+            "openid.mode": "id_res",
+            "openid.claimed_id": f"https://steamcommunity.com/openid/id/{steam_id}",
+            "openid.identity": f"https://steamcommunity.com/openid/id/{steam_id}",
+            "openid.sig": "validsig123"
+        }
+        resp = await client.get("/api/v1/auth/steam/callback", params=params)
+        assert resp.status_code == 200
+        assert "¡Bienvenido, MateoFPS_Steam!" in resp.text
+        assert "MateoFPS" in resp.text
+        assert "#8314" in resp.text
+        assert "https://discordcdn.test/mateo.png" in resp.text
+        assert "https://steamcdn.test/mateo_steam.jpg" in resp.text
+        assert steam_id in resp.text
+        assert discord_id in resp.text
+        
+        # Verificar que los archivos estáticos de marca existen y responden HTTP 200
+        for img in ["BANNER_ICONO_SERVIDOR.png", "BANNER_FONDO_INVITACION.png", "steam_icon_black.png"]:
+            img_resp = await client.get(f"/static/images/{img}")
+            assert img_resp.status_code == 200
+            assert len(img_resp.content) > 0
 

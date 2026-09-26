@@ -69,6 +69,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Wardogs RCON API", version="1.0.0", lifespan=lifespan)
 
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+
+STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    app.mount("/api/static", StaticFiles(directory=str(STATIC_DIR)), name="api_static")
+
 app.include_router(V1_ROUTER, prefix="/api")
 
 if __name__ == "__main__":
