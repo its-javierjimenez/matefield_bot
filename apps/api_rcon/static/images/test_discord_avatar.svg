@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="title">
+  <title>Avatar de prueba estilo Discord</title>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#7d87ff"/>
+      <stop offset="1" stop-color="#303cbe"/>
+    </linearGradient>
+    <linearGradient id="hair" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#29213f"/>
+      <stop offset="1" stop-color="#151224"/>
+    </linearGradient>
+  </defs>
+  <rect width="240" height="240" rx="42" fill="url(#background)"/>
+  <circle cx="191" cy="45" r="56" fill="#aeb5ff" opacity=".32"/>
+  <path d="M0 197c38-27 61-45 95-49 49-6 87 20 145 69v23H0Z" fill="#202a81" opacity=".7"/>
+  <path d="M55 228c4-43 29-65 65-65s61 22 65 65" fill="#1d224c"/>
+  <path d="M74 159c8-20 31-28 46-28s39 8 47 28l-14 31H87Z" fill="#f0a973"/>
+  <ellipse cx="120" cy="104" rx="49" ry="57" fill="#ffc18d"/>
+  <path d="M70 102c3-50 31-73 68-73 34 0 55 24 53 66-19-12-37-29-45-42-18 24-47 40-76 49Z" fill="url(#hair)"/>
+  <path d="M73 94c12-4 25-13 37-28 9 10 19 17 29 21-5 14-2 29 6 41H77c-5-10-6-22-4-34Z" fill="#40325e"/>
+  <circle cx="101" cy="108" r="5" fill="#29213f"/>
+  <circle cx="141" cy="108" r="5" fill="#29213f"/>
+  <path d="M105 134c10 7 20 7 30 0" fill="none" stroke="#b95763" stroke-linecap="round" stroke-width="5"/>
+  <path d="M74 101h22M144 101h22M123 101h-5" fill="none" stroke="#dce0ff" stroke-linecap="round" stroke-width="5"/>
+  <path d="M61 89c5-25 22-43 47-50" fill="none" stroke="#ffcc5c" stroke-linecap="round" stroke-width="8"/>
+  <circle cx="57" cy="104" r="12" fill="#ffcc5c"/>
+</svg>

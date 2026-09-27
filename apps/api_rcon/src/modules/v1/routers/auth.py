@@ -264,10 +264,10 @@ async def steam_callback_test_success():
         discord_name="Matefield Test",
         discord_tag="#0001",
         discord_id="123456789012345678",
-        discord_avatar="https://cdn.discordapp.com/embed/avatars/0.png",
+        discord_avatar="/static/images/test_discord_avatar.svg",
         steam_name="Steam Test",
         steam_id="76561198000000000",
-        steam_avatar="/static/images/steam_icon_black.png",
+        steam_avatar="/static/images/test_steam_avatar.svg",
         steam_profile_url="https://steamcommunity.com/profiles/76561198000000000",
     )
     return HTMLResponse(content=html, status_code=200)
