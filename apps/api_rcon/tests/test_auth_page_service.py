@@ -16,6 +16,9 @@ def test_auth_page_service_render_success():
     )
     assert "Comandante" in html
     assert "Soldado_Mate" in html
+    assert "¡Cuenta vinculada!" in html
+    assert "Soldado_Mate ahora está conectado con tu usuario de Discord." in html
+    assert "Ya tenés acceso a la comunidad." in html
     assert "https://discordcdn.test/avatar.png" in html
     assert "https://steamcdn.test/soldado.jpg" in html
     assert "BANNER_ICONO_SERVIDOR.png" in html
