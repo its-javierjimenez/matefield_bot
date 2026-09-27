@@ -19,8 +19,13 @@ def test_auth_page_service_render_success():
     assert "¡Cuenta vinculada!" in html
     assert "Soldado_Mate ahora está conectado con tu usuario de Discord." in html
     assert "Ya tenés acceso a la comunidad." in html
+    assert "MATEFIELD" in html
+    assert "COMUNIDAD" in html
+    assert "LATINOAMERICANA" in html
     assert "https://discordcdn.test/avatar.png" in html
     assert "https://steamcdn.test/soldado.jpg" in html
+    assert "/static/images/discord_square.svg" in html
+    assert "/static/images/steam_square.svg" in html
     assert "BANNER_ICONO_SERVIDOR.png" in html
     assert "https://discord.com/channels/1187116902217171004/1537509330109202594" in html
 

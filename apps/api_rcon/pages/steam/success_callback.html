@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="/static/images/BANNER_ICONO_SERVIDOR.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Rajdhani:wght@600;700;800&display=swap" rel="stylesheet" />
   <style>
     :root {
       --background: #05080b;
@@ -27,8 +27,6 @@
     body {
       min-height: 100vh;
       margin: 0;
-      display: grid;
-      place-items: center;
       padding: 18px;
       color: var(--text);
       font-family: Inter, ui-sans-serif, system-ui, sans-serif;
@@ -36,6 +34,82 @@
         radial-gradient(circle at 50% 12%, rgba(56, 105, 130, 0.2), transparent 42%),
         radial-gradient(circle at 50% 100%, rgba(45, 70, 98, 0.18), transparent 38%),
         var(--background);
+    }
+
+    .page {
+      min-height: calc(100vh - 36px);
+      display: grid;
+      place-content: center;
+      justify-items: center;
+    }
+
+    .brand {
+      margin-bottom: 24px;
+      color: #fff;
+      text-align: center;
+      user-select: none;
+    }
+
+    .brand-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+    }
+
+    .brand-logo {
+      width: 84px;
+      height: 84px;
+      padding: 5px;
+      border: 2px solid rgba(240, 184, 0, 0.8);
+      border-radius: 19px;
+      background: #15170d;
+      box-shadow: 0 0 18px rgba(240, 184, 0, 0.3);
+    }
+
+    .brand-logo img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      border-radius: 12px;
+    }
+
+    .brand-copy { text-align: left; }
+
+    .brand-name {
+      font-family: Rajdhani, Inter, sans-serif;
+      font-size: clamp(46px, 8vw, 68px);
+      font-weight: 800;
+      letter-spacing: 0.07em;
+      line-height: 0.85;
+    }
+
+    .brand-subtitle {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 13px;
+      font-family: Rajdhani, Inter, sans-serif;
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 0.23em;
+    }
+
+    .brand-subtitle strong {
+      padding: 3px 10px 4px;
+      border-radius: 3px;
+      color: #14110a;
+      background: var(--gold);
+      letter-spacing: 0.16em;
+    }
+
+    .tagline {
+      margin: 14px 0 0;
+      color: #a6b0c0;
+      font-family: Rajdhani, Inter, sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.4em;
     }
 
     .card {
@@ -123,10 +197,16 @@
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
     }
 
-    .avatar {
+    .profile {
+      position: relative;
       width: 42px;
       height: 42px;
       flex: 0 0 42px;
+    }
+
+    .avatar {
+      width: 42px;
+      height: 42px;
       border-radius: 10px;
       object-fit: cover;
       background: #0e141c;
@@ -134,6 +214,21 @@
 
     .account--discord .avatar { background: var(--discord); }
     .account--steam .avatar { border: 1px solid rgba(255, 255, 255, 0.18); }
+
+    .platform-badge {
+      position: absolute;
+      right: -5px;
+      bottom: -5px;
+      width: 20px;
+      height: 20px;
+      padding: 2px;
+      border: 2px solid #151d27;
+      border-radius: 6px;
+      background: #f4f6fa;
+      object-fit: contain;
+    }
+
+    .platform-badge--discord { background: #5865f2; }
 
     .account-copy { min-width: 0; }
 
@@ -198,13 +293,36 @@
     @media (max-width: 500px) {
       body { padding: 6px; }
       .card { padding: 36px 20px 30px; }
+      .page { min-height: calc(100vh - 12px); }
+      .brand-row { gap: 10px; }
+      .brand-logo { width: 64px; height: 64px; border-radius: 15px; }
+      .brand-name { font-size: 42px; }
+      .brand-subtitle { gap: 6px; font-size: 12px; letter-spacing: 0.15em; }
+      .tagline { font-size: 9px; letter-spacing: 0.26em; }
       .accounts { grid-template-columns: 1fr; gap: 9px; }
       .connector { transform: rotate(90deg); }
     }
   </style>
 </head>
 <body>
-  <main class="card" aria-labelledby="success-title">
+  <main class="page">
+    <header class="brand" aria-label="Matefield Comunidad Latinoamericana">
+      <div class="brand-row">
+        <div class="brand-logo">
+          <img src="/static/images/BANNER_ICONO_SERVIDOR.png" alt="Logo de Matefield" />
+        </div>
+        <div class="brand-copy">
+          <div class="brand-name">MATEFIELD</div>
+          <div class="brand-subtitle">
+            <span>COMUNIDAD</span>
+            <strong>LATINOAMERICANA</strong>
+          </div>
+        </div>
+      </div>
+      <p class="tagline">UNA REGIÓN · UN IDIOMA · UNA COMUNIDAD</p>
+    </header>
+
+    <section class="card" aria-labelledby="success-title">
     <div class="success-icon" aria-hidden="true">
       <img src="/static/images/steam_icon_black.png" alt="" />
       <span class="check">✓</span>
@@ -215,7 +333,10 @@
 
     <section class="accounts" aria-label="Cuentas vinculadas">
       <div class="account account--discord">
-        <img src="{{DISCORD_AVATAR}}" class="avatar" alt="Avatar de Discord" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
+        <div class="profile">
+          <img src="{{DISCORD_AVATAR}}" class="avatar" alt="Avatar de Discord" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
+          <img src="/static/images/discord_square.svg" class="platform-badge platform-badge--discord" alt="Discord" />
+        </div>
         <div class="account-copy">
           <span class="account-label">Discord</span>
           <strong class="account-name">{{DISCORD_NAME}}</strong>
@@ -229,7 +350,10 @@
       </div>
 
       <div class="account account--steam">
-        <img src="{{STEAM_AVATAR}}" class="avatar" alt="Avatar de Steam" onerror="this.src='/static/images/steam_icon_black.png'" />
+        <div class="profile">
+          <img src="{{STEAM_AVATAR}}" class="avatar" alt="Avatar de Steam" onerror="this.src='/static/images/steam_icon_black.png'" />
+          <img src="/static/images/steam_square.svg" class="platform-badge" alt="Steam" />
+        </div>
         <div class="account-copy">
           <span class="account-label">Steam</span>
           <strong class="account-name">{{STEAM_NAME}}</strong>
@@ -245,6 +369,7 @@
       </svg>
       Ir al canal de Discord
     </a>
+    </section>
   </main>
 </body>
 </html>
