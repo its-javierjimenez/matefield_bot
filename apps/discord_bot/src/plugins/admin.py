@@ -16,6 +16,21 @@ from src.model import Model
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 from src.groups import reserved_group, server_group, quota_group, hacker_group, ban_group
 
+# UI Theme Colors and Message Limits
+COLOR_BLUE = 0x3498DB
+COLOR_GREEN = 0x2ECC71
+COLOR_GRAY = 0x95A5A6
+DISCORD_MAX_MESSAGE_LENGTH = 1900
+
+
+def _resolve_guild_id(ctx: crescent.Context) -> int | None:
+    """Resuelve el ID del servidor actual o la primera guild disponible en la caché."""
+    guild_id = ctx.guild_id or (ctx.member.guild_id if ctx.member else None)
+    if not guild_id and plugin.app.cache.get_guilds_view():
+        guild_id = list(plugin.app.cache.get_guilds_view().keys())[0]
+    return guild_id
+
+
 # Grupo Reserved Slots
 
 @plugin.include
@@ -69,7 +84,7 @@ class ReservedSlotsList:
             msg = "**Jugadores en Slots Reservados:**\n"
             current_msg = msg
             for line in lines:
-                if len(current_msg) + len(line) + 1 > 1900:
+                if len(current_msg) + len(line) + 1 > DISCORD_MAX_MESSAGE_LENGTH:
                     await ctx.respond(current_msg)
                     current_msg = ""
                 current_msg += line + "\n"
@@ -120,7 +135,7 @@ class ReservedSlotsSyncStatus:
             pending_add = status.get("pending_add", [])
             pending_remove = status.get("pending_remove", [])
             
-            embed = hikari.Embed(title="📊 Estado de Sincronización RCON", color=0x3498DB)
+            embed = hikari.Embed(title="📊 Estado de Sincronización RCON", color=COLOR_BLUE)
             
             synced_str = f"**{len(synced)} usuarios**" if len(synced) > 10 else ", ".join(f"`{s}`" for s in synced) or "Ninguno"
             pending_add_str = f"**{len(pending_add)} usuarios**" if len(pending_add) > 10 else ", ".join(f"`{s}`" for s in pending_add) or "Ninguno"
@@ -140,7 +155,6 @@ class ReservedSlotsSyncStatus:
 # Grupo Server
 
 @plugin.include
-@server_group.child
 @server_group.child
 @crescent.command(name="announce", description="Envía un anuncio al servidor RCON")
 class ServerAnnounce:
@@ -170,7 +184,7 @@ class CheckQuotas:
                 await ctx.respond("ℹ️ No hay configuración de cupos. Todas las membresías son infinitas por defecto.")
                 return
                 
-            embed = hikari.Embed(title="📊 Estado de Cupos VIP", color=0x3498db)
+            embed = hikari.Embed(title="📊 Estado de Cupos VIP", color=COLOR_BLUE)
             for q in quotas:
                 m_type = q.get("membership_type")
                 current = q.get("current_usage", 0)
@@ -207,8 +221,6 @@ class SetQuota:
             await ctx.respond(f"❌ Error al configurar cupo: {e}")
 
 @plugin.include
-@server_group.child
-
 @server_group.child
 @crescent.command(name="set_max_reserved", description="Modifica el límite máximo de slots reservados (ServerSettings.ini)")
 class ServerSetMaxReserved:
@@ -285,7 +297,7 @@ class MonitorHacker:
             embed = hikari.Embed(
                 title=f"🕵️ Monitoreando a: {target_player.name}",
                 description="Iniciando monitoreo de KPM (Kills per Minute)...",
-                color=0x3498db
+                color=COLOR_BLUE
             )
             
             msg = await ctx.respond(embed=embed, components=components, ensure_message=True)
@@ -322,7 +334,7 @@ async def on_button_click(event: hikari.InteractionCreateEvent) -> None:
             embed = hikari.Embed(
                 title="🛑 Monitoreo Detenido",
                 description=f"El monitoreo para el SteamID {steam_id} ha sido detenido manualmente.",
-                color=0x95a5a6
+                color=COLOR_GRAY
             )
             
             await event.interaction.create_initial_response(
@@ -391,9 +403,7 @@ class BanPlayer:
         await ctx.defer()
         try:
             dur_str = "permanentemente" if self.dias == 0 else f"por {self.dias} días"
-            guild_id = ctx.guild_id or (ctx.member.guild_id if ctx.member else None)
-            if not guild_id and plugin.app.cache.get_guilds_view():
-                guild_id = list(plugin.app.cache.get_guilds_view().keys())[0]
+            guild_id = _resolve_guild_id(ctx)
             
             target_discord_id, target_steam_id = await _resolve_ban_targets(self.usuario, self.steam_id)
             
@@ -486,9 +496,7 @@ async def _handle_unban_callback(
 ) -> None:
     await ctx.defer()
     try:
-        guild_id = ctx.guild_id or (ctx.member.guild_id if ctx.member else None)
-        if not guild_id and plugin.app.cache.get_guilds_view():
-            guild_id = list(plugin.app.cache.get_guilds_view().keys())[0]
+        guild_id = _resolve_guild_id(ctx)
 
         target_discord_id, target_steam_id = await _resolve_ban_targets(usuario, steam_id)
 
@@ -629,7 +637,7 @@ class BanList:
             msg = f"**Jugadores Baneados ({len(bans)}):**\n"
             current_msg = msg
             for line in lines:
-                if len(current_msg) + len(line) + 1 > 1900:
+                if len(current_msg) + len(line) + 1 > DISCORD_MAX_MESSAGE_LENGTH:
                     await ctx.respond(current_msg)
                     current_msg = ""
                 current_msg += line + "\n"

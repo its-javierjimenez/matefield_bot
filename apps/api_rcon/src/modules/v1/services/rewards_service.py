@@ -19,6 +19,8 @@ from src.modules.v1.schemas.dtos import (
 from src.modules.v1.services.memberships_service import MembershipsService
 from src.modules.v1.services.roles_service import RolesService
 
+STEAM_ID_64_LENGTH = 17
+
 
 class RewardsService:
     @staticmethod
@@ -453,7 +455,7 @@ class RewardsService:
         if not player:
             # If identifier is a 17-digit SteamID, create the player record
             clean_id = req.player_identifier.strip()
-            if clean_id.isdigit() and len(clean_id) == 17:
+            if clean_id.isdigit() and len(clean_id) == STEAM_ID_64_LENGTH:
                 player = Player(steam_id=clean_id, reward_points=0)
                 session.add(player)
                 await session.flush()

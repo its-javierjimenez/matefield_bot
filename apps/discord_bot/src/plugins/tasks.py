@@ -17,6 +17,7 @@ DEFAULT_MVP_MEMBERSHIP_TYPE = "VIP_MVP_GIFT"
 DEFAULT_MVP_DAYS = 1
 VIP_BROADCAST_COOLDOWN_SECONDS = 300
 VIP_BROADCAST_DELAY_SECONDS = 4
+PLAYER_LAST_SEEN_PRUNE_SECONDS = 3600
 
 # Embed UI Colors
 COLOR_GOLD = 0xF1C40F
@@ -280,12 +281,17 @@ async def vip_monitor():
                     # TODO: Registrar 'spent' en stats_history
             plugin.model.players_cache[sid] = current_cash
             
-        # Limpiar desconectados
+        # Limpiar desconectados y podar entradas antiguas de last_seen para evitar fugas de memoria
         disconnected = cached_ids - current_steam_ids
         for sid in disconnected:
             if sid in plugin.model.players_cache:
                 logger.debug(f"[VIP Monitor] 🔌 Jugador {sid} desconectado. Limpiando caché.")
                 del plugin.model.players_cache[sid]
+
+        cutoff = now - PLAYER_LAST_SEEN_PRUNE_SECONDS
+        stale_sids = [sid for sid, seen_time in plugin.model.player_last_seen.items() if seen_time < cutoff]
+        for sid in stale_sids:
+            del plugin.model.player_last_seen[sid]
                 
     except Exception as e:
         logger.error(f"[VIP Monitor] Error en la automatización: {e}")
