@@ -40,6 +40,10 @@ def test_auth_page_service_render_error():
     assert "Steam rechazó la firma OpenID." in html
     assert "Intente nuevamente desde Discord." in html
     assert "BANNER_ICONO_SERVIDOR.png" in html
+    assert "MATEFIELD" in html
+    assert "COMUNIDAD" in html
+    assert "LATINOAMERICANA" in html
+    assert "¿Cómo seguimos?" in html
 
 
 @pytest.mark.asyncio
