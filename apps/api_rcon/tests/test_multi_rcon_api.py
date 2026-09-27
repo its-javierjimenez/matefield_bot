@@ -81,3 +81,30 @@ async def test_rcon_servers_sync_all_endpoint(client: AsyncClient, session: Asyn
     assert data["ok"] is True
     assert len(data["results"]) >= 1
     assert data["results"][0]["status"] == "SUCCESS"
+
+
+@pytest.mark.asyncio
+async def test_rcon_client_get_bans_empty_list_does_not_call_get_config(mocker):
+    """Verifies that an empty ban list from /v1/bans returns immediately without unnecessary config fetch."""
+    rcon = RCONClient(base_url="http://127.0.0.1:8000", password="test")
+    mock_req = mocker.patch.object(rcon, "_request", return_value={"bans": []})
+    mock_get_config = mocker.patch.object(rcon, "get_config")
+
+    bans = await rcon.get_bans()
+    assert bans == []
+    mock_req.assert_called_once_with("GET", "/v1/bans")
+    mock_get_config.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rcon_manager_fallback_server_parses_url_safely():
+    """Verifies that RCONManager._get_fallback_server correctly constructs RconServer from environment URL."""
+    fallback = RCONManager._get_fallback_server()
+    assert fallback is not None
+    assert fallback.id == 0
+    assert fallback.name == "Default (.env)"
+    assert fallback.scheme in ("http", "https")
+    assert fallback.ip is not None
+    assert fallback.port > 0
+    assert fallback.is_active is True
+    assert fallback.is_default is True
