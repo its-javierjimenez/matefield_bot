@@ -56,3 +56,34 @@ async def test_auth_page_service_fetch_discord_profile():
         assert res["username"] == "Mateo Global"
         assert res["tag"] == "@mateo"
         assert res["avatar_url"] is not None and "abcdef123456.png" in res["avatar_url"]
+
+
+def test_auth_page_service_xss_escaping():
+    malicious_name = '<script>alert("xss")</script>'
+    malicious_msg = 'Error" onfocus="alert(1)'
+    
+    success_html = AuthPageService.render_success_page(
+        steam_name=malicious_name,
+        discord_name='User<foo>'
+    )
+    assert malicious_name not in success_html
+    assert "&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;" in success_html
+    assert "<foo>" not in success_html
+    assert "&lt;foo&gt;" in success_html
+
+    error_html = AuthPageService.render_error_page(
+        title="Error",
+        message=malicious_msg,
+        detail='<img src=x onerror=alert(2)>'
+    )
+    assert '<img src=x' not in error_html
+    assert "&lt;img src=x onerror=alert(2)&gt;" in error_html
+
+
+def test_auth_page_service_missing_template_raises():
+    from pathlib import Path
+    with patch("src.modules.v1.services.auth_page_service.SUCCESS_TEMPLATE_PATH", Path("/nonexistent/success.html")):
+        with pytest.raises(FileNotFoundError) as exc_info:
+            AuthPageService.render_success_page()
+        assert "no encontrada" in str(exc_info.value)
+

@@ -24,7 +24,6 @@ DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 # Aliases para retrocompatibilidad
 render_success_page = AuthPageService.render_success_page
 render_error_page = AuthPageService.render_error_page
-render_html_page = AuthPageService._render_fallback_page
 
 
 @router.get("/login")
@@ -225,12 +224,17 @@ async def steam_callback(request: Request, token: str, session: AsyncSession = D
     if not discord_avatar:
         discord_avatar = "https://cdn.discordapp.com/embed/avatars/0.png"
 
+    if not player_name or not avatar_url:
+        existing_p = await session.get(Player, steam_id)
+        if not player_name and existing_p and existing_p.in_game_name:
+            player_name = existing_p.in_game_name
+        if not avatar_url and existing_p and existing_p.avatar_url:
+            avatar_url = existing_p.avatar_url
+
     if not player_name:
-        existing_p = await session.get(Player, steam_id)
-        player_name = existing_p.in_game_name if existing_p and existing_p.in_game_name else f"Steam ({steam_id})"
+        player_name = f"Steam ({steam_id})"
     if not avatar_url:
-        existing_p = await session.get(Player, steam_id)
-        avatar_url = existing_p.avatar_url if existing_p and existing_p.avatar_url else "/static/images/steam_icon_black.png"
+        avatar_url = "/static/images/steam_icon_black.png"
 
     # Renderizar pantalla de éxito con templates mejorados y datos reales
     html = render_success_page(

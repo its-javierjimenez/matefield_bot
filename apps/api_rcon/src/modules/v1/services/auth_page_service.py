@@ -1,7 +1,7 @@
-from pathlib import Path
-from typing import Optional, Dict, Any
-import httpx
+import html
 import logging
+from pathlib import Path
+from typing import Optional, Dict
 
 logger = logging.getLogger("wardogs.auth_pages")
 
@@ -14,7 +14,16 @@ class AuthPageService:
     """
     Servicio desacoplado para la resolución de perfiles y renderizado
     de las interfaces de callback de autenticación Steam OpenID.
+    Utiliza exclusivamente plantillas HTML externas ubicadas en pages/steam/.
     """
+
+    @classmethod
+    def _load_template(cls, template_path: Path) -> str:
+        """Carga el contenido de la plantilla HTML desde el disco de forma segura."""
+        if not template_path.is_file():
+            logger.error("Plantilla HTML no encontrada en el sistema: %s", template_path)
+            raise FileNotFoundError(f"Plantilla HTML '{template_path.name}' no encontrada en el servidor.")
+        return template_path.read_text(encoding="utf-8")
 
     @classmethod
     async def fetch_discord_profile(
@@ -33,6 +42,7 @@ class AuthPageService:
             return result
 
         try:
+            import httpx
             async with httpx.AsyncClient(timeout=4.0) as dc:
                 res = await dc.get(
                     f"https://discord.com/api/v10/users/{discord_id}",
@@ -42,12 +52,14 @@ class AuthPageService:
                     udata = res.json()
                     result["username"] = udata.get("global_name") or udata.get("username")
                     disc = udata.get("discriminator", "0")
-                    result["tag"] = f"#{disc}" if disc != "0" else f"@{udata.get('username')}"
+                    username = udata.get("username", "")
+                    result["tag"] = f"#{disc}" if disc != "0" else (f"@{username}" if username else "")
                     av_hash = udata.get("avatar")
                     if av_hash:
-                        result["avatar_url"] = f"https://cdn.discordapp.com/avatars/{discord_id}/{av_hash}.png"
+                        ext = "gif" if av_hash.startswith("a_") else "png"
+                        result["avatar_url"] = f"https://cdn.discordapp.com/avatars/{discord_id}/{av_hash}.{ext}"
         except Exception as ex:
-            logger.debug(f"No se pudo resolver el perfil de Discord para {discord_id}: {ex}")
+            logger.debug("No se pudo resolver el perfil de Discord para %s: %s", discord_id, ex)
 
         return result
 
@@ -75,32 +87,20 @@ class AuthPageService:
             f"https://steamcommunity.com/profiles/{steam_id}" if steam_id else "#"
         )
 
-        if SUCCESS_TEMPLATE_PATH.exists():
-            content = SUCCESS_TEMPLATE_PATH.read_text(encoding="utf-8")
-            replacements = {
-                "{{DISCORD_NAME}}": discord_name_val,
-                "{{DISCORD_TAG}}": discord_tag_val,
-                "{{DISCORD_ID}}": discord_id_val,
-                "{{DISCORD_AVATAR}}": discord_avatar_val,
-                "{{STEAM_NAME}}": steam_name_val,
-                "{{STEAM_ID}}": steam_id_val,
-                "{{STEAM_AVATAR}}": steam_avatar_val,
-                "{{STEAM_PROFILE_URL}}": steam_profile_val,
-            }
-            for placeholder, val in replacements.items():
-                content = content.replace(placeholder, str(val))
-            return content
-
-        # Fallback de seguridad
-        return cls._render_fallback_page(
-            title="¡Cuenta Vinculada!",
-            content=f"""
-                <h1>¡Bienvenido, {steam_name_val}!</h1>
-                <p>Tu cuenta oficial de Steam ha sido vinculada exitosamente con tu usuario de Discord.</p>
-                <p>Steam ID: <strong>{steam_id_val}</strong> | Discord ID: <strong>{discord_id_val}</strong></p>
-            """,
-            is_success=True,
-        )
+        content = cls._load_template(SUCCESS_TEMPLATE_PATH)
+        replacements = {
+            "{{DISCORD_NAME}}": html.escape(discord_name_val),
+            "{{DISCORD_TAG}}": html.escape(discord_tag_val),
+            "{{DISCORD_ID}}": html.escape(discord_id_val),
+            "{{DISCORD_AVATAR}}": html.escape(discord_avatar_val, quote=True),
+            "{{STEAM_NAME}}": html.escape(steam_name_val),
+            "{{STEAM_ID}}": html.escape(steam_id_val),
+            "{{STEAM_AVATAR}}": html.escape(steam_avatar_val, quote=True),
+            "{{STEAM_PROFILE_URL}}": html.escape(steam_profile_val, quote=True),
+        }
+        for placeholder, val in replacements.items():
+            content = content.replace(placeholder, val)
+        return content
 
     @classmethod
     def render_error_page(
@@ -110,86 +110,12 @@ class AuthPageService:
         detail: Optional[str] = "",
     ) -> str:
         """Renderiza error_callback.html inyectando el motivo de error dinámico."""
-        detail_val = detail or ""
-        if ERROR_TEMPLATE_PATH.exists():
-            content = ERROR_TEMPLATE_PATH.read_text(encoding="utf-8")
-            replacements = {
-                "{{ERROR_TITLE}}": title,
-                "{{ERROR_MESSAGE}}": message,
-                "{{ERROR_DETAIL}}": detail_val,
-            }
-            for placeholder, val in replacements.items():
-                content = content.replace(placeholder, str(val))
-            return content
-
-        # Fallback de seguridad
-        return cls._render_fallback_page(
-            title=title,
-            content=f"""
-                <h1>{title}</h1>
-                <p>{message}</p>
-                <p style="font-size:0.85rem; color:#ef4444;">{detail_val}</p>
-            """,
-            is_success=False,
-        )
-
-    @staticmethod
-    def _render_fallback_page(title: str, content: str, is_success: bool = True) -> str:
-        badge_bg = "#059669" if is_success else "#dc2626"
-        badge_icon = "✓" if is_success else "✕"
-        badge_text = "VINCULACIÓN EXITOSA" if is_success else "ERROR DE VINCULACIÓN"
-
-        return f"""<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title} | Matefield</title>
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{
-            background: #07090c;
-            color: #f1f5f9;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            padding: 20px;
-        }}
-        .card {{
-            background: #14181f;
-            border: 1px solid #23304c;
-            border-radius: 20px;
-            padding: 36px 30px;
-            max-width: 480px;
-            width: 100%;
-            text-align: center;
-            box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7);
-        }}
-        .badge {{
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            background: {badge_bg};
-            color: #ffffff;
-            font-weight: 700;
-            font-size: 0.85rem;
-            letter-spacing: 0.05em;
-            padding: 6px 16px;
-            border-radius: 9999px;
-            margin-bottom: 24px;
-        }}
-        h1 {{ font-size: 1.5rem; font-weight: 700; margin-bottom: 12px; color: #ffffff; }}
-        p {{ color: #94a3b8; font-size: 0.95rem; line-height: 1.5; margin-bottom: 24px; }}
-        .footer-note {{ font-size: 0.82rem; color: #64748b; margin-top: 18px; }}
-    </style>
-</head>
-<body>
-    <div class="card">
-        <div class="badge"><span>{badge_icon}</span> {badge_text}</div>
-        {content}
-        <div class="footer-note">Puedes cerrar esta ventana de forma segura.</div>
-    </div>
-</body>
-</html>"""
+        content = cls._load_template(ERROR_TEMPLATE_PATH)
+        replacements = {
+            "{{ERROR_TITLE}}": html.escape(title or "Error de vinculación"),
+            "{{ERROR_MESSAGE}}": html.escape(message or "Ocurrió un error inesperado al procesar la vinculación."),
+            "{{ERROR_DETAIL}}": html.escape(detail or ""),
+        }
+        for placeholder, val in replacements.items():
+            content = content.replace(placeholder, val)
+        return content
