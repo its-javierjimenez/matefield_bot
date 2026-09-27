@@ -13,7 +13,7 @@
     :root {
       --background: #05080b;
       --card: #0b1118;
-      --card-border: rgba(240, 184, 0, 0.72);
+      --card-border: rgba(84, 237, 114, 0.78);
       --text: #f7f8fb;
       --muted: #9aa8c1;
       --discord: #5865f2;
@@ -114,11 +114,12 @@
 
     .card {
       width: min(590px, 100%);
+      min-height: 490px;
       padding: 42px 28px 40px;
       border: 1px solid var(--card-border);
       border-radius: 17px;
       background:
-        linear-gradient(145deg, rgba(20, 29, 38, 0.7), transparent 42%),
+        linear-gradient(145deg, rgba(31, 65, 45, 0.4), transparent 42%),
         linear-gradient(180deg, rgba(13, 20, 28, 0.98), rgba(7, 12, 18, 0.98));
       box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.06);
       text-align: center;
@@ -307,7 +308,7 @@
 
     @media (max-width: 500px) {
       body { padding: 6px; }
-      .card { padding: 36px 20px 30px; }
+      .card { min-height: 0; padding: 36px 20px 30px; }
       .page { min-height: calc(100vh - 12px); }
       .brand-row { gap: 10px; }
       .brand-logo { width: 64px; height: 64px; border-radius: 15px; }

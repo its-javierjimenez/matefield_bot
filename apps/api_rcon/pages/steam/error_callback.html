@@ -114,6 +114,7 @@
 
     .card {
       width: min(590px, 100%);
+      min-height: 490px;
       padding: 42px 28px 40px;
       border: 1px solid var(--card-border);
       border-radius: 17px;
@@ -226,7 +227,7 @@
     @media (max-width: 500px) {
       body { padding: 6px; }
       .page { min-height: calc(100vh - 12px); }
-      .card { padding: 36px 20px 30px; }
+      .card { min-height: 0; padding: 36px 20px 30px; }
       .brand-row { gap: 10px; }
       .brand-logo { width: 64px; height: 64px; border-radius: 15px; }
       .brand-name { font-size: 42px; }
