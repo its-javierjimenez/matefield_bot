@@ -226,3 +226,77 @@ class ExportMembershipsResponse(BaseModel):
     size_bytes: int
     download_url: str
     expires_in_seconds: int = 1800
+
+
+# ---------------------------------------------------------
+# Rewards Schemas
+# ---------------------------------------------------------
+
+class CreateRewardItemRequest(BaseModel):
+    code: str
+    name: str
+    description: Optional[str] = None
+    cost_points: int = Field(default=1, ge=1)
+    delivery_type: str = Field(default="AUTOMATIC") # AUTOMATIC or MANUAL_TICKET
+    reward_type: str = Field(default="MEMBERSHIP")  # MEMBERSHIP, ROLE, CUSTOM
+    reward_value: str = Field(default="")
+    duration_days: Optional[int] = None
+    is_active: bool = True
+
+
+class ClaimRewardRequest(BaseModel):
+    player_identifier: str
+    reward_code: str
+
+
+class DeliverClaimRequest(BaseModel):
+    delivered_by: str
+    notes: Optional[str] = None
+
+
+class RefundClaimRequest(BaseModel):
+    refunded_by: str
+    reason: Optional[str] = None
+
+
+class GiveRewardPointsRequest(BaseModel):
+    player_identifier: str
+    points: int
+    reason: Optional[str] = None
+
+
+class RewardItemResponse(BaseModel):
+    id: int
+    code: str
+    name: str
+    description: Optional[str] = None
+    cost_points: int
+    delivery_type: str
+    reward_type: str
+    reward_value: str
+    duration_days: Optional[int] = None
+    is_active: bool
+
+
+class RewardClaimResponse(BaseModel):
+    id: int
+    steam_id: str
+    reward_code: str
+    reward_name: str
+    claim_code: str
+    status: str
+    points_spent: int
+    claimed_at: str
+    delivered_at: Optional[str] = None
+    delivered_by: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class PlayerRewardBalanceResponse(BaseModel):
+    steam_id: str
+    discord_id: Optional[str] = None
+    in_game_name: Optional[str] = None
+    reward_points: int
+    total_seeding_minutes: int
+    active_claims: List[RewardClaimResponse] = Field(default_factory=list)
+

@@ -197,7 +197,7 @@ class PlayersService:
             total_statement = total_statement.where(Player.discord_id == None)
         total = (await session.exec(total_statement)).one()
         
-        offset = (page - 1) * limit
+        offset = max(0, (page - 1) * limit)
         statement = statement.order_by(col(Player.steam_id)).offset(offset).limit(limit)
         db_players = (await session.exec(statement)).all()
         

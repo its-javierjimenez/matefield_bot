@@ -2,10 +2,11 @@ import asyncio
 from sqlmodel import select, col, or_
 from typing import Optional
 
-from src.connections.databases.db import engine, Player, Match, MatchPlayerStats, PlayerSession, Team, MatchTeamStats
+from src.connections.databases.db import engine, Player, Match, MatchPlayerStats, PlayerSession, Team, MatchTeamStats, BotConfig
 from sqlmodel.ext.asyncio.session import AsyncSession
 from src.connections.apis.rcon import rcon_client
 from src.connections.apis.steam import get_player_summary
+from src.modules.v1.services.rewards_service import RewardsService
 import datetime
 import logging
 
@@ -163,9 +164,21 @@ async def poll_rcon():
                             
                             session.add(stats)
                             
-                    # Session Tracking Logic
+                    # Session Tracking & Rewards Logic
+                    seeding_min_cfg = await session.get(BotConfig, "SEEDING_MIN_PLAYERS")
+                    try:
+                        seeding_threshold = int(seeding_min_cfg.config_value) if seeding_min_cfg else 20
+                    except (ValueError, TypeError):
+                        seeding_threshold = 20
+
+                    seeding_rate_cfg = await session.get(BotConfig, "SEEDING_MINUTES_PER_POINT")
+                    try:
+                        minutes_per_point = int(seeding_rate_cfg.config_value) if seeding_rate_cfg else 30
+                    except (ValueError, TypeError):
+                        minutes_per_point = 30
+
                     current_players = (status.players.current or 0) if status.players else 0
-                    is_seeding = current_players < 20
+                    is_seeding = current_players < seeding_threshold
                     current_steam_ids = {p.steamId for p in players.players if p.steamId}
                     
                     active_sessions_stmt = select(PlayerSession).where(PlayerSession.end_time == None)
@@ -175,9 +188,20 @@ async def poll_rcon():
                     
                     for s in active_sessions:
                         if s.steam_id in current_steam_ids:
-                            s.total_seconds += delta_seconds
-                            if is_seeding:
-                                s.seeding_seconds += delta_seconds
+                            db_p = await session.get(Player, s.steam_id)
+                            if db_p:
+                                RewardsService.process_session_seeding(
+                                    session_obj=s,
+                                    player_obj=db_p,
+                                    delta_seconds=delta_seconds,
+                                    is_seeding=is_seeding,
+                                    minutes_per_point=minutes_per_point,
+                                )
+                                session.add(db_p)
+                            else:
+                                s.total_seconds += delta_seconds
+                                if is_seeding:
+                                    s.seeding_seconds += delta_seconds
                             session.add(s)
                         else:
                             # Use total_seconds to calculate actual end time, preventing huge gaps if engine restarts

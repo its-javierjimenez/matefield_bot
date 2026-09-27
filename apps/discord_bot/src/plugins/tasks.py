@@ -12,6 +12,94 @@ import logging
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 logger = logging.getLogger("wardogs.tasks")
 
+def get_next_map(current_map: str, rotation: Any = None) -> str:
+    """Calcula el nombre del próximo mapa según rotación o secuencia conocida."""
+    prod_chain = {
+        "bakurani": "Ozeti",
+        "ozeti": "Zestafona",
+        "zestafona": "Bakurani"
+    }
+    cur_norm = current_map.strip().lower()
+    if cur_norm in prod_chain:
+        return prod_chain[cur_norm]
+
+    mock_maps = ["Urban Combat", "Desert Outpost", "Industrial Zone", "Snow Peak", "Bakurani"]
+    for i, m in enumerate(mock_maps):
+        if m.lower() == cur_norm:
+            return mock_maps[(i + 1) % len(mock_maps)]
+
+    next_idx = getattr(rotation, "nextIndex", None) if rotation else None
+    if next_idx is not None:
+        standard_rotation = ["Zestafona", "Bakurani", "Ozeti"]
+        return standard_rotation[next_idx % len(standard_rotation)]
+
+    return "Siguiente"
+
+
+def format_match_presence(status: Any | None, match_ended: bool = False, next_map: str | None = None) -> str:
+    """
+    Genera el estado contextual del bot para Discord sin emojis y máx 35 caracteres.
+    - Contempla las 3 facciones: Lonestar (L), Valkyra (V) y Manticore (M).
+    - Servidor lleno muestra '100/100' y vacío '0/100'.
+    - Al terminar la partida menciona el próximo mapa en lugar del MVP.
+    """
+    if not status:
+        return "Mantenimiento / Reiniciando"[:35]
+
+    current_map = str((status.get("map") if isinstance(status, dict) else getattr(status, "map", None)) or "Wardogs").strip()
+
+    # 1. Fin de partida: menciona el próximo mapa
+    if match_ended:
+        rot = status.get("rotation") if isinstance(status, dict) else getattr(status, "rotation", None)
+        nxt = next_map or get_next_map(current_map, rot)
+        res = f"Fin: {current_map[:10]} | Prox: {nxt[:10]}"
+        return res[:35]
+
+    players = status.get("players") if isinstance(status, dict) else getattr(status, "players", None)
+    if isinstance(players, dict):
+        cur_p = int(players.get("current") or 0)
+        max_p = int(players.get("max") or 100)
+    else:
+        cur_p = int(getattr(players, "current", 0) or 0)
+        max_p = int(getattr(players, "max", 100) or 100)
+
+    # 2. Servidor vacío o con pocos jugadores
+    if cur_p == 0:
+        return f"{current_map} 0/{max_p}"[:35]
+    if cur_p < 15:
+        return f"{current_map} {cur_p}/{max_p}"[:35]
+
+    # Extraer puntuación de las 3 facciones (Lonestar, Valkyra, Manticore)
+    fscores = (status.get("factionScores") if isinstance(status, dict) else getattr(status, "factionScores", None)) or []
+    scores: dict[str, int] = {}
+    for fs in fscores:
+        if isinstance(fs, dict):
+            fname = str(fs.get("name") or fs.get("faction") or "").strip().lower()
+            fscore = int(fs.get("score") or 0)
+        else:
+            fname = str(getattr(fs, "name", None) or getattr(fs, "faction", None) or "").strip().lower()
+            fscore = int(getattr(fs, "score", 0) or 0)
+        if fname.startswith("lone"):
+            scores["L"] = fscore
+        elif fname.startswith("valk"):
+            scores["V"] = fscore
+        elif fname.startswith("manti"):
+            scores["M"] = fscore
+
+    has_scores = bool(scores and any(v > 0 for v in scores.values()))
+    score_str = f"L{scores.get('L', 0)} V{scores.get('V', 0)} M{scores.get('M', 0)}" if has_scores else ""
+
+    # 3. Combate normal activo con los 3 equipos
+    if score_str:
+        res = f"{current_map} [{cur_p}/{max_p}] {score_str}"
+        if len(res) <= 35:
+            return res
+        return f"{current_map[:8]} [{cur_p}/{max_p}] {score_str}"[:35]
+
+    # Servidor sin marcadores activos aún (calentamiento, espera o lleno)
+    return f"{current_map} {cur_p}/{max_p}"[:35]
+
+
 # Tarea de monitoreo de partida
 @plugin.include
 @tasks.loop(seconds=10)
@@ -80,9 +168,7 @@ async def match_monitor():
             
         # Update Bot Presence
         if plugin.app and plugin.app.is_alive:
-            current_players = status.players.current if status.players else 0
-            max_players = status.players.max if status.players else 0
-            presence_text = f"{current_map} | {current_players}/{max_players}"
+            presence_text = format_match_presence(status, match_ended=match_ended)
             await plugin.app.update_presence(
                 activity=hikari.Activity(
                     name=presence_text,
@@ -92,6 +178,16 @@ async def match_monitor():
             
     except Exception as e:
         logger.error(f"[Match Monitor] Error en la automatización: {e}")
+        if plugin.app and plugin.app.is_alive:
+            try:
+                await plugin.app.update_presence(
+                    activity=hikari.Activity(
+                        name="Mantenimiento / Reiniciando"[:35],
+                        type=hikari.ActivityType.PLAYING
+                    )
+                )
+            except Exception:
+                pass
 
 # Tarea de monitoreo de ingreso de VIPs
 @plugin.include
@@ -151,6 +247,8 @@ async def vip_monitor():
         now = time.time()
         for p in players:
             sid = p.steamId
+            if not sid:
+                continue
             plugin.model.player_last_seen[sid] = now
             
             current_cash = p.cash or 0
@@ -218,8 +316,13 @@ async def execute_membership_sync(
         "whitelist_skipped": 0,
     }
 
-    if not all_managed_roles:
+    has_managed_roles = bool(all_managed_roles) or bool(link_role_str and link_role_str.isdigit())
+    if not has_managed_roles:
         return stats
+
+    relevant_roles = set(all_managed_roles)
+    if link_role_str and link_role_str.isdigit():
+        relevant_roles.add(int(link_role_str))
 
     if target_guild_id:
         target_guilds = [target_guild_id]
@@ -227,7 +330,7 @@ async def execute_membership_sync(
         target_guilds = []
         for g_id in app.cache.get_guilds_view():
             roles_view = app.cache.get_roles_view_for_guild(g_id)
-            if roles_view and not any(r in roles_view for r in all_managed_roles):
+            if roles_view and not any(r in roles_view for r in relevant_roles):
                 continue
             target_guilds.append(g_id)
 
@@ -258,6 +361,9 @@ async def execute_membership_sync(
 
         for sr in special_roles:
             roles_to_have.append(int(sr))
+
+        if link_role_str and link_role_str.isdigit():
+            roles_to_have.append(int(link_role_str))
 
         for guild_id in target_guilds:
             try:
@@ -541,12 +647,6 @@ async def check_expired_bans():
                                     await member.remove_role(role_id, reason="Ban Expirado")
                                     logger.info(f"[Bans] Rol quitado a {discord_id}")
                             
-                            unset_role_str = configs.get("BAN_UNSET_ROLE_ID")
-                            if unset_role_str and unset_role_str.isdigit():
-                                unset_rid = int(unset_role_str)
-                                if unset_rid not in member.role_ids:
-                                    await member.add_role(unset_rid, reason="Ban Expirado: rol restituido")
-                                    logger.info(f"[Bans] Rol de desbaneo restituido a {discord_id}")
                         except Exception as e:
                             logger.error(f"[Bans] Error actualizando rol a {discord_id} en guild {guild_id}: {e}")
                 except Exception as e:
@@ -582,8 +682,6 @@ async def sync_ban_roles():
             return
             
         perm_role_id = int(perm_role_id_str)
-        unset_role_str = configs.get("BAN_UNSET_ROLE_ID")
-        unset_role_id = int(unset_role_str) if unset_role_str and unset_role_str.isdigit() else None
             
         # Obtener jugadores vinculados
         res = await plugin.model.api.get_paginated_players(page=1, limit=1000, linked="linked")
@@ -623,9 +721,6 @@ async def sync_ban_roles():
                             if target_role not in member.role_ids:
                                 await member.add_role(target_role, reason="Ban sincronizado desde RCON/DB")
                                 logger.info(f"[Bans] Rol permanente asignado a {discord_id} por sync.")
-                            if unset_role_id and unset_role_id in member.role_ids:
-                                await member.remove_role(unset_role_id, reason="Ban sincronizado: rol revocado")
-                                logger.info(f"[Bans] Rol unset_ban revocado a {discord_id} por sync.")
                     except Exception as e:
                         pass
     except Exception as e:

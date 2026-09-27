@@ -55,4 +55,4 @@ async def test_auth_page_service_fetch_discord_profile():
         res = await AuthPageService.fetch_discord_profile("12345", "mock_bot_token")
         assert res["username"] == "Mateo Global"
         assert res["tag"] == "@mateo"
-        assert "abcdef123456.png" in res["avatar_url"]
+        assert res["avatar_url"] is not None and "abcdef123456.png" in res["avatar_url"]

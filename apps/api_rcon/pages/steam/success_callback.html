@@ -192,13 +192,13 @@
       width: min(620px, calc(100vw - 32px));
       padding: 36px 36px 32px;
       border: 1px solid var(--panel-border);
-      border-top: 2px solid var(--brand-gold);
+      border-top: 2.5px solid var(--green);
       border-radius: 20px;
       background: var(--panel);
-      box-shadow: var(--shadow), 0 0 40px rgba(0, 0, 0, 0.5);
+      box-shadow: var(--shadow), 0 0 45px rgba(74, 222, 128, 0.08);
       backdrop-filter: blur(12px);
       position: relative;
-      animation: cardAppear 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      animation: cardAppear 0.45s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     @keyframes cardAppear {
@@ -220,7 +220,7 @@
       border-radius: 22px;
       background: var(--steam-grad);
       border: 1.5px solid rgba(255, 255, 255, 0.12);
-      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.6), 0 0 24px rgba(74, 222, 128, 0.18);
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.6), 0 0 28px rgba(74, 222, 128, 0.22);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -235,8 +235,8 @@
 
     .check-pill {
       position: absolute;
-      width: 30px;
-      height: 30px;
+      width: 32px;
+      height: 32px;
       right: -7px;
       bottom: -7px;
       border-radius: 50%;
@@ -245,10 +245,50 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: 900;
-      font-size: 17px;
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5), 0 0 16px rgba(74, 222, 128, 0.5);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5), 0 0 20px rgba(74, 222, 128, 0.6);
       border: 2.5px solid #0f131a;
+      animation: popCheck 0.55s cubic-bezier(0.175, 0.885, 0.32, 1.275) 0.15s both, haloPulse 2.8s ease-in-out infinite 0.7s;
+    }
+
+    @keyframes popCheck {
+      0% {
+        transform: scale(0);
+        opacity: 0;
+      }
+      65% {
+        transform: scale(1.18);
+        opacity: 1;
+      }
+      100% {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
+    @keyframes haloPulse {
+      0%, 100% {
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5), 0 0 16px rgba(74, 222, 128, 0.4);
+      }
+      50% {
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5), 0 0 28px rgba(74, 222, 128, 0.75);
+      }
+    }
+
+    .check-svg {
+      width: 19px;
+      height: 19px;
+    }
+
+    .check-path {
+      stroke-dasharray: 26;
+      stroke-dashoffset: 26;
+      animation: drawCheck 0.45s ease-out 0.4s forwards;
+    }
+
+    @keyframes drawCheck {
+      to {
+        stroke-dashoffset: 0;
+      }
     }
 
     h1 {
@@ -476,59 +516,168 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 4px;
+      gap: 5px;
     }
 
     .connector-icon {
       width: 38px;
       height: 38px;
       border-radius: 50%;
-      background: rgba(240, 184, 0, 0.12);
-      border: 1px solid rgba(240, 184, 0, 0.3);
-      color: var(--brand-gold);
+      background: rgba(34, 197, 94, 0.12);
+      border: 1.5px solid rgba(74, 222, 128, 0.35);
+      color: var(--green);
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 0 16px var(--brand-gold-glow);
+      box-shadow: 0 0 16px rgba(74, 222, 128, 0.2);
+      animation: connectorPulse 2.8s ease-in-out infinite;
+    }
+
+    @keyframes connectorPulse {
+      0%, 100% {
+        box-shadow: 0 0 12px rgba(74, 222, 128, 0.2);
+        border-color: rgba(74, 222, 128, 0.35);
+      }
+      50% {
+        box-shadow: 0 0 24px rgba(74, 222, 128, 0.55);
+        border-color: rgba(74, 222, 128, 0.7);
+      }
     }
 
     .connector-pill {
       font-family: Rajdhani, sans-serif;
-      font-size: 9px;
+      font-size: 10px;
       font-weight: 800;
-      letter-spacing: .12em;
-      color: var(--brand-gold);
+      letter-spacing: .14em;
+      color: var(--green);
+      background: rgba(34, 197, 94, 0.12);
+      border: 1px solid rgba(74, 222, 128, 0.28);
+      padding: 1px 7px;
+      border-radius: 10px;
+    }
+
+    .account-label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .verified-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #4ade80;
+      background: rgba(34, 197, 94, 0.1);
+      border: 1px solid rgba(74, 222, 128, 0.25);
+      padding: 1px 6px;
+      border-radius: 10px;
+    }
+
+    .verified-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #4ade80;
+      box-shadow: 0 0 8px #4ade80;
+      animation: dotPulse 2s ease-in-out infinite;
+    }
+
+    @keyframes dotPulse {
+      0%, 100% {
+        opacity: 0.7;
+        transform: scale(0.9);
+      }
+      50% {
+        opacity: 1;
+        transform: scale(1.15);
+      }
     }
 
     /* Status banner */
     .status-banner {
-      padding: 10px 16px;
-      border-radius: 10px;
-      background: var(--green-bg);
-      border: 1px solid var(--green-border);
-      color: var(--green);
-      font-size: 13px;
-      font-weight: 600;
+      padding: 12px 18px;
+      border-radius: 12px;
+      background: rgba(34, 197, 94, 0.08);
+      border: 1px solid rgba(74, 222, 128, 0.28);
+      color: #e2e8f0;
       display: flex;
       align-items: center;
-      justify-content: center;
-      gap: 10px;
-      margin-bottom: 20px;
-      box-shadow: inset 0 0 20px rgba(74, 222, 128, 0.05);
+      gap: 12px;
+      margin-bottom: 22px;
+      box-shadow: 0 4px 20px rgba(34, 197, 94, 0.06), inset 0 0 20px rgba(74, 222, 128, 0.04);
+      animation: bannerSlide 0.5s ease-out 0.25s both;
+    }
+
+    @keyframes bannerSlide {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     .status-icon {
-      width: 20px;
-      height: 20px;
+      width: 26px;
+      height: 26px;
       border-radius: 50%;
       background: var(--green);
       color: #052e16;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: 900;
-      font-size: 13px;
       flex-shrink: 0;
+      box-shadow: 0 0 12px rgba(74, 222, 128, 0.45);
+      animation: iconSoftPulse 2.8s ease-in-out infinite;
+    }
+
+    @keyframes iconSoftPulse {
+      0%, 100% {
+        transform: scale(1);
+        box-shadow: 0 0 10px rgba(74, 222, 128, 0.4);
+      }
+      50% {
+        transform: scale(1.08);
+        box-shadow: 0 0 18px rgba(74, 222, 128, 0.7);
+      }
+    }
+
+    .status-check-svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .status-check-path {
+      stroke-dasharray: 24;
+      stroke-dashoffset: 24;
+      animation: drawCheck 0.4s ease-out 0.5s forwards;
+    }
+
+    .status-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      text-align: left;
+    }
+
+    .status-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #4ade80;
+      letter-spacing: .01em;
+    }
+
+    .status-desc {
+      font-size: 12px;
+      color: #94a3af;
+      line-height: 1.4;
     }
 
     .note {
@@ -717,7 +866,11 @@
     <section class="card" aria-labelledby="success-title">
       <div class="success-icon-badge" aria-hidden="true">
         <img src="/static/images/steam_icon_black.png" alt="Steam" class="steam-badge-img" />
-        <span class="check-pill">✓</span>
+        <div class="check-pill" title="Vinculación verificada">
+          <svg class="check-svg" viewBox="0 0 24 24" fill="none">
+            <path class="check-path" d="M4.5 12.5L9.5 17.5L19.5 7.5" stroke="#052e16" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
       </div>
 
       <h1 id="success-title">¡Bienvenido, {{STEAM_NAME}}!</h1>
@@ -739,7 +892,10 @@
             </div>
           </div>
           <div class="account-info">
-            <span class="account-label">Discord</span>
+            <div class="account-label-row">
+              <span class="account-label">Discord</span>
+              <span class="verified-badge"><span class="verified-dot"></span>Verificado</span>
+            </div>
             <strong class="account-name" id="discordName">{{DISCORD_NAME}}</strong>
             <span class="account-sub" id="discordTag">{{DISCORD_TAG}}</span>
             <span class="account-id-text" id="discordId">ID: {{DISCORD_ID}}</span>
@@ -753,7 +909,7 @@
               <path d="M5 12h14M12 5l7 7-7 7"/>
             </svg>
           </div>
-          <span class="connector-pill">LINKED</span>
+          <span class="connector-pill">VINCULADOS</span>
         </div>
 
         <!-- Steam Account -->
@@ -765,7 +921,10 @@
             </div>
           </div>
           <div class="account-info">
-            <span class="account-label">Steam</span>
+            <div class="account-label-row">
+              <span class="account-label">Steam</span>
+              <span class="verified-badge"><span class="verified-dot"></span>Conectado</span>
+            </div>
             <strong class="account-name" id="steamName">{{STEAM_NAME}}</strong>
             <div class="steam-id-chip" id="copySteamBtn" title="Clic para copiar Steam ID 64" onclick="copySteamId()">
               <span class="chip-label">ID:</span>
@@ -783,8 +942,15 @@
       </div>
 
       <div class="status-banner">
-        <span class="status-icon">✓</span>
-        <span>Cuentas vinculadas correctamente en la base de datos</span>
+        <div class="status-icon">
+          <svg class="status-check-svg" viewBox="0 0 24 24" fill="none">
+            <path class="status-check-path" d="M4.5 12.5L9.5 17.5L19.5 7.5" stroke="#052e16" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="status-text">
+          <strong class="status-title">Vinculación protegida y autenticada</strong>
+          <span class="status-desc">Cuentas sincronizadas exitosamente en la base de datos de MATEFIELD</span>
+        </div>
       </div>
 
       <div class="note">

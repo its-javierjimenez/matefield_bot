@@ -56,7 +56,8 @@ class DbLeaderboard:
         for i, entry in enumerate(leaderboard, 1):
             steam_id = entry['steam_id']
             discord_id = entry.get("discord_id")
-            steam_name = steam_names.get(steam_id, {}).get("name", f"SteamID: {steam_id}")
+            s_data = steam_names.get(steam_id, {})
+            steam_name = s_data.get("personaname") or s_data.get("name") or f"SteamID: {steam_id}"
             
             player_mention = f"<@{discord_id}>" if discord_id else steam_name
             description += f"**{i}.** {player_mention} - **{entry['total']}**\n"
@@ -95,7 +96,8 @@ class DbPlayers:
                 link_emoji = "🔗" if p.get('discord_id') else "❌"
                 discord_str = f"<@{p['discord_id']}>" if p.get('discord_id') else "No Vinculado"
                 name = p.get('name', 'Unknown')
-                vip_str = f" | **VIP:** {p.get('vip_type')}" if p.get('vip_type') else ""
+                vip_memberships = p.get('active_memberships') or ([p.get('vip_type')] if p.get('vip_type') else [])
+                vip_str = f" | **VIP:** {', '.join(vip_memberships)}" if vip_memberships else ""
                 sp_str = f" | **Especial:** {p.get('special_role')}" if p.get('special_role') else ""
                 
                 embed.add_field(
@@ -344,13 +346,52 @@ class DbStatus:
 
 
 
+async def autocomplete_special_roles(
+    ctx: crescent.AutocompleteContext, option: hikari.AutocompleteInteractionOption
+) -> list[tuple[str, str]]:
+    """Autocompleta únicamente roles registrados bajo la categoría SPECIAL en la DB."""
+    val = str(option.value or "").strip().lower()
+    try:
+        roles = await plugin.model.api.get_all_roles()
+        special_roles = [r for r in roles if str(r.get("role_type", "")).upper() == "SPECIAL"]
+        results = []
+        for r in special_roles:
+            code = r.get("code", "")
+            name = r.get("name", code)
+            label = f"{name} ({code})"[:100]
+            if not val or val in code.lower() or val in name.lower():
+                results.append((label, code))
+        return results[:25]
+    except Exception:
+        return []
+
+async def autocomplete_all_db_roles(
+    ctx: crescent.AutocompleteContext, option: hikari.AutocompleteInteractionOption
+) -> list[tuple[str, str]]:
+    """Autocompleta cualquier rol registrado en la Base de Datos (DDD)."""
+    val = str(option.value or "").strip().lower()
+    try:
+        roles = await plugin.model.api.get_all_roles()
+        results = []
+        for r in roles:
+            code = r.get("code", "")
+            name = r.get("name", code)
+            rtype = r.get("role_type", "")
+            label = f"{name} ({code}) [{rtype}]"[:100]
+            if not val or val in code.lower() or val in name.lower() or val in rtype.lower():
+                results.append((label, code))
+        return results[:25]
+    except Exception:
+        return []
+
+
 @plugin.include
 @crescent.hook(admin_only)
 @special_role_group.child
-@crescent.command(name="add", description="Añade un rol especial permanente a un jugador")
+@crescent.command(name="add", description="Añade un rol de tipo SPECIAL registrado en la DB a un jugador")
 class DbAddSpecialRole:
     usuario = crescent.option(hikari.User, "Usuario de Discord") 
-    rol_especial = crescent.option(hikari.Role, "Rol especial a asignar") 
+    rol_especial = crescent.option(str, "Rol de tipo SPECIAL registrado en la DB", autocomplete=autocomplete_special_roles) 
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
@@ -360,18 +401,36 @@ class DbAddSpecialRole:
                 await ctx.respond(f"❌ El usuario {self.usuario.mention} no está vinculado.")
                 return
             steam_id = player_info.get("steam_id")
-            await plugin.model.api.add_special_role(str(steam_id), str(self.rol_especial.id))
-            await ctx.respond(f"✅ Rol especial <@&{self.rol_especial.id}> añadido al jugador {self.usuario.mention} (`{steam_id}`).")
+
+            roles = await plugin.model.api.get_all_roles()
+            role_obj = next((r for r in roles if r.get("code", "").upper() == self.rol_especial.strip().upper()), None)
+            if not role_obj or str(role_obj.get("role_type", "")).upper() != "SPECIAL":
+                await ctx.respond("❌ Debes seleccionar un rol registrado con categoría `SPECIAL` en la DB. Para otros roles usa `/roles give` o `/player set_role`.")
+                return
+
+            role_code = str(role_obj["code"])
+            await plugin.model.api.add_special_role(str(steam_id), role_code)
+
+            discord_msg = ""
+            if role_obj.get("discord_role_id") and ctx.guild_id:
+                try:
+                    target_role_id = int(role_obj["discord_role_id"])
+                    await ctx.app.rest.add_role_to_member(ctx.guild_id, self.usuario.id, target_role_id)
+                    discord_msg = f" y rol de Discord <@&{target_role_id}> otorgado"
+                except Exception as d_err:
+                    discord_msg = f" (nota: no se pudo asignar rol en Discord inmediatamente: {d_err})"
+
+            await ctx.respond(f"✅ Rol especial `{role_obj['name']}` (`{role_code}`) añadido al jugador {self.usuario.mention} (`{steam_id}`){discord_msg}.")
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
 
 @plugin.include
 @crescent.hook(admin_only)
 @special_role_group.child
-@crescent.command(name="remove", description="Remueve un rol especial permanente de un jugador")
+@crescent.command(name="remove", description="Remueve un rol de tipo SPECIAL de un jugador vinculado")
 class DbRemoveSpecialRole:
     usuario = crescent.option(hikari.User, "Usuario de Discord") 
-    rol_especial = crescent.option(hikari.Role, "Rol especial a remover") 
+    rol_especial = crescent.option(str, "Rol de tipo SPECIAL registrado en la DB", autocomplete=autocomplete_special_roles) 
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
@@ -381,10 +440,97 @@ class DbRemoveSpecialRole:
                 await ctx.respond(f"❌ El usuario {self.usuario.mention} no está vinculado.")
                 return
             steam_id = player_info.get("steam_id")
-            await plugin.model.api.remove_special_role(str(steam_id), str(self.rol_especial.id))
-            await ctx.respond(f"✅ Rol especial <@&{self.rol_especial.id}> removido del jugador {self.usuario.mention} (`{steam_id}`).")
+
+            roles = await plugin.model.api.get_all_roles()
+            role_obj = next((r for r in roles if r.get("code", "").upper() == self.rol_especial.strip().upper()), None)
+            role_code = str(role_obj["code"]) if (role_obj and "code" in role_obj) else self.rol_especial.strip().upper()
+
+            await plugin.model.api.remove_special_role(str(steam_id), role_code)
+
+            discord_msg = ""
+            if role_obj and role_obj.get("discord_role_id") and ctx.guild_id:
+                try:
+                    target_role_id = int(role_obj["discord_role_id"])
+                    await ctx.app.rest.remove_role_from_member(ctx.guild_id, self.usuario.id, target_role_id)
+                    discord_msg = f" y rol de Discord <@&{target_role_id}> removido"
+                except Exception as d_err:
+                    discord_msg = f" (nota: no se pudo remover rol en Discord inmediatamente: {d_err})"
+
+            await ctx.respond(f"✅ Rol especial `{role_code}` removido del jugador {self.usuario.mention} (`{steam_id}`){discord_msg}.")
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
+
+@plugin.include
+@crescent.hook(admin_only)
+@player_group.child
+@crescent.command(name="set_role", description="Asigna un rol registrado en la Base de Datos a un jugador vinculado")
+class PlayerSetRole:
+    usuario = crescent.option(hikari.User, "Usuario de Discord (jugador vinculado)")
+    rol = crescent.option(str, "Rol registrado en la DB a asignar", autocomplete=autocomplete_all_db_roles)
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer()
+        try:
+            player_info = await plugin.model.api.get_player_by_discord(str(self.usuario.id))
+            if not player_info:
+                await ctx.respond(f"❌ El usuario {self.usuario.mention} no está vinculado.")
+                return
+            steam_id = player_info.get("steam_id")
+
+            roles = await plugin.model.api.get_all_roles()
+            role_obj = next((r for r in roles if r.get("code", "").upper() == self.rol.strip().upper()), None)
+            role_code = str(role_obj["code"]) if (role_obj and "code" in role_obj) else self.rol.strip().upper()
+
+            await plugin.model.api.add_special_role(str(steam_id), role_code)
+
+            discord_msg = ""
+            if role_obj and role_obj.get("discord_role_id") and ctx.guild_id:
+                try:
+                    target_role_id = int(role_obj["discord_role_id"])
+                    await ctx.app.rest.add_role_to_member(ctx.guild_id, self.usuario.id, target_role_id)
+                    discord_msg = f" y rol de Discord <@&{target_role_id}> otorgado"
+                except Exception as d_err:
+                    discord_msg = f" (nota: no se pudo asignar rol en Discord inmediatamente: {d_err})"
+
+            await ctx.respond(f"✅ Rol `{role_code}` asignado a {self.usuario.mention} (`{steam_id}`){discord_msg}.")
+        except Exception as e:
+            await ctx.respond(f"❌ Error al asignar rol: {e}")
+
+@plugin.include
+@crescent.hook(admin_only)
+@player_group.child
+@crescent.command(name="remove_role", description="Remueve un rol de la Base de Datos de un jugador vinculado")
+class PlayerRemoveRole:
+    usuario = crescent.option(hikari.User, "Usuario de Discord (jugador vinculado)")
+    rol = crescent.option(str, "Rol registrado en la DB a remover", autocomplete=autocomplete_all_db_roles)
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer()
+        try:
+            player_info = await plugin.model.api.get_player_by_discord(str(self.usuario.id))
+            if not player_info:
+                await ctx.respond(f"❌ El usuario {self.usuario.mention} no está vinculado.")
+                return
+            steam_id = player_info.get("steam_id")
+
+            roles = await plugin.model.api.get_all_roles()
+            role_obj = next((r for r in roles if r.get("code", "").upper() == self.rol.strip().upper()), None)
+            role_code = str(role_obj["code"]) if (role_obj and "code" in role_obj) else self.rol.strip().upper()
+
+            await plugin.model.api.remove_special_role(str(steam_id), role_code)
+
+            discord_msg = ""
+            if role_obj and role_obj.get("discord_role_id") and ctx.guild_id:
+                try:
+                    target_role_id = int(role_obj["discord_role_id"])
+                    await ctx.app.rest.remove_role_from_member(ctx.guild_id, self.usuario.id, target_role_id)
+                    discord_msg = f" y rol de Discord <@&{target_role_id}> removido"
+                except Exception as d_err:
+                    discord_msg = f" (nota: no se pudo remover rol en Discord inmediatamente: {d_err})"
+
+            await ctx.respond(f"✅ Rol `{role_code}` removido de {self.usuario.mention} (`{steam_id}`){discord_msg}.")
+        except Exception as e:
+            await ctx.respond(f"❌ Error al remover rol: {e}")
 
 @plugin.include
 @crescent.hook(admin_only)

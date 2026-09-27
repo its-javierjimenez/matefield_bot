@@ -15,6 +15,13 @@ from wardogs_schemas.steam_token import create_steam_link_token
 def _build_user_steam_link(user: hikari.User, guild_id: Optional[hikari.Snowflake] = None) -> str:
     secret_key = plugin.model.api.api_key
     disc_tag = f"#{user.discriminator}" if user.discriminator and user.discriminator != "0" else f"@{user.username}"
+    if not guild_id:
+        try:
+            guilds = list(plugin.app.cache.get_guilds_view())
+            if guilds:
+                guild_id = guilds[0]
+        except Exception:
+            pass
     token = create_steam_link_token(
         discord_id=str(user.id),
         secret_key=secret_key,
@@ -78,6 +85,14 @@ class LinkAccount:
             
             link_msg = ""
             guild_id = ctx.guild_id
+            if not guild_id:
+                try:
+                    guilds = list(plugin.app.cache.get_guilds_view())
+                    if guilds:
+                        guild_id = guilds[0]
+                except Exception:
+                    pass
+
             if guild_id:
                 try:
                     try:
@@ -94,16 +109,11 @@ class LinkAccount:
                             if ban_role_id and ban_role_id.isdigit() and int(ban_role_id) not in member.role_ids:
                                 await member.add_role(int(ban_role_id), reason="Baneo activo detectado al vincular cuenta")
                                 link_msg += f"\n🔒 Rol de sanción <@&{ban_role_id}> asignado automáticamente."
-                                
-                            unset_role_id = await plugin.model.api.get_bot_config("BAN_UNSET_ROLE_ID")
-                            if unset_role_id and unset_role_id.isdigit() and int(unset_role_id) in member.role_ids:
-                                await member.remove_role(int(unset_role_id), reason="Baneo activo: rol revocado al vincular")
-                                link_msg += f"\n🔓 Rol <@&{unset_role_id}> removido."
                         else:
                             link_role_id = await plugin.model.api.get_bot_config("LINK_ROLE_ID")
                             if link_role_id and link_role_id.isdigit() and int(link_role_id) not in member.role_ids:
                                 await member.add_role(int(link_role_id), reason="Rol asignado por vincular cuenta (/player link)")
-                                link_msg = f"\n🔗 Rol <@&{link_role_id}> asignado automáticamente."
+                                link_msg += f"\n🔗 Rol verificado <@&{link_role_id}> asignado automáticamente."
                 except Exception as ex:
                     logger.warning(f"No se pudieron actualizar los roles al vincular {target_id}: {ex}")
             
@@ -223,6 +233,13 @@ class UnlinkAccount:
         try:
             # Remove managed roles first to prevent role leak (Bug 6)
             guild_id = ctx.guild_id
+            if not guild_id:
+                try:
+                    guilds = list(plugin.app.cache.get_guilds_view())
+                    if guilds:
+                        guild_id = guilds[0]
+                except Exception:
+                    pass
             if guild_id:
                 try:
                     res = await plugin.model.api.sync_memberships()

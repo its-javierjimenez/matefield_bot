@@ -6,7 +6,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.main import app
-from src.connections.databases.db import Player
+from src.connections.databases.db import Player, BotConfig, Ban
 from wardogs_schemas.steam_token import create_steam_link_token, verify_steam_link_token
 
 @pytest.mark.asyncio
@@ -143,4 +143,107 @@ async def test_steam_callback_with_discord_metadata_and_static_files(client: Asy
             img_resp = await client.get(f"/static/images/{img}")
             assert img_resp.status_code == 200
             assert len(img_resp.content) > 0
+
+
+@pytest.mark.asyncio
+async def test_steam_callback_immediate_role_grant(client: AsyncClient, session: AsyncSession, monkeypatch):
+    secret = "secret_key"
+    discord_id = "1122334455"
+    steam_id = "76561198000000777"
+    
+    # Configurar LINK_ROLE_ID y GUILD_ID en base de datos
+    session.add(BotConfig(config_key="LINK_ROLE_ID", config_value="998877"))
+    session.add(BotConfig(config_key="GUILD_ID", config_value="554433"))
+    await session.commit()
+
+    monkeypatch.setenv("DISCORD_TOKEN", "mock_discord_token")
+
+    # Token sin guild_id explícito para comprobar fallback a BotConfig
+    token = create_steam_link_token(discord_id=discord_id, secret_key=secret, expires_in=600)
+
+    mock_post_resp = MagicMock()
+    mock_post_resp.text = "ns:http://specs.openid.net/auth/2.0\nis_valid:true\n"
+
+    mock_put_resp = MagicMock()
+    mock_put_resp.status_code = 204
+    mock_put = AsyncMock(return_value=mock_put_resp)
+
+    mock_steam_summary = {
+        "personaname": "VerifiedUser",
+        "avatarfull": "https://steamcdn.test/verified.jpg"
+    }
+
+    with patch("src.config.ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY", secret), \
+         patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_post_resp)), \
+         patch("httpx.AsyncClient.put", new=mock_put), \
+         patch("src.modules.v1.routers.auth.get_player_summary", new=AsyncMock(return_value=mock_steam_summary)):
+
+        params = {
+            "token": token,
+            "openid.mode": "id_res",
+            "openid.claimed_id": f"https://steamcommunity.com/openid/id/{steam_id}",
+            "openid.identity": f"https://steamcommunity.com/openid/id/{steam_id}",
+            "openid.sig": "validsig123"
+        }
+        resp = await client.get("/api/v1/auth/steam/callback", params=params)
+        assert resp.status_code == 200
+
+        # Verificar que se llamó a la API de Discord para otorgar el rol de link inmediatamente
+        expected_url = f"https://discord.com/api/v10/guilds/554433/members/{discord_id}/roles/998877"
+        mock_put.assert_called_once()
+        assert mock_put.call_args[0][0] == expected_url
+        assert "Authorization" in mock_put.call_args[1]["headers"]
+        assert mock_put.call_args[1]["headers"]["Authorization"] == "Bot mock_discord_token"
+
+
+@pytest.mark.asyncio
+async def test_steam_callback_immediate_ban_role_grant_when_banned(client: AsyncClient, session: AsyncSession, monkeypatch):
+    secret = "secret_key"
+    discord_id = "2233445566"
+    steam_id = "76561198000000666"
+
+    # Configurar roles y registrar baneo activo para este steam_id
+    session.add(BotConfig(config_key="LINK_ROLE_ID", config_value="998877"))
+    session.add(BotConfig(config_key="BAN_ROLE_DEFAULT", config_value="666999"))
+    session.add(BotConfig(config_key="GUILD_ID", config_value="554433"))
+    session.add(Ban(steam_id=steam_id, reason="Cheating", is_active=True))
+    await session.commit()
+
+    monkeypatch.setenv("DISCORD_TOKEN", "mock_discord_token")
+
+    token = create_steam_link_token(discord_id=discord_id, secret_key=secret, expires_in=600)
+
+    mock_post_resp = MagicMock()
+    mock_post_resp.text = "ns:http://specs.openid.net/auth/2.0\nis_valid:true\n"
+
+    mock_put_resp = MagicMock()
+    mock_put_resp.status_code = 204
+    mock_put = AsyncMock(return_value=mock_put_resp)
+
+    mock_steam_summary = {
+        "personaname": "BannedUser",
+        "avatarfull": "https://steamcdn.test/banned.jpg"
+    }
+
+    with patch("src.config.ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY", secret), \
+         patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_post_resp)), \
+         patch("httpx.AsyncClient.put", new=mock_put), \
+         patch("src.modules.v1.routers.auth.get_player_summary", new=AsyncMock(return_value=mock_steam_summary)):
+
+        params = {
+            "token": token,
+            "openid.mode": "id_res",
+            "openid.claimed_id": f"https://steamcommunity.com/openid/id/{steam_id}",
+            "openid.identity": f"https://steamcommunity.com/openid/id/{steam_id}",
+            "openid.sig": "validsig123"
+        }
+        resp = await client.get("/api/v1/auth/steam/callback", params=params)
+        assert resp.status_code == 200
+
+        # Verificar que se otorgó el rol de baneo en vez del rol verificado
+        expected_url = f"https://discord.com/api/v10/guilds/554433/members/{discord_id}/roles/666999"
+        mock_put.assert_called_once()
+        assert mock_put.call_args[0][0] == expected_url
+
+
 

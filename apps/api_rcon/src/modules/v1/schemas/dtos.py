@@ -24,6 +24,14 @@ from wardogs_schemas.dtos import (
     RconServerSyncResultItem,
     RconServersSyncAllResponse,
     ExportMembershipsResponse,
+    CreateRewardItemRequest,
+    ClaimRewardRequest,
+    DeliverClaimRequest,
+    RefundClaimRequest,
+    GiveRewardPointsRequest,
+    RewardItemResponse,
+    RewardClaimResponse,
+    PlayerRewardBalanceResponse,
 )
 
 __all__ = [
@@ -51,4 +59,12 @@ __all__ = [
     "RconServerSyncResultItem",
     "RconServersSyncAllResponse",
     "ExportMembershipsResponse",
+    "CreateRewardItemRequest",
+    "ClaimRewardRequest",
+    "DeliverClaimRequest",
+    "RefundClaimRequest",
+    "GiveRewardPointsRequest",
+    "RewardItemResponse",
+    "RewardClaimResponse",
+    "PlayerRewardBalanceResponse",
 ]

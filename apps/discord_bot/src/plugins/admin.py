@@ -44,7 +44,8 @@ class ReservedSlotsList:
                 discord_id = int(db_player_info.get("discord_id"))
                 
                 # Check cache primero (0 costo)
-                cached_user = plugin.app.cache.get_user(discord_id)
+                bot_app = getattr(ctx, "app", None) or plugin.app
+                cached_user = bot_app.cache.get_user(discord_id) if (bot_app and bot_app.cache) else None
                 if cached_user:
                     return cached_user.username
                     
@@ -438,16 +439,7 @@ class BanPlayer:
                 else:
                     await member.add_role(int(ban_role_id), reason=f"Baneo Discord: {self.reason} ({dur_str})")
                     msg = f"🔒 Rol de baneo <@&{ban_role_id}> asignado a <@{target_discord_id}>{steam_info} {dur_str}.\n📝 Razón: {self.reason}"
-
-                # Switch de rol: Quitar rol configurado con /role unset_ban
-                unset_role_id = await plugin.model.api.get_bot_config("BAN_UNSET_ROLE_ID")
-                if unset_role_id and unset_role_id.isdigit() and int(unset_role_id) in member.role_ids:
-                    try:
-                        await member.remove_role(int(unset_role_id), reason=f"Baneo Discord: rol revocado ({dur_str})")
-                        msg += f"\n🔓 Rol <@&{unset_role_id}> removido."
-                    except Exception as ex:
-                        msg += f"\n⚠️ No se pudo remover el rol de desbaneo <@&{unset_role_id}>: {ex}"
-
+                # Discord ban message
                 msg += "\nℹ️ Sanción aplicada únicamente en Discord (no se sincronizó con RCON)."
                 await ctx.respond(msg)
                 return
@@ -479,12 +471,6 @@ class BanPlayer:
                         if ban_role_id and ban_role_id.isdigit() and int(ban_role_id) not in member.role_ids:
                             await member.add_role(int(ban_role_id), reason=f"Baneado {dur_str}")
                             msg += f"\n🔒 Rol <@&{ban_role_id}> asignado a <@{target_discord_id}>."
-                        
-                        # Switch: remover unset_ban rol
-                        unset_role_id = await plugin.model.api.get_bot_config("BAN_UNSET_ROLE_ID")
-                        if unset_role_id and unset_role_id.isdigit() and int(unset_role_id) in member.role_ids:
-                            await member.remove_role(int(unset_role_id), reason=f"Baneado: rol revocado ({dur_str})")
-                            msg += f"\n🔓 Rol <@&{unset_role_id}> removido."
                 except Exception as ex:
                     msg += f"\n⚠️ No se pudieron actualizar los roles en Discord: {ex}"
             
@@ -544,14 +530,6 @@ async def _handle_unban_callback(
                                 removed += 1
                         if removed > 0:
                             msg += f"\n🔓 Se quitaron {removed} rol(es) de ban a <@{target_discord_id}>."
-                    
-                    # Switch: Devolver rol configurado con /role unset_ban
-                    unset_role_id = configs.get("BAN_UNSET_ROLE_ID")
-                    if unset_role_id and unset_role_id.isdigit():
-                        u_rid = int(unset_role_id)
-                        if u_rid not in member.role_ids:
-                            await member.add_role(u_rid, reason="Desbaneado: rol restituido")
-                            msg += f"\n🔒 Rol <@&{u_rid}> restituido a <@{target_discord_id}>."
                 else:
                     msg += f"\n⚠️ No se encontró al usuario <@{target_discord_id}> en el servidor para actualizar sus roles."
             except Exception as ex:
@@ -628,7 +606,8 @@ class BanList:
                 if not db_player_info or not db_player_info.get("discord_id"):
                     return "Desconocido"
                 discord_id = int(db_player_info.get("discord_id"))
-                cached_user = plugin.app.cache.get_user(discord_id)
+                bot_app = getattr(ctx, "app", None) or plugin.app
+                cached_user = bot_app.cache.get_user(discord_id) if (bot_app and bot_app.cache) else None
                 if cached_user:
                     return cached_user.username
                 try:

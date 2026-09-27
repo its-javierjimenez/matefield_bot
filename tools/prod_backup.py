@@ -11,9 +11,9 @@ def make_prod_backup():
         raise ValueError("DATABASE_URL not found in .env.prod")
         
     parsed = urllib.parse.urlparse(db_url)
-    user = parsed.username
+    user = parsed.username or "postgres"
     password = urllib.parse.unquote(parsed.password) if parsed.password else ""
-    host = parsed.hostname
+    host = parsed.hostname or "localhost"
     port = parsed.port or 5432
     db_name = parsed.path.lstrip("/")
 
@@ -33,10 +33,11 @@ def make_prod_backup():
         "-d", db_name
     ]
     
-    with open(out_file, "w", encoding="utf-8") as f:
-        res = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, text=True)
+    with open(out_file, "wb") as f:
+        res = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, text=False)
         if res.returncode != 0:
-            print("pg_dump ERROR:", res.stderr)
+            err_msg = res.stderr.decode("utf-8", errors="replace") if res.stderr else "Unknown error"
+            print("pg_dump ERROR:", err_msg)
             raise RuntimeError(f"pg_dump failed with return code {res.returncode}")
 
     size_mb = os.path.getsize(out_file) / (1024 * 1024)

@@ -9,7 +9,7 @@ from sqlmodel import select, func, or_, col
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.config import ENVIRONMENT_SETTINGS
-from src.connections.databases.db import Player, Membership, PaymentRecord, MembershipType
+from src.connections.databases.db import Player, Membership, PaymentRecord, MembershipType, PlayerRole
 from src.modules.v1.schemas.dtos import AddMembershipRequest
 from src.modules.v1.services.memberships_service import MembershipsService
 from src.modules.v1.services.membership_types_service import MembershipTypesService
@@ -579,15 +579,15 @@ class TebexWebhookService:
             membership.is_active = True
             if membership.role_granted_id:
                 vip_pr = (await session.exec(select(PlayerRole).where(
-                    PlayerRole.steam_id == membership.steam_id,
-                    PlayerRole.role_id == membership.role_granted_id
+                    col(PlayerRole.steam_id) == membership.steam_id,
+                    col(PlayerRole.role_id) == membership.role_granted_id
                 ))).first()
                 if not vip_pr:
                     session.add(PlayerRole(steam_id=membership.steam_id, role_id=membership.role_granted_id))
             if membership.special_role_id:
                 sp_pr = (await session.exec(select(PlayerRole).where(
-                    PlayerRole.steam_id == membership.steam_id,
-                    PlayerRole.role_id == membership.special_role_id
+                    col(PlayerRole.steam_id) == membership.steam_id,
+                    col(PlayerRole.role_id) == membership.special_role_id
                 ))).first()
                 if not sp_pr:
                     session.add(PlayerRole(steam_id=membership.steam_id, role_id=membership.special_role_id))

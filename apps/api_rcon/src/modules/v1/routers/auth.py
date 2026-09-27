@@ -1,6 +1,7 @@
 import os
 import re
 import urllib.parse
+import logging
 from typing import Optional
 import httpx
 from fastapi import APIRouter, Request, Depends, HTTPException
@@ -16,6 +17,7 @@ from src.modules.v1.services import PlayersService, AuthPageService
 from wardogs_schemas.steam_token import verify_steam_link_token
 
 router = APIRouter(prefix="/auth/steam", tags=["Auth"])
+logger = logging.getLogger("wardogs.auth")
 
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 
@@ -155,49 +157,60 @@ async def steam_callback(request: Request, token: str, session: AsyncSession = D
     except Exception:
         pass
 
-    # Asignar roles en Discord de forma inmediata si se dispone de DISCORD_TOKEN y guild_id
-    if DISCORD_TOKEN and guild_id:
+    # Resolver guild_id si no vino en el token (ej: link solicitado por DM)
+    if not guild_id:
+        cfg_guild = await session.get(BotConfig, "GUILD_ID")
+        if cfg_guild and cfg_guild.config_value:
+            guild_id = cfg_guild.config_value
+        elif os.environ.get("DISCORD_GUILD_ID"):
+            guild_id = os.environ.get("DISCORD_GUILD_ID")
+
+    # Asignar roles en Discord de forma inmediata si se dispone de token y guild
+    discord_token = os.environ.get("DISCORD_TOKEN") or DISCORD_TOKEN
+    if discord_token and guild_id:
         try:
             # Consultar si el Steam ID tiene bans activos
             active_ban = (await session.exec(
                 select(Ban).where(Ban.steam_id == steam_id, Ban.is_active == True)
             )).first()
 
-            cfg_link = (await session.get(BotConfig, "LINK_ROLE_ID"))
-            cfg_ban = (await session.get(BotConfig, "BAN_ROLE_DEFAULT"))
-            cfg_unset_ban = (await session.get(BotConfig, "BAN_UNSET_ROLE_ID"))
+            cfg_link = await session.get(BotConfig, "LINK_ROLE_ID")
+            cfg_ban = await session.get(BotConfig, "BAN_ROLE_DEFAULT")
 
-            async with httpx.AsyncClient(timeout=5.0) as discord_client:
-                headers = {"Authorization": f"Bot {DISCORD_TOKEN}"}
-                
-                if active_ban and cfg_ban and cfg_ban.config_value.isdigit():
-                    # Asignar rol de ban
-                    await discord_client.put(
-                        f"https://discord.com/api/v10/guilds/{guild_id}/members/{discord_id}/roles/{cfg_ban.config_value}",
-                        headers=headers
-                    )
-                    # Quitar rol de unset_ban si aplica
-                    if cfg_unset_ban and cfg_unset_ban.config_value.isdigit():
-                        await discord_client.delete(
-                            f"https://discord.com/api/v10/guilds/{guild_id}/members/{discord_id}/roles/{cfg_unset_ban.config_value}",
-                            headers=headers
+            target_role = None
+            reason = ""
+            if active_ban and cfg_ban and cfg_ban.config_value and cfg_ban.config_value.isdigit():
+                target_role = cfg_ban.config_value
+                reason = "Baneo activo detectado al vincular cuenta vía Steam"
+            elif cfg_link and cfg_link.config_value and cfg_link.config_value.isdigit():
+                target_role = cfg_link.config_value
+                reason = "Rol verificado asignado inmediatamente por vincular cuenta (/roles set_link)"
+
+            if target_role:
+                async with httpx.AsyncClient(timeout=5.0) as discord_client:
+                    headers = {
+                        "Authorization": f"Bot {discord_token}",
+                        "X-Audit-Log-Reason": urllib.parse.quote(reason),
+                    }
+                    role_url = f"https://discord.com/api/v10/guilds/{guild_id}/members/{discord_id}/roles/{target_role}"
+                    resp = await discord_client.put(role_url, headers=headers)
+                    if resp.status_code in (200, 204):
+                        logger.info(f"Rol {target_role} asignado exitosamente a Discord {discord_id} en guild {guild_id}")
+                    else:
+                        logger.warning(
+                            f"No se pudo asignar rol {target_role} a Discord {discord_id} en guild {guild_id}: "
+                            f"HTTP {resp.status_code} - {resp.text}"
                         )
-                elif cfg_link and cfg_link.config_value.isdigit():
-                    # Asignar rol verificado
-                    await discord_client.put(
-                        f"https://discord.com/api/v10/guilds/{guild_id}/members/{discord_id}/roles/{cfg_link.config_value}",
-                        headers=headers
-                    )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Error al asignar rol de Discord inmediatamente tras vinculación: {e}")
 
     # Obtener metadatos de Discord desde el payload o Discord REST API
     discord_username = payload.get("discord_username")
     discord_tag = payload.get("discord_tag")
     discord_avatar = payload.get("discord_avatar")
 
-    if DISCORD_TOKEN and (not discord_username or not discord_avatar):
-        dc_profile = await AuthPageService.fetch_discord_profile(discord_id_str, DISCORD_TOKEN)
+    if discord_token and (not discord_username or not discord_avatar):
+        dc_profile = await AuthPageService.fetch_discord_profile(discord_id_str, discord_token)
         if not discord_username:
             discord_username = dc_profile["username"]
         if not discord_tag:

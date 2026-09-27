@@ -517,6 +517,10 @@ class ForceSyncMemberships:
             if not bot_model:
                 bot_model = getattr(ctx, "model", None)
 
+            if not bot_app or not bot_model:
+                await ctx.respond("❌ El bot o el cliente API no están listos.")
+                return
+
             stats = await execute_membership_sync(bot_app, bot_model, target_guild_id=ctx.guild_id)
             if not stats.get("success"):
                 await ctx.respond(f"❌ Error en sincronización: {stats.get('error', 'Error desconocido')}")

@@ -34,7 +34,13 @@ class MembershipTypesService:
             .group_by(Membership.membership_type)
         )
         usage_rows = (await session.exec(usage_stmt)).all()
-        usage_map = {m_type.upper(): count for m_type, count in usage_rows}
+        usage_map: Dict[str, int] = {}
+        for m_type, count in usage_rows:
+            if m_type:
+                u = m_type.upper()
+                usage_map[u] = count
+                usage_map[u.replace(" ", "_")] = count
+                usage_map[u.replace("_", " ")] = count
 
         # Resolve server names
         server_ids = [t.server_id for t in types if t.server_id is not None]

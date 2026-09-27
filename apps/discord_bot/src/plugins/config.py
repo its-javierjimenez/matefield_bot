@@ -37,6 +37,26 @@ async def autocomplete_role_type(
     return results[:25]
 
 
+async def autocomplete_db_roles(
+    ctx: crescent.AutocompleteContext, option: hikari.AutocompleteInteractionOption
+) -> list[tuple[str, str]]:
+    """Autocompleta roles registrados en la Base de Datos (DDD)."""
+    val = str(option.value or "").strip().lower()
+    try:
+        roles = await plugin.model.api.get_all_roles()
+        results = []
+        for r in roles:
+            code = r.get("code", "")
+            name = r.get("name", code)
+            rtype = r.get("role_type", "")
+            label = f"{name} ({code}) [{rtype}]"[:100]
+            if not val or val in code.lower() or val in name.lower() or val in rtype.lower():
+                results.append((label, code))
+        return results[:25]
+    except Exception:
+        return []
+
+
 @plugin.include
 @crescent.hook(admin_only)
 @roles_group.child
@@ -79,7 +99,79 @@ class ListRoles:
                 msg += f"- `{r.get('code')}` ({r.get('role_type')}): {r.get('name')} -> <@&{r.get('discord_role_id')}>\n"
             await ctx.respond(msg)
         except Exception as e:
-            await ctx.respond(f"? Error al listar roles: {e}")
+            await ctx.respond(f"❌ Error al listar roles: {e}")
+
+@plugin.include
+@crescent.hook(admin_only)
+@roles_group.child
+@crescent.command(name="give", description="Asigna un rol registrado en la Base de Datos a un jugador vinculado")
+class GiveRole:
+    usuario = crescent.option(hikari.User, "Usuario de Discord a asignar el rol")
+    rol = crescent.option(str, "Rol registrado en la Base de Datos", autocomplete=autocomplete_db_roles)
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer(ephemeral=True)
+        try:
+            player_info = await plugin.model.api.get_player_by_discord(str(self.usuario.id))
+            if not player_info:
+                await ctx.respond(f"❌ El usuario {self.usuario.mention} no tiene cuenta vinculada.")
+                return
+            steam_id = player_info.get("steam_id")
+            
+            roles = await plugin.model.api.get_all_roles()
+            role_obj = next((r for r in roles if r.get("code", "").upper() == self.rol.strip().upper()), None)
+            role_code = str(role_obj["code"]) if (role_obj and "code" in role_obj) else self.rol.strip().upper()
+            
+            await plugin.model.api.add_special_role(str(steam_id), role_code)
+            
+            discord_msg = ""
+            if role_obj and role_obj.get("discord_role_id") and ctx.guild_id:
+                try:
+                    target_role_id = int(role_obj["discord_role_id"])
+                    await ctx.app.rest.add_role_to_member(ctx.guild_id, self.usuario.id, target_role_id)
+                    discord_msg = f" y rol de Discord <@&{target_role_id}> otorgado"
+                except Exception as d_err:
+                    discord_msg = f" (nota: no se pudo asignar rol en Discord inmediatamente: {d_err})"
+                    
+            await ctx.respond(f"✅ Rol `{role_code}` asignado a {self.usuario.mention} (`{steam_id}`){discord_msg}.")
+        except Exception as e:
+            await ctx.respond(f"❌ Error al asignar rol: {e}")
+
+@plugin.include
+@crescent.hook(admin_only)
+@roles_group.child
+@crescent.command(name="remove", description="Remueve un rol de la Base de Datos a un jugador vinculado")
+class RemoveRole:
+    usuario = crescent.option(hikari.User, "Usuario de Discord a remover el rol")
+    rol = crescent.option(str, "Rol registrado en la Base de Datos a remover", autocomplete=autocomplete_db_roles)
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer(ephemeral=True)
+        try:
+            player_info = await plugin.model.api.get_player_by_discord(str(self.usuario.id))
+            if not player_info:
+                await ctx.respond(f"❌ El usuario {self.usuario.mention} no tiene cuenta vinculada.")
+                return
+            steam_id = player_info.get("steam_id")
+            
+            roles = await plugin.model.api.get_all_roles()
+            role_obj = next((r for r in roles if r.get("code", "").upper() == self.rol.strip().upper()), None)
+            role_code = str(role_obj["code"]) if (role_obj and "code" in role_obj) else self.rol.strip().upper()
+            
+            await plugin.model.api.remove_special_role(str(steam_id), role_code)
+            
+            discord_msg = ""
+            if role_obj and role_obj.get("discord_role_id") and ctx.guild_id:
+                try:
+                    target_role_id = int(role_obj["discord_role_id"])
+                    await ctx.app.rest.remove_role_from_member(ctx.guild_id, self.usuario.id, target_role_id)
+                    discord_msg = f" y rol de Discord <@&{target_role_id}> removido"
+                except Exception as d_err:
+                    discord_msg = f" (nota: no se pudo remover rol en Discord inmediatamente: {d_err})"
+                    
+            await ctx.respond(f"✅ Rol `{role_code}` removido de {self.usuario.mention} (`{steam_id}`){discord_msg}.")
+        except Exception as e:
+            await ctx.respond(f"❌ Error al remover rol: {e}")
 
 @plugin.include
 @crescent.hook(admin_only)
@@ -292,6 +384,33 @@ async def _sync_retroactive_link_role(ctx: crescent.Context, guild_id: int, role
     return assigned_count, already_had_count
 
 
+async def _execute_set_link(ctx: crescent.Context, rol: hikari.Role | None) -> asyncio.Task | None:
+    await ctx.defer(ephemeral=True)
+    if rol:
+        if getattr(rol, "is_managed", False) is True:
+            await ctx.respond("❌ No se puede asignar un rol administrado por Discord/integraciones.")
+            return None
+
+        await plugin.model.api.set_bot_config("LINK_ROLE_ID", str(rol.id))
+        if ctx.guild_id:
+            await plugin.model.api.set_bot_config("GUILD_ID", str(ctx.guild_id))
+        
+        if ctx.guild_id:
+            await ctx.respond(
+                f"✅ Rol de vinculación configurado a <@&{rol.id}>. Se otorgará automáticamente al usar `/player link`.\n"
+                f"⏳ Sincronizando usuarios vinculados en este servidor en segundo plano..."
+            )
+            task = asyncio.create_task(_sync_retroactive_link_role(ctx, ctx.guild_id, rol.id))
+            return task
+        else:
+            await ctx.respond(f"✅ Rol de vinculación configurado a <@&{rol.id}>. Se otorgará automáticamente al usar `/player link`.")
+            return None
+    else:
+        await plugin.model.api.set_bot_config("LINK_ROLE_ID", "")
+        await ctx.respond("✅ Rol de vinculación desactivado.")
+        return None
+
+
 @plugin.include
 @crescent.hook(admin_only)
 @role_group.child
@@ -300,28 +419,18 @@ class RoleSetLink:
     rol = crescent.option(hikari.Role, "Rol a asignar al vincular (opcional, omitir para desactivar)", default=None)
 
     async def callback(self, ctx: crescent.Context) -> asyncio.Task | None:
-        await ctx.defer(ephemeral=True)
-        if self.rol:
-            if getattr(self.rol, "is_managed", False) is True:
-                await ctx.respond("❌ No se puede asignar un rol administrado por Discord/integraciones.")
-                return None
+        return await _execute_set_link(ctx, self.rol)
 
-            await plugin.model.api.set_bot_config("LINK_ROLE_ID", str(self.rol.id))
-            
-            if ctx.guild_id:
-                await ctx.respond(
-                    f"✅ Rol de vinculación configurado a <@&{self.rol.id}>. Se otorgará automáticamente al usar `/player link`.\n"
-                    f"⏳ Sincronizando usuarios vinculados en este servidor en segundo plano..."
-                )
-                task = asyncio.create_task(_sync_retroactive_link_role(ctx, ctx.guild_id, self.rol.id))
-                return task
-            else:
-                await ctx.respond(f"✅ Rol de vinculación configurado a <@&{self.rol.id}>. Se otorgará automáticamente al usar `/player link`.")
-                return None
-        else:
-            await plugin.model.api.set_bot_config("LINK_ROLE_ID", "")
-            await ctx.respond("✅ Rol de vinculación desactivado.")
-            return None
+
+@plugin.include
+@crescent.hook(admin_only)
+@roles_group.child
+@crescent.command(name="set_link", description="Configura el rol que se otorga automáticamente al vincular la cuenta")
+class RolesSetLink:
+    rol = crescent.option(hikari.Role, "Rol a asignar al vincular (opcional, omitir para desactivar)", default=None)
+
+    async def callback(self, ctx: crescent.Context) -> asyncio.Task | None:
+        return await _execute_set_link(ctx, self.rol)
 
 
 @plugin.include
@@ -342,18 +451,16 @@ class RoleSetBan:
 
 
 @plugin.include
-@crescent.hook(admin_only)
-@role_group.child
-@crescent.command(name="unset_ban", description="Configura el rol que se remueve al banear y se restituye al desbanear")
-class RoleUnsetBan:
-    rol = crescent.option(hikari.Role, "Rol a remover al banear y devolver al desbanear (opcional, omitir para desactivar)", default=None)
+@crescent.event
+async def on_started(event: hikari.StartedEvent) -> None:
+    try:
+        guilds = list(plugin.app.cache.get_guilds_view())
+        if guilds:
+            existing = await plugin.model.api.get_bot_config("GUILD_ID")
+            if not existing:
+                await plugin.model.api.set_bot_config("GUILD_ID", str(guilds[0]))
+                logger.info(f"Configurado GUILD_ID primario en BotConfig: {guilds[0]}")
+    except Exception as e:
+        logger.debug(f"No se pudo inicializar GUILD_ID en startup: {e}")
 
-    async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
-        if self.rol:
-            await plugin.model.api.set_bot_config("BAN_UNSET_ROLE_ID", str(self.rol.id))
-            await ctx.respond(f"✅ Rol de desbaneo configurado a <@&{self.rol.id}>. Se quitará al banear y se restituirá al desbanear.")
-        else:
-            await plugin.model.api.set_bot_config("BAN_UNSET_ROLE_ID", "")
-            await ctx.respond("✅ Rol de desbaneo desactivado.")
 

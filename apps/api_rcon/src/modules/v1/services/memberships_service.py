@@ -380,7 +380,7 @@ class MembershipsService:
                 }
             target_steam_id = player.steam_id
 
-        offset = (page - 1) * limit
+        offset = max(0, (page - 1) * limit)
         statement = select(Membership).order_by(col(Membership.start_time).desc())
         total_statement = select(func.count(col(Membership.id)))
         if target_steam_id:
@@ -391,23 +391,32 @@ class MembershipsService:
         memberships = (await session.exec(statement)).all()
         total = (await session.exec(total_statement)).one()
         
+        # Batch load roles to avoid N+1 queries
+        role_ids = {
+            r_id for m in memberships
+            for r_id in (m.special_role_id, m.role_granted_id)
+            if r_id is not None
+        }
+        roles_by_id: Dict[int, Role] = {}
+        if role_ids:
+            fetched_roles = (await session.exec(select(Role).where(col(Role.id).in_(role_ids)))).all()
+            roles_by_id = {r.id: r for r in fetched_roles if r.id is not None}
+
         results = []
         for m in memberships:
             special_role_name = None
             special_discord_role_id = None
-            if m.special_role_id:
-                r = await session.get(Role, m.special_role_id)
-                if r:
-                    special_role_name = r.name
-                    special_discord_role_id = r.discord_role_id
+            if m.special_role_id and m.special_role_id in roles_by_id:
+                r = roles_by_id[m.special_role_id]
+                special_role_name = r.name
+                special_discord_role_id = r.discord_role_id
 
             role_granted_name = None
             role_granted_discord_id = None
-            if m.role_granted_id:
-                rg = await session.get(Role, m.role_granted_id)
-                if rg:
-                    role_granted_name = rg.name
-                    role_granted_discord_id = rg.discord_role_id
+            if m.role_granted_id and m.role_granted_id in roles_by_id:
+                rg = roles_by_id[m.role_granted_id]
+                role_granted_name = rg.name
+                role_granted_discord_id = rg.discord_role_id
             
             results.append({
                 "id": m.id,
@@ -475,12 +484,14 @@ class MembershipsService:
                 except Exception as s_err:
                     logger.warning(f"Failed to sync RCON reserved slots to {s_info.name} ({s_info.base_url}): {s_err}")
             
-            for sid in active_steam_ids:
-                m_stmt = select(Membership).where(Membership.steam_id == sid, Membership.is_active == True)
-                for m in (await session.exec(m_stmt)).all():
-                    if m.rcon_sync_status != "SUCCESS":
-                        m.rcon_sync_status = "SUCCESS"
-                        session.add(m)
+            # Single batch update for pending RCON sync status
+            pending_m_stmt = select(Membership).where(
+                Membership.is_active == True,
+                Membership.rcon_sync_status != "SUCCESS"
+            )
+            for m in (await session.exec(pending_m_stmt)).all():
+                m.rcon_sync_status = "SUCCESS"
+                session.add(m)
             await session.commit()
             
         except Exception as e:
@@ -497,13 +508,12 @@ class MembershipsService:
         for sid, mtype in all_active_m:
             m_types_by_steam.setdefault(sid, []).append(mtype)
 
-        # Batch query all special roles by steam_id (only SPECIAL roles that are Discord-managed)
+        # Batch query all player roles by steam_id (roles assigned to player that are Discord-managed)
         pr_stmt = (
             select(PlayerRole.steam_id, Role.discord_role_id)
-            .join(Role, PlayerRole.role_id == Role.id)
+            .join(Role, col(PlayerRole.role_id) == col(Role.id))
             .where(
-                Role.discord_role_id != None,
-                Role.role_type == "SPECIAL"
+                Role.discord_role_id != None
             )
         )
         all_pr = (await session.exec(pr_stmt)).all()
@@ -525,7 +535,11 @@ class MembershipsService:
         role_maps: Dict[str, int] = {}
         for r in all_roles:
             if r.role_type == "VIP" and r.discord_role_id and str(r.discord_role_id).isdigit():
-                role_maps[r.code] = int(r.discord_role_id)
+                dr_val = int(r.discord_role_id)
+                role_maps[r.code] = dr_val
+                role_maps[r.code.upper()] = dr_val
+                role_maps[r.name] = dr_val
+                role_maps[r.code.replace("_", " ")] = dr_val
 
         all_types = (await session.exec(select(MembershipType))).all()
         for mt in all_types:
@@ -533,12 +547,16 @@ class MembershipsService:
             if mt.role_id and mt.role_id in roles_by_id:
                 dr_id = roles_by_id[mt.role_id].discord_role_id
             if dr_id and str(dr_id).isdigit():
-                role_maps[mt.code] = int(dr_id)
+                dr_val = int(dr_id)
+                role_maps[mt.code] = dr_val
+                role_maps[mt.code.upper()] = dr_val
+                role_maps[mt.name] = dr_val
+                role_maps[mt.code.replace("_", " ")] = dr_val
 
         managed_special_roles = [
             int(r.discord_role_id)
             for r in all_roles
-            if r.role_type == "SPECIAL" and r.discord_role_id and str(r.discord_role_id).isdigit()
+            if r.role_type != "VIP" and r.discord_role_id and str(r.discord_role_id).isdigit()
         ]
             
         return {

@@ -44,11 +44,13 @@ class Player(SQLModel, table=True):
     observations: Optional[str] = Field(default=None)
     in_game_name: Optional[str] = Field(default=None)
     avatar_url: Optional[str] = Field(default=None)
+    reward_points: int = Field(default=0)
     
     # Relationships
     roles: List[Role] = Relationship(back_populates="players", link_model=PlayerRole)
     memberships: List["Membership"] = Relationship(back_populates="player")
     match_stats: List["MatchPlayerStats"] = Relationship(back_populates="player")
+    reward_claims: List["RewardClaim"] = Relationship(back_populates="player")
 
 
 class Membership(SQLModel, table=True):
@@ -83,6 +85,7 @@ class PlayerSession(SQLModel, table=True):
     
     total_seconds: int = Field(default=0)
     seeding_seconds: int = Field(default=0)
+    rewarded_seeding_seconds: int = Field(default=0)
 
 class Ban(SQLModel, table=True):
     __tablename__ = "bans"
@@ -204,6 +207,42 @@ class RconServer(SQLModel, table=True):
         return f"{self.scheme}://{self.ip}:{self.port}"
 
 
+class RewardItem(SQLModel, table=True):
+    __tablename__ = "reward_items"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    code: str = Field(unique=True, index=True)
+    name: str
+    description: Optional[str] = Field(default=None)
+    cost_points: int = Field(default=1)
+    delivery_type: str = Field(default="AUTOMATIC") # AUTOMATIC or MANUAL_TICKET
+    reward_type: str = Field(default="MEMBERSHIP")  # MEMBERSHIP, ROLE, CUSTOM
+    reward_value: str = Field(default="")           # Membership type code, role code, or custom item
+    duration_days: Optional[int] = Field(default=None)
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
+
+    claims: List["RewardClaim"] = Relationship(back_populates="reward")
+
+
+class RewardClaim(SQLModel, table=True):
+    __tablename__ = "reward_claims"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    steam_id: str = Field(foreign_key="players.steam_id", index=True)
+    reward_id: int = Field(foreign_key="reward_items.id", index=True)
+    claim_code: str = Field(unique=True, index=True)
+    status: str = Field(default="PENDING", index=True) # PENDING, DELIVERED, REFUNDED
+    points_spent: int = Field(default=0)
+    claimed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
+    delivered_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    delivered_by: Optional[str] = Field(default=None)
+    notes: Optional[str] = Field(default=None)
+
+    # Relationships
+    reward: Optional[RewardItem] = Relationship(back_populates="claims")
+    player: Optional[Player] = Relationship(back_populates="reward_claims")
+
+
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -211,6 +250,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 engine = create_async_engine(ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.DATABASE_URL, echo=False)
 
 async def get_session():
-    async with AsyncSession(engine) as session:
+    async with AsyncSession(engine, expire_on_commit=False) as session:
         yield session
 

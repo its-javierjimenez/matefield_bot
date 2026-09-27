@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from sqlmodel import select
 
 from src.config import ENVIRONMENT_SETTINGS
-from src.connections.databases.db import Player, Membership, PaymentRecord, MembershipType
+from src.connections.databases.db import Player, Membership, PaymentRecord, MembershipType, Role, PlayerRole
 from src.modules.v1.services.membership_types_service import MembershipTypesService
 
 
@@ -208,6 +208,12 @@ async def test_tebex_recurring_payment_renewed(client, session):
     session.add(player)
     await session.commit()
 
+    # Create role to verify PlayerRole creation on renewal
+    renew_role = Role(code="VIP_RENEW_ROLE", name="VIP Renew", role_type="VIP")
+    session.add(renew_role)
+    await session.commit()
+    await session.refresh(renew_role)
+
     initial_end = datetime.now(timezone.utc) + timedelta(days=5)
     membership = Membership(
         steam_id=steam_id,
@@ -215,6 +221,7 @@ async def test_tebex_recurring_payment_renewed(client, session):
         start_time=datetime.now(timezone.utc) - timedelta(days=25),
         end_time=initial_end,
         is_active=True,
+        role_granted_id=renew_role.id,
         tebex_subscription_id=sub_ref,
         payment_source="TEBEX"
     )
@@ -258,6 +265,12 @@ async def test_tebex_recurring_payment_renewed(client, session):
     )).first()
     assert pr is not None
     assert pr.status == "RENEWED"
+
+    # Verify PlayerRole was properly created on renewal
+    pr_row = (await session.exec(
+        select(PlayerRole).where(PlayerRole.steam_id == steam_id, PlayerRole.role_id == renew_role.id)
+    )).first()
+    assert pr_row is not None
 
 
 @pytest.mark.asyncio
