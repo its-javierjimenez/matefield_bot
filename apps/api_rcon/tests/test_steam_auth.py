@@ -246,4 +246,25 @@ async def test_steam_callback_immediate_ban_role_grant_when_banned(client: Async
         assert mock_put.call_args[0][0] == expected_url
 
 
+@pytest.mark.asyncio
+async def test_steam_test_views_are_available_outside_production(client: AsyncClient):
+    with patch("src.modules.v1.routers.auth.is_prod", return_value=False):
+        success_response = await client.get("/api/v1/auth/steam/test/success")
+        error_response = await client.get("/api/v1/auth/steam/test/error")
+
+    assert success_response.status_code == 200
+    assert "¡Bienvenido, Steam Test!" in success_response.text
+    assert error_response.status_code == 200
+    assert "Callback de prueba" in error_response.text
+
+
+@pytest.mark.asyncio
+async def test_steam_test_views_are_hidden_in_production(client: AsyncClient):
+    with patch("src.modules.v1.routers.auth.is_prod", return_value=True):
+        success_response = await client.get("/api/v1/auth/steam/test/success")
+        error_response = await client.get("/api/v1/auth/steam/test/error")
+
+    assert success_response.status_code == 404
+    assert error_response.status_code == 404
+
 

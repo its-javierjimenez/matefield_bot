@@ -1,5 +1,6 @@
 import html
 import logging
+import os
 from pathlib import Path
 from typing import Optional, Dict
 
@@ -97,6 +98,13 @@ class AuthPageService:
             "{{STEAM_ID}}": html.escape(steam_id_val),
             "{{STEAM_AVATAR}}": html.escape(steam_avatar_val, quote=True),
             "{{STEAM_PROFILE_URL}}": html.escape(steam_profile_val, quote=True),
+            "{{DISCORD_GENERAL_CHANNEL_URL}}": html.escape(
+                os.environ.get(
+                    "DISCORD_GENERAL_CHANNEL_URL",
+                    "https://discord.com/channels/1187116902217171004/1537509330109202594",
+                ),
+                quote=True,
+            ),
         }
         for placeholder, val in replacements.items():
             content = content.replace(placeholder, val)
@@ -115,6 +123,13 @@ class AuthPageService:
             "{{ERROR_TITLE}}": html.escape(title or "Error de vinculación"),
             "{{ERROR_MESSAGE}}": html.escape(message or "Ocurrió un error inesperado al procesar la vinculación."),
             "{{ERROR_DETAIL}}": html.escape(detail or ""),
+            "{{DISCORD_GENERAL_CHANNEL_URL}}": html.escape(
+                os.environ.get(
+                    "DISCORD_GENERAL_CHANNEL_URL",
+                    "https://discord.com/channels/1187116902217171004/1537509330109202594",
+                ),
+                quote=True,
+            ),
         }
         for placeholder, val in replacements.items():
             content = content.replace(placeholder, val)

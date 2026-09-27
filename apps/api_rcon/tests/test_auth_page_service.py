@@ -15,12 +15,11 @@ def test_auth_page_service_render_success():
         steam_profile_url="https://steamcommunity.com/profiles/76561198000000123"
     )
     assert "Comandante" in html
-    assert "#0001" in html
-    assert "111222333444" in html
     assert "Soldado_Mate" in html
-    assert "76561198000000123" in html
+    assert "https://discordcdn.test/avatar.png" in html
+    assert "https://steamcdn.test/soldado.jpg" in html
     assert "BANNER_ICONO_SERVIDOR.png" in html
-    assert "BANNER_FONDO_INVITACION.png" in html
+    assert "https://discord.com/channels/1187116902217171004/1537509330109202594" in html
 
 
 def test_auth_page_service_render_error():

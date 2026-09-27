@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.config import ENVIRONMENT_SETTINGS
+from src.config import ENVIRONMENT_SETTINGS, is_prod
 from src.connections.databases.db import get_session, Player, BotConfig, Ban
 from src.connections.apis.steam import get_player_summary
 from src.modules.v1.schemas.dtos import LinkAccountRequest
@@ -24,6 +24,11 @@ DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 # Aliases para retrocompatibilidad
 render_success_page = AuthPageService.render_success_page
 render_error_page = AuthPageService.render_error_page
+
+
+def _deny_test_routes_in_prod() -> None:
+    if is_prod():
+        raise HTTPException(status_code=404, detail="Test routes are unavailable in production")
 
 
 @router.get("/login")
@@ -248,4 +253,33 @@ async def steam_callback(request: Request, token: str, session: AsyncSession = D
         steam_profile_url=profile_url
     )
     
+    return HTMLResponse(content=html, status_code=200)
+
+
+@router.get("/test/success")
+async def steam_callback_test_success():
+    _deny_test_routes_in_prod()
+
+    html = render_success_page(
+        discord_name="Matefield Test",
+        discord_tag="#0001",
+        discord_id="123456789012345678",
+        discord_avatar="https://cdn.discordapp.com/embed/avatars/0.png",
+        steam_name="Steam Test",
+        steam_id="76561198000000000",
+        steam_avatar="/static/images/steam_icon_black.png",
+        steam_profile_url="https://steamcommunity.com/profiles/76561198000000000",
+    )
+    return HTMLResponse(content=html, status_code=200)
+
+
+@router.get("/test/error")
+async def steam_callback_test_error():
+    _deny_test_routes_in_prod()
+
+    html = render_error_page(
+        title="Callback de prueba",
+        message="Esta es una vista estática para validar el callback de Steam sin pasar por OpenID.",
+        detail="Disponible solo en entornos de desarrollo o staging.",
+    )
     return HTMLResponse(content=html, status_code=200)
