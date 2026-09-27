@@ -5,6 +5,12 @@ from src.config.connections import ConnectionSettings
 from src.config.security import SecuritySettings
 
 class EnvironmentSettings(BaseSettings):
+    APP_ENV: str = pydantic.Field(
+        default="development",
+        validation_alias="APP_ENV",
+        description="Application runtime environment"
+    )
+
     SECURITY_SETTINGS: SecuritySettings = pydantic.Field(
         default_factory=SecuritySettings,
         description="Security configuration"
@@ -16,3 +22,7 @@ class EnvironmentSettings(BaseSettings):
     )
 
 ENVIRONMENT_SETTINGS = EnvironmentSettings()
+
+
+def is_prod() -> bool:
+    return ENVIRONMENT_SETTINGS.APP_ENV.strip().lower() == "production"
