@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlmodel import select, func, text, col
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.connections.databases.db import Player, Membership, Role, PlayerRole, MatchPlayerStats, PlayerSession
+from src.connections.databases.db import Player, Membership, Role, PlayerRole, MatchPlayerStats, PlayerSession, Ban
 from src.connections.apis.steam import get_player_summary, get_player_summaries
 from src.modules.v1.schemas.dtos import LinkAccountRequest, UnlinkAccountRequest, EditPlayerRequest
 
@@ -100,8 +100,15 @@ class PlayersService:
             else:
                 active_roles.append(sr.code)
                 
+        stmt_ban = select(Ban).where(Ban.steam_id == steam_id, Ban.is_active == True)
+        active_ban = (await session.exec(stmt_ban)).first()
+        is_banned = active_ban is not None
+
         primary_role = None
-        if any(r in ("ADMIN", "OWNER", "SUPERVISOR") for r in active_roles):
+        if is_banned:
+            primary_role = "BANNED"
+            active_memberships = []
+        elif any(r in ("ADMIN", "OWNER", "SUPERVISOR") for r in active_roles):
             primary_role = "ADMIN"
         elif any("VIP" in r or "FUNDADOR" in r for r in active_roles):
             primary_role = "VIP"
@@ -116,6 +123,7 @@ class PlayersService:
             "custom_welcome_message": player.custom_welcome_message,
             "observations": player.observations,
             "active_role": primary_role,
+            "is_banned": is_banned,
             "memberships": active_memberships,
             "active_memberships": active_memberships,
             "special_roles": [r.name if (r.name and not r.name.isdigit()) else r.code for r in special_roles if r.role_type == "SPECIAL"]

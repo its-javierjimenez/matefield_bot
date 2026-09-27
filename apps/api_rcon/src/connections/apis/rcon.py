@@ -276,7 +276,6 @@ class RCONManager:
     @classmethod
     def get_client_for_server(cls, server: Any) -> RCONClient:
         return cls.get_client(server.base_url, server.password)
-        return cls.get_client(server.base_url, server.password)
 
     @classmethod
     async def get_all_active_servers(cls, session: Any) -> list[tuple[Any, RCONClient]]:

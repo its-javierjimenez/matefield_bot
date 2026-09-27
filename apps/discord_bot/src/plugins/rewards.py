@@ -11,6 +11,13 @@ logger = logging.getLogger(__name__)
 
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 
+# UI / Theme Colors
+COLOR_GOLD = 0xF1C40F
+COLOR_GREEN = 0x2ECC71
+COLOR_BLUE = 0x3498DB
+COLOR_ORANGE = 0xE67E22
+COLOR_RED = 0xE74C3C
+
 
 async def autocomplete_active_rewards(
     ctx: crescent.AutocompleteContext, option: hikari.AutocompleteInteractionOption
@@ -77,7 +84,7 @@ class RewardsBalance:
         embed = hikari.Embed(
             title="🏆 Centro de Recompensas y Seeding",
             description=f"Perfil de recompensas para {target.mention}",
-            color=0xF1C40F,
+            color=COLOR_GOLD,
         )
         embed.add_field(name="🎮 Jugador", value=f"**{in_game}**\n`{steam_id}`", inline=True)
         embed.add_field(name="⭐ Puntos Disponibles", value=f"**{points:,}** pts", inline=True)
@@ -118,7 +125,7 @@ class RewardsCatalog:
         embed = hikari.Embed(
             title="🎁 Catálogo de Recompensas",
             description="Acumula puntos de seeding y canjéalos por beneficios exclusivos:",
-            color=0x2ECC71,
+            color=COLOR_GREEN,
         )
 
         for item in items:
@@ -178,7 +185,7 @@ class RewardsClaim:
                     "⚡ Tu beneficio ya ha sido activado automáticamente en el servidor y bot.\n"
                     f"Puntos restantes: **{remaining} pts**"
                 ),
-                color=0x2ECC71,
+                color=COLOR_GREEN,
             )
         else:
             instructions = delivery.get("instructions", "Abre un ticket de soporte y proporciona tu código.")
@@ -190,7 +197,7 @@ class RewardsClaim:
                     f"{instructions}\n\n"
                     f"Puntos restantes: **{remaining} pts**"
                 ),
-                color=0x3498DB,
+                color=COLOR_BLUE,
             )
 
         embed.set_footer(text="Conserva tu código de canje en caso de requerir soporte.")
@@ -249,7 +256,7 @@ class RewardsVerifyClaim:
             return
 
         status = data.get("status")
-        status_color = 0x2ECC71 if status == "DELIVERED" else (0xE67E22 if status == "PENDING" else 0xE74C3C)
+        status_color = COLOR_GREEN if status == "DELIVERED" else (COLOR_ORANGE if status == "PENDING" else COLOR_RED)
         embed = hikari.Embed(
             title=f"🔎 Verificación de Voucher: `{data.get('claim_code')}`",
             color=status_color,

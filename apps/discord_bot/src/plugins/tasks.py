@@ -12,6 +12,19 @@ import logging
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 logger = logging.getLogger("wardogs.tasks")
 
+# Task & Bot Automation Constants
+DEFAULT_MVP_MEMBERSHIP_TYPE = "VIP_MVP_GIFT"
+DEFAULT_MVP_DAYS = 1
+VIP_BROADCAST_COOLDOWN_SECONDS = 300
+VIP_BROADCAST_DELAY_SECONDS = 4
+
+# Embed UI Colors
+COLOR_GOLD = 0xF1C40F
+COLOR_BLUE = 0x3498DB
+COLOR_GREEN = 0x2ECC71
+COLOR_RED = 0xE74C3C
+COLOR_GRAY = 0x95A5A6
+
 def get_next_map(current_map: str, rotation: Any = None) -> str:
     """Calcula el nombre del próximo mapa según rotación o secuencia conocida."""
     prod_chain = {
@@ -140,13 +153,20 @@ async def match_monitor():
                 
                 logger.info(f"[Match Monitor] 🏅 MVP Detectado: {mvp_name} ({mvp_steam}) con {mvp.kills} kills.")
                 
-                # Regalar 1 dia VIP
+                # Regalar VIP al MVP
                 if mvp_steam:
-                    await plugin.model.api.add_membership(mvp_steam, "VIP_MVP_GIFT", 1)
-                    logger.info(f"[Match Monitor] 🎁 Membresía VIP de 1 día otorgada a {mvp_name}.")
+                    membership_type = await plugin.model.api.get_bot_config("MVP_MEMBERSHIP_TYPE") or DEFAULT_MVP_MEMBERSHIP_TYPE
+                    days_str = await plugin.model.api.get_bot_config("MVP_MEMBERSHIP_DAYS")
+                    try:
+                        membership_days = int(days_str) if days_str and days_str.isdigit() else DEFAULT_MVP_DAYS
+                    except Exception:
+                        membership_days = DEFAULT_MVP_DAYS
+
+                    await plugin.model.api.add_membership(mvp_steam, membership_type, membership_days)
+                    logger.info(f"[Match Monitor] 🎁 Membresía VIP de {membership_days} día(s) otorgada a {mvp_name}.")
                     
                     # Anunciar en RCON
-                    await plugin.model.api.broadcast(f"¡Partida terminada! MVP: {mvp_name}. ¡Ha ganado 1 día de VIP!")
+                    await plugin.model.api.broadcast(f"¡Partida terminada! MVP: {mvp_name}. ¡Ha ganado {membership_days} día(s) de VIP!")
                     
                     # Anunciar en Discord
                     channel_id_str = await plugin.model.api.get_bot_config("ANNOUNCEMENT_CHANNEL_ID")
@@ -154,7 +174,7 @@ async def match_monitor():
                         try:
                             await plugin.app.rest.create_message(
                                 int(channel_id_str),
-                                content=f"🏆 ¡La partida en **{current_map}** ha terminado!\nEl MVP fue **{mvp_name}** (`{mvp_steam}`). Se le ha otorgado 1 día de VIP gratis."
+                                content=f"🏆 ¡La partida en **{current_map}** ha terminado!\nEl MVP fue **{mvp_name}** (`{mvp_steam}`). Se le ha otorgado {membership_days} día(s) de VIP gratis."
                             )
                             logger.info(f"[Match Monitor] 📢 Anuncio enviado a Discord (Canal: {channel_id_str}).")
                         except Exception as e:
@@ -228,7 +248,7 @@ async def vip_monitor():
                         last_seen = plugin.model.player_last_seen.get(steam_id, 0)
                         
                         # Fix: Don't re-announce if we saw them less than 5 minutes ago (handles map rotations / quick reconnects)
-                        if now - last_seen < 300:
+                        if now - last_seen < VIP_BROADCAST_COOLDOWN_SECONDS:
                             continue
                             
                         target_player = next((p for p in players if p.steamId == steam_id), None)
@@ -241,7 +261,7 @@ async def vip_monitor():
                         await plugin.model.api.broadcast(formatted_msg)
                         
                         # Fix: Delay between broadcasts to avoid RCON bursts that overwrite previous messages
-                        await asyncio.sleep(4)
+                        await asyncio.sleep(VIP_BROADCAST_DELAY_SECONDS)
         
         # Detectar gastos (decremento de cash) y actualizar last_seen
         now = time.time()
@@ -291,20 +311,21 @@ async def execute_membership_sync(
     expired_count = res.get("expired_count", 0)
     active_rcon_slots = res.get("active_rcon_slots", 0)
 
+    banned_discord_ids = res.get("banned_discord_ids", {})
     configs = await model.api.get_bot_configs()
     wl_str = configs.get("SYNC_WHITELIST", "")
     whitelist = set(wl_str.split(",")) if wl_str else set()
 
     all_managed_roles = {int(r) for r in set(role_maps.values()).union(set(managed_special_roles)) if str(r).isdigit()}
 
-    # El rol de link y los roles de ban nunca deben ser removidos por la sincronización de membresías
+    # El rol de link y los roles de ban nunca deben ser removidos por la sincronización de membresías como expirados
     link_role_str = configs.get("LINK_ROLE_ID")
     if link_role_str and link_role_str.isdigit():
         all_managed_roles.discard(int(link_role_str))
 
-    for k, v in configs.items():
-        if (k == "BAN_ROLE_DEFAULT" or k.startswith("BAN_ROLE_")) and v.isdigit():
-            all_managed_roles.discard(int(v))
+    ban_roles = {int(v) for k, v in configs.items() if (k == "BAN_ROLE_DEFAULT" or k.startswith("BAN_ROLE_")) and str(v).isdigit()}
+    for b_role in ban_roles:
+        all_managed_roles.discard(b_role)
 
     stats: dict[str, Any] = {
         "success": True,
@@ -316,13 +337,14 @@ async def execute_membership_sync(
         "whitelist_skipped": 0,
     }
 
-    has_managed_roles = bool(all_managed_roles) or bool(link_role_str and link_role_str.isdigit())
+    has_managed_roles = bool(all_managed_roles) or bool(link_role_str and link_role_str.isdigit()) or bool(ban_roles)
     if not has_managed_roles:
         return stats
 
     relevant_roles = set(all_managed_roles)
     if link_role_str and link_role_str.isdigit():
         relevant_roles.add(int(link_role_str))
+    relevant_roles.update(ban_roles)
 
     if target_guild_id:
         target_guilds = [target_guild_id]
@@ -348,22 +370,33 @@ async def execute_membership_sync(
             logger.info(f"[Sync] Usuario {discord_id_str} está en Whitelist, saltando sincronización.")
             continue
 
+        is_banned = discord_id_str in banned_discord_ids
+        ban_days = banned_discord_ids.get(discord_id_str)
         active_memberships = user_data.get("active_memberships", [])
         special_roles = user_data.get("special_roles", [])
         discord_id = int(discord_id_str)
         stats["users_checked"] += 1
 
         roles_to_have = []
-        for m_type in active_memberships:
-            r_id = role_maps.get(m_type)
-            if r_id:
-                roles_to_have.append(int(r_id))
+        if not is_banned:
+            for m_type in active_memberships:
+                r_id = role_maps.get(m_type)
+                if r_id:
+                    roles_to_have.append(int(r_id))
 
-        for sr in special_roles:
-            roles_to_have.append(int(sr))
+            for sr in special_roles:
+                roles_to_have.append(int(sr))
 
-        if link_role_str and link_role_str.isdigit():
-            roles_to_have.append(int(link_role_str))
+            if link_role_str and link_role_str.isdigit():
+                roles_to_have.append(int(link_role_str))
+        else:
+            ban_role_id = None
+            if ban_days is not None:
+                ban_role_id = configs.get(f"BAN_ROLE_{ban_days}")
+            if not ban_role_id or not str(ban_role_id).isdigit():
+                ban_role_id = configs.get("BAN_ROLE_DEFAULT")
+            if ban_role_id and str(ban_role_id).isdigit():
+                roles_to_have.append(int(ban_role_id))
 
         for guild_id in target_guilds:
             try:
@@ -375,14 +408,27 @@ async def execute_membership_sync(
                 if member:
                     current_roles = set(member.role_ids)
 
-                    # Remove managed roles they shouldn't have
+                    # 1. Remove managed roles they shouldn't have (VIP / Special)
                     for r_id in all_managed_roles:
                         if r_id in current_roles and r_id not in roles_to_have:
                             await app.rest.remove_role_from_member(guild_id, discord_id, r_id)
                             stats["roles_removed"] += 1
                             logger.info(f"[Sync] Rol {r_id} removido de {discord_id} (Expiró/Revocado)")
 
-                    # Add roles they should have
+                    # 2. Ban & Link Role Reconciliation
+                    if is_banned:
+                        if link_role_str and link_role_str.isdigit() and int(link_role_str) in current_roles:
+                            await app.rest.remove_role_from_member(guild_id, discord_id, int(link_role_str))
+                            stats["roles_removed"] += 1
+                            logger.info(f"[Sync] Rol de link {link_role_str} removido de {discord_id} (Baneo activo)")
+                    else:
+                        for b_role in ban_roles:
+                            if b_role in current_roles:
+                                await app.rest.remove_role_from_member(guild_id, discord_id, b_role)
+                                stats["roles_removed"] += 1
+                                logger.info(f"[Sync] Rol de ban {b_role} removido de {discord_id} (Sin baneo activo)")
+
+                    # 3. Add roles they should have
                     for r_id in roles_to_have:
                         if r_id not in current_roles:
                             await app.rest.add_role_to_member(guild_id, discord_id, r_id)
@@ -428,7 +474,7 @@ async def hacker_monitor_task():
                 embed = hikari.Embed(
                     title="🛑 Monitoreo Finalizado",
                     description=f"El jugador {monitor_data['player_name']} ha abandonado la partida.",
-                    color=0x95a5a6
+                    color=COLOR_GRAY
                 )
                 try:
                     await plugin.app.rest.edit_message(monitor_data['channel_id'], monitor_data['message_id'], embed=embed, components=[])
@@ -453,16 +499,16 @@ async def hacker_monitor_task():
             # Update last kills for potential reference
             monitor_data["last_kills"] = current_kills
             
-            color = 0x3498db # Blue by default
+            color = COLOR_BLUE
             alert_msg = "Calculando métricas en tiempo real..."
             
             # If KPM > 1.0 and we've measured for at least 1 minute (60s)
             if elapsed_seconds > 60:
                 if kpm > 1.0:
-                    color = 0xe74c3c # Red
+                    color = COLOR_RED
                     alert_msg = "⚠️ **¡ALERTA!** KPM anormalmente alto (>1.0). Posible hack o vehículo pesado."
                 else:
-                    color = 0x2ecc71 # Green
+                    color = COLOR_GREEN
                     alert_msg = "Monitoreo en curso. Tasa de KPM dentro de rangos normales."
                 
             embed = hikari.Embed(
@@ -550,7 +596,7 @@ async def match_announcer_task():
         embed = hikari.Embed(
             title="🏁 ¡Partida Finalizada!",
             description=f"La batalla en **{match.get('map', 'Desconocido')}** ha terminado.",
-            color=0xf1c40f # Gold
+            color=COLOR_GOLD
         )
         
         embed.add_field(name="🏆 Ganador", value=f"**{winning_team_name}** con {winning_score} puntos", inline=False)
@@ -676,21 +722,26 @@ async def sync_ban_roles():
             
         # Obtener mapeos de roles
         configs = await plugin.model.api.get_bot_configs()
-        
-        perm_role_id_str = configs.get("BAN_ROLE_0") or configs.get("BAN_ROLE_DEFAULT")
-        if not perm_role_id_str or not perm_role_id_str.isdigit():
+        ban_roles = {int(v) for k, v in configs.items() if (k == "BAN_ROLE_DEFAULT" or k.startswith("BAN_ROLE_")) and str(v).isdigit()}
+        if not ban_roles:
             return
-            
-        perm_role_id = int(perm_role_id_str)
-            
-        # Obtener jugadores vinculados
-        res = await plugin.model.api.get_paginated_players(page=1, limit=1000, linked="linked")
-        players = res.get("players", [])
+
+        # Obtener todos los jugadores vinculados con soporte de paginación completa
+        page = 1
+        players = []
+        while True:
+            res = await plugin.model.api.get_paginated_players(page=page, limit=1000, linked="linked")
+            batch = res.get("players", []) if res else []
+            players.extend(batch)
+            total = res.get("total", len(players)) if res else len(players)
+            if not batch or len(players) >= total or len(batch) < 1000:
+                break
+            page += 1
         
         target_guilds = []
         for g_id in plugin.app.cache.get_guilds_view():
             roles_view = plugin.app.cache.get_roles_view_for_guild(g_id)
-            if roles_view and perm_role_id not in roles_view:
+            if roles_view and ban_roles and not any(r in roles_view for r in ban_roles):
                 continue
             target_guilds.append(g_id)
 
@@ -709,8 +760,29 @@ async def sync_ban_roles():
                 continue
             
             if steam_id in active_steam_ids:
-                target_role = perm_role_id
-                
+                ban_entry = active_steam_ids[steam_id]
+                target_role = None
+                expires_str = getattr(ban_entry, "expires_at", None)
+                if expires_str and isinstance(expires_str, str):
+                    try:
+                        exp_dt = datetime.datetime.fromisoformat(expires_str)
+                        if exp_dt.tzinfo is None:
+                            exp_dt = exp_dt.replace(tzinfo=datetime.timezone.utc)
+                        now_utc = datetime.datetime.now(datetime.timezone.utc)
+                        rem_days = max(1, round((exp_dt - now_utc).total_seconds() / 86400))
+                        dur_role = configs.get(f"BAN_ROLE_{rem_days}")
+                        if dur_role and str(dur_role).isdigit():
+                            target_role = int(dur_role)
+                    except Exception:
+                        pass
+                if not target_role:
+                    default_role = configs.get("BAN_ROLE_DEFAULT") or configs.get("BAN_ROLE_0")
+                    if default_role and str(default_role).isdigit():
+                        target_role = int(default_role)
+
+                if not target_role:
+                    continue
+
                 for guild_id in target_guilds:
                     try:
                         try:
@@ -720,7 +792,7 @@ async def sync_ban_roles():
                         if member:
                             if target_role not in member.role_ids:
                                 await member.add_role(target_role, reason="Ban sincronizado desde RCON/DB")
-                                logger.info(f"[Bans] Rol permanente asignado a {discord_id} por sync.")
+                                logger.info(f"[Bans] Rol {target_role} asignado a {discord_id} por sync.")
                     except Exception as e:
                         pass
     except Exception as e:

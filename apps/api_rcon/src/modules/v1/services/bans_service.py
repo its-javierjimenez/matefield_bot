@@ -16,6 +16,20 @@ class BansService:
     @staticmethod
     async def sync_bans(session: AsyncSession) -> Dict[str, Any]:
         try:
+            now = datetime.now(timezone.utc)
+            # 0. Expire old temporary bans
+            expired_stmt = select(Ban).where(
+                Ban.is_active == True,
+                Ban.expires_at != None,
+                col(Ban.expires_at) < now
+            )
+            expired_bans = (await session.exec(expired_stmt)).all()
+            for b in expired_bans:
+                b.is_active = False
+                session.add(b)
+            if expired_bans:
+                await session.commit()
+
             active_servers = await RCONManager.get_all_active_servers(session)
             rcon_steam_ids: set[str] = set()
             for s_info, client in active_servers:

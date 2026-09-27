@@ -265,3 +265,89 @@ async def test_ban_solo_discord_db_status_and_sync(client: AsyncClient, session:
     await session.refresh(ban)
     assert ban.rcon_sync_status == "DISCORD_ONLY"
 
+
+@pytest.mark.asyncio
+async def test_sync_excludes_banned_players_from_reserved_slots(client: AsyncClient, session: AsyncSession, mocker):
+    from src.connections.databases.db import Ban
+    mock_sync_slots = mocker.patch.object(rcon_module.rcon_client, 'sync_reserved_slots', return_value=None)
+
+    now = datetime.now(timezone.utc)
+    # Banned player with active VIP
+    banned_player = Player(steam_id="BANNED_VIP_STEAM", discord_id="discord_banned_1")
+    banned_m = Membership(
+        steam_id="BANNED_VIP_STEAM",
+        membership_type="VIP_PRO",
+        is_active=True,
+        start_time=now - timedelta(days=1),
+        end_time=now + timedelta(days=10)
+    )
+    active_ban = Ban(
+        steam_id="BANNED_VIP_STEAM",
+        reason="Cheating",
+        is_active=True,
+        rcon_sync_status="SUCCESS"
+    )
+
+    # Legitimate active VIP player
+    legit_player = Player(steam_id="LEGIT_VIP_STEAM", discord_id="discord_legit_2")
+    legit_m = Membership(
+        steam_id="LEGIT_VIP_STEAM",
+        membership_type="VIP_PRO",
+        is_active=True,
+        start_time=now - timedelta(days=1),
+        end_time=now + timedelta(days=10)
+    )
+
+    session.add_all([banned_player, banned_m, active_ban, legit_player, legit_m])
+    await session.commit()
+
+    resp = await client.post("/api/v1/db/sync_memberships")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # 1. Banned player MUST be excluded from RCON reserved slots
+    assert mock_sync_slots.called
+    for call_args in mock_sync_slots.call_args_list:
+        slots = call_args[0][0]
+        assert "BANNED_VIP_STEAM" not in slots
+        assert "LEGIT_VIP_STEAM" in slots
+
+    # 2. Banned player is reported in banned_discord_ids
+    assert "discord_banned_1" in data.get("banned_discord_ids", {})
+
+    # 3. In sync_data, banned player has empty active_memberships
+    banned_sync = next((u for u in data["sync_data"] if u["discord_id"] == "discord_banned_1"), None)
+    assert banned_sync is not None
+    assert banned_sync["active_memberships"] == []
+
+
+@pytest.mark.asyncio
+async def test_sync_bans_expires_old_temporary_bans(client: AsyncClient, session: AsyncSession, mocker):
+    from src.connections.databases.db import Ban
+    mocker.patch("src.connections.apis.rcon.RCONClient.get_bans", return_value=["EXPIRED_TEMP_STEAM"])
+    mock_unban = mocker.patch("src.connections.apis.rcon.RCONClient.unban_player", return_value=None)
+    mock_sync_banned = mocker.patch("src.connections.apis.rcon.RCONClient.sync_banned_slots", return_value=None)
+
+    now = datetime.now(timezone.utc)
+    # Temporary ban that expired 2 hours ago
+    expired_ban = Ban(
+        steam_id="EXPIRED_TEMP_STEAM",
+        reason="Toxicidad 1 dia",
+        is_active=True,
+        banned_at=now - timedelta(days=2),
+        expires_at=now - timedelta(hours=2),
+        rcon_sync_status="SUCCESS"
+    )
+    session.add(expired_ban)
+    await session.commit()
+
+    resp = await client.post("/api/v1/db/sync_bans")
+    assert resp.status_code == 200
+
+    # In DB, the ban must now be inactive
+    await session.refresh(expired_ban)
+    assert expired_ban.is_active is False
+
+    # Stale RCON unban was called to clean up RCON server
+    mock_unban.assert_called_with("EXPIRED_TEMP_STEAM")
+

@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlmodel import select, func, col, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.connections.databases.db import Player, Membership, Role, PlayerRole, BotConfig, MembershipType
+from src.connections.databases.db import Player, Membership, Role, PlayerRole, BotConfig, MembershipType, Ban
 from src.connections.apis.rcon import RCONManager
 from src.modules.v1.schemas.dtos import AddMembershipRequest, EditMembershipRequest, CompensateRequest
 
@@ -460,11 +460,18 @@ class MembershipsService:
         if expired:
             await session.commit()
             
-        # 2. Get active steam_ids
+        # 2. Get active steam_ids & active bans
         active_stmt = select(Membership.steam_id).where(Membership.is_active == True).distinct()
         active_steam_ids = set((await session.exec(active_stmt)).all())
         
-        # 3. Sync RCON per-server (respecting server_id scope)
+        # Query active bans to reconcile RCON reserved slots and Discord roles
+        active_bans_stmt = select(Ban).where(Ban.is_active == True)
+        all_active_bans = (await session.exec(active_bans_stmt)).all()
+        rcon_banned_steam_ids = {b.steam_id for b in all_active_bans if b.rcon_sync_status != "DISCORD_ONLY"}
+        bans_by_steam: Dict[str, Ban] = {b.steam_id: b for b in all_active_bans}
+
+        # 3. Sync RCON per-server (respecting server_id scope and excluding banned players)
+        sync_failed = False
         try:
             active_servers = await RCONManager.get_all_active_servers(session)
             for s_info, client in active_servers:
@@ -479,20 +486,23 @@ class MembershipsService:
                             Membership.is_active == True,
                             Membership.server_id == None
                         ).distinct()
-                    server_steam_ids = list(set((await session.exec(s_vip_stmt)).all()))
+                    raw_sids = set((await session.exec(s_vip_stmt)).all())
+                    server_steam_ids = list(raw_sids - rcon_banned_steam_ids)
                     await client.sync_reserved_slots(server_steam_ids)
                 except Exception as s_err:
+                    sync_failed = True
                     logger.warning(f"Failed to sync RCON reserved slots to {s_info.name} ({s_info.base_url}): {s_err}")
             
-            # Single batch update for pending RCON sync status
-            pending_m_stmt = select(Membership).where(
-                Membership.is_active == True,
-                Membership.rcon_sync_status != "SUCCESS"
-            )
-            for m in (await session.exec(pending_m_stmt)).all():
-                m.rcon_sync_status = "SUCCESS"
-                session.add(m)
-            await session.commit()
+            if not sync_failed:
+                # Update pending RCON sync status only if all active servers succeeded
+                pending_m_stmt = select(Membership).where(
+                    Membership.is_active == True,
+                    Membership.rcon_sync_status != "SUCCESS"
+                )
+                for m in (await session.exec(pending_m_stmt)).all():
+                    m.rcon_sync_status = "SUCCESS"
+                    session.add(m)
+                await session.commit()
             
         except Exception as e:
             logger.error(f"Failed to sync RCON reserved slots: {e}", exc_info=True)
@@ -523,11 +533,22 @@ class MembershipsService:
                 roles_by_steam.setdefault(sid, []).append(int(dr_id))
 
         discord_sync_data = []
+        banned_discord_map: Dict[str, Optional[int]] = {}
         for p in players:
+            ban_obj = bans_by_steam.get(p.steam_id)
+            is_banned = ban_obj is not None
+            if is_banned and p.discord_id:
+                ban_days = None
+                if ban_obj.expires_at and ban_obj.banned_at:
+                    ban_days = max(1, round((ban_obj.expires_at - ban_obj.banned_at).total_seconds() / 86400))
+                elif not ban_obj.expires_at:
+                    ban_days = 0
+                banned_discord_map[str(p.discord_id)] = ban_days
+
             discord_sync_data.append({
                 "discord_id": p.discord_id,
-                "active_memberships": m_types_by_steam.get(p.steam_id, []),
-                "special_roles": roles_by_steam.get(p.steam_id, [])
+                "active_memberships": [] if is_banned else m_types_by_steam.get(p.steam_id, []),
+                "special_roles": [] if is_banned else roles_by_steam.get(p.steam_id, [])
             })
             
         all_roles = (await session.exec(select(Role))).all()
@@ -564,7 +585,8 @@ class MembershipsService:
             "role_maps": role_maps,
             "managed_special_roles": managed_special_roles,
             "expired_count": len(expired),
-            "active_rcon_slots": len(active_steam_ids)
+            "active_rcon_slots": len(active_steam_ids - rcon_banned_steam_ids),
+            "banned_discord_ids": banned_discord_map
         }
 
     @staticmethod

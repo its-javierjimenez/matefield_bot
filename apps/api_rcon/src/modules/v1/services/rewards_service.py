@@ -6,7 +6,7 @@ from sqlmodel import select, func, col, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.connections.databases.db import (
-    Player, PlayerSession, RewardItem, RewardClaim, BotConfig
+    Player, PlayerSession, RewardItem, RewardClaim, BotConfig, Ban
 )
 from src.modules.v1.schemas.dtos import (
     CreateRewardItemRequest,
@@ -245,6 +245,15 @@ class RewardsService:
             raise HTTPException(
                 status_code=400,
                 detail="Es obligatorio tener tu cuenta de Discord vinculada con Steam para poder canjear recompensas. Usa /player link primero.",
+            )
+
+        # Validar si el jugador tiene una sanción o baneo activo
+        ban_stmt = select(Ban).where(Ban.steam_id == player.steam_id, Ban.is_active == True)
+        active_ban = (await session.exec(ban_stmt)).first()
+        if active_ban:
+            raise HTTPException(
+                status_code=403,
+                detail="No puedes canjear recompensas mientras tengas una sanción o baneo activo.",
             )
 
         norm_code = req.reward_code.strip().upper()

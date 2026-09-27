@@ -15,6 +15,15 @@ current_rotation_index: Optional[int] = None
 current_match_id: Optional[str] = None
 current_map: Optional[str] = None
 
+# Polling and game sync constants
+MAX_TIME_GAP_SECONDS = 60
+DEFAULT_POLL_INTERVAL_SECONDS = 10
+FAST_POLL_INTERVAL_SECONDS = 3
+FAST_POLL_TICKS_REMAINING = 3
+DEFAULT_SEEDING_MIN_PLAYERS = 20
+DEFAULT_SEEDING_MINUTES_PER_POINT = 30
+DEFAULT_SCORE_CAP = 100
+
 logger = logging.getLogger("sync_engine")
 logger.setLevel(logging.INFO)
 # Basic config if not already set by FastAPI
@@ -23,6 +32,36 @@ if not logger.handlers:
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     ch.setFormatter(formatter)
     logger.addHandler(ch)
+
+
+async def _get_int_config(session: AsyncSession, key: str, default: int) -> int:
+    """Reads a numeric configuration from BotConfig with safe fallback."""
+    cfg = await session.get(BotConfig, key)
+    if cfg and cfg.config_value:
+        try:
+            return int(cfg.config_value)
+        except (ValueError, TypeError):
+            pass
+    return default
+
+
+async def _get_or_create_team(session: AsyncSession, faction_name: Optional[str]) -> Optional[int]:
+    """Resolves or inserts a Team entity by name or short 3-letter code."""
+    if not faction_name:
+        return None
+    name = str(faction_name).strip()
+    if not name:
+        return None
+    code = name[:3].upper() if len(name) >= 3 else name.upper()
+    t_stmt = select(Team).where(or_(Team.name == name, Team.code == code))
+    team = (await session.exec(t_stmt)).first()
+    if not team:
+        team = Team(name=name, code=code)
+        session.add(team)
+        await session.flush()
+        await session.refresh(team)
+    return team.id
+
 
 async def _fetch_avatar_background(steam_id: str):
     try:
@@ -58,10 +97,10 @@ async def poll_rcon():
             now = datetime.datetime.now(datetime.timezone.utc)
             delta_seconds = int((now - last_poll_time).total_seconds())
             
-            # Bug 1 Fix: Prevent time leaps if the polling loop was blocked or delayed
-            if delta_seconds > 60:
-                logger.warning(f"[Match Engine] Large time gap detected ({delta_seconds}s). Capping to 60s.")
-                delta_seconds = 60
+            # Prevent time leaps if the polling loop was blocked or delayed
+            if delta_seconds > MAX_TIME_GAP_SECONDS:
+                logger.warning(f"[Match Engine] Large time gap detected ({delta_seconds}s). Capping to {MAX_TIME_GAP_SECONDS}s.")
+                delta_seconds = MAX_TIME_GAP_SECONDS
                 
             last_poll_time = now
             
@@ -123,19 +162,7 @@ async def poll_rcon():
                             
                         # 2. Update MatchPlayerStats
                         if current_match_id:
-                            # Bug 2 Fix: Extract Team ID from player faction
-                            team_id = None
-                            if p.faction:
-                                faction_name = str(p.faction)
-                                faction_code = faction_name[:3].upper()
-                                t_stmt = select(Team).where(or_(Team.name == faction_name, Team.code == faction_code))
-                                team = (await session.exec(t_stmt)).first()
-                                if not team:
-                                    team = Team(name=faction_name, code=faction_code)
-                                    session.add(team)
-                                    await session.flush()
-                                    await session.refresh(team)
-                                team_id = team.id
+                            team_id = await _get_or_create_team(session, p.faction)
 
                             stmt = select(MatchPlayerStats).where(
                                 MatchPlayerStats.match_id == current_match_id,
@@ -165,17 +192,8 @@ async def poll_rcon():
                             session.add(stats)
                             
                     # Session Tracking & Rewards Logic
-                    seeding_min_cfg = await session.get(BotConfig, "SEEDING_MIN_PLAYERS")
-                    try:
-                        seeding_threshold = int(seeding_min_cfg.config_value) if seeding_min_cfg else 20
-                    except (ValueError, TypeError):
-                        seeding_threshold = 20
-
-                    seeding_rate_cfg = await session.get(BotConfig, "SEEDING_MINUTES_PER_POINT")
-                    try:
-                        minutes_per_point = int(seeding_rate_cfg.config_value) if seeding_rate_cfg else 30
-                    except (ValueError, TypeError):
-                        minutes_per_point = 30
+                    seeding_threshold = await _get_int_config(session, "SEEDING_MIN_PLAYERS", DEFAULT_SEEDING_MIN_PLAYERS)
+                    minutes_per_point = await _get_int_config(session, "SEEDING_MINUTES_PER_POINT", DEFAULT_SEEDING_MINUTES_PER_POINT)
 
                     current_players = (status.players.current or 0) if status.players else 0
                     is_seeding = current_players < seeding_threshold
@@ -216,7 +234,7 @@ async def poll_rcon():
                             
                     # Match Team Stats & End Detection
                     if current_match_id and status.factionScores:
-                        score_cap = status.scoreCap or 100
+                        score_cap = status.scoreCap or DEFAULT_SCORE_CAP
                         match_record = await session.get(Match, current_match_id)
                         if match_record and match_record.end_time is None:
                             max_score = 0
@@ -226,27 +244,18 @@ async def poll_rcon():
                                 if not fs.name:
                                     continue
                                 
-                                # Get or create Team
-                                faction_name = str(fs.name)
-                                faction_code = faction_name[:3].upper()
-                                t_stmt = select(Team).where(or_(Team.name == faction_name, Team.code == faction_code))
-                                team = (await session.exec(t_stmt)).first()
-                                if not team:
-                                    team = Team(name=faction_name, code=faction_code)
-                                    session.add(team)
-                                    await session.flush()
-                                    await session.refresh(team)
+                                team_id = await _get_or_create_team(session, fs.name)
+                                if not team_id:
+                                    continue
                                     
                                 # Update Team Stats
                                 ts_stmt = select(MatchTeamStats).where(
                                     MatchTeamStats.match_id == current_match_id,
-                                    MatchTeamStats.team_id == team.id
+                                    MatchTeamStats.team_id == team_id
                                 )
                                 t_stat = (await session.exec(ts_stmt)).first()
                                 if not t_stat:
-                                    if team.id is None:
-                                        continue
-                                    t_stat = MatchTeamStats(match_id=current_match_id, team_id=team.id, score=int(fs.score or 0))
+                                    t_stat = MatchTeamStats(match_id=current_match_id, team_id=team_id, score=int(fs.score or 0))
                                     session.add(t_stat)
                                 else:
                                     t_stat.score = int(fs.score or 0)
@@ -254,7 +263,7 @@ async def poll_rcon():
                                     
                                 if (fs.score or 0) >= max_score:
                                     max_score = fs.score or 0
-                                    winning_team_id = team.id
+                                    winning_team_id = team_id
                                     
                             if max_score >= score_cap:
                                 logger.info(f"[Match Engine] Match ended! Score {max_score} >= {score_cap}")
@@ -264,15 +273,15 @@ async def poll_rcon():
 
                     await session.commit()
 
-            # Dynamic polling rate
-            sleep_time = 10
+            # Dynamic polling rate: poll faster near match end
+            sleep_time = DEFAULT_POLL_INTERVAL_SECONDS
             if status.scoreTick and status.scoreCap:
                 tick_current = status.scoreTick.current or 0
-                if tick_current >= (status.scoreCap - 3):
-                    sleep_time = 3
+                if tick_current >= (status.scoreCap - FAST_POLL_TICKS_REMAINING):
+                    sleep_time = FAST_POLL_INTERVAL_SECONDS
                     
             await asyncio.sleep(sleep_time)
 
         except Exception as e:
             logger.error(f"[Match Engine] Error polling RCON in sync_engine: {e}")
-            await asyncio.sleep(10)
+            await asyncio.sleep(DEFAULT_POLL_INTERVAL_SECONDS)

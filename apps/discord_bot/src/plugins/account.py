@@ -12,20 +12,35 @@ from src.groups import player_group
 from wardogs_schemas.steam_token import create_steam_link_token
 
 
+# UI / Theme Constants
+COLOR_STEAM_DARK = 0x1B2838
+COLOR_PANEL_BLUE = 0x2B6CB0
+COLOR_PROFILE_DARK = 0x2B2D31
+MAX_WELCOME_MESSAGE_LENGTH = 60
+
+
+def _resolve_guild_id(guild_id: Optional[hikari.Snowflake] = None) -> Optional[hikari.Snowflake]:
+    """Resuelve el ID de la guild proporcionada o retorna la primera encontrada en caché."""
+    if guild_id:
+        return guild_id
+    try:
+        guilds = list(plugin.app.cache.get_guilds_view())
+        if guilds:
+            return guilds[0]
+    except Exception:
+        pass
+    return None
+
+
 def _build_user_steam_link(user: hikari.User, guild_id: Optional[hikari.Snowflake] = None) -> str:
+    """Genera una URL firmada de OpenID para vincular Steam con Discord de forma segura."""
     secret_key = plugin.model.api.api_key
     disc_tag = f"#{user.discriminator}" if user.discriminator and user.discriminator != "0" else f"@{user.username}"
-    if not guild_id:
-        try:
-            guilds = list(plugin.app.cache.get_guilds_view())
-            if guilds:
-                guild_id = guilds[0]
-        except Exception:
-            pass
+    resolved_guild = _resolve_guild_id(guild_id)
     token = create_steam_link_token(
         discord_id=str(user.id),
         secret_key=secret_key,
-        guild_id=str(guild_id) if guild_id else None,
+        guild_id=str(resolved_guild) if resolved_guild else None,
         discord_username=user.global_name or user.username,
         discord_tag=disc_tag,
         discord_avatar=str(user.display_avatar_url)
@@ -57,7 +72,7 @@ class LinkAccount:
                     "🔒 **Seguro:** La autenticación se realiza de forma directa en los servidores de Valve (Steam).\n"
                     "⏱️ **Vigencia:** Este enlace personal expira en 10 minutos."
                 ),
-                color=0x1b2838
+                color=COLOR_STEAM_DARK
             )
             row = ctx.app.rest.build_message_action_row()
             row.add_link_button(link_url, label="Iniciar sesión con Steam", emoji="🎮")
@@ -84,15 +99,7 @@ class LinkAccount:
             await plugin.model.api.link_account(target_id, str(self.steam_id))
             
             link_msg = ""
-            guild_id = ctx.guild_id
-            if not guild_id:
-                try:
-                    guilds = list(plugin.app.cache.get_guilds_view())
-                    if guilds:
-                        guild_id = guilds[0]
-                except Exception:
-                    pass
-
+            guild_id = _resolve_guild_id(ctx.guild_id)
             if guild_id:
                 try:
                     try:
@@ -149,7 +156,7 @@ class LinkChannel:
                 "debes vincular tu cuenta oficial de Steam con Discord.\n\n"
                 "👉 **Haz clic en el botón de abajo para iniciar la vinculación.**"
             ),
-            color=0x2b6cb0
+            color=COLOR_PANEL_BLUE
         )
         embed.set_footer(text="Autenticación oficial y segura provista por Steam OpenID")
         
@@ -197,7 +204,7 @@ async def on_steam_link_button_click(event: hikari.InteractionCreateEvent) -> No
                     "🔒 **Seguro:** La autenticación se realiza de forma directa en los servidores de Valve (Steam).\n"
                     "⏱️ **Vigencia:** Este enlace personal expira en 10 minutos."
                 ),
-                color=0x1b2838
+                color=COLOR_STEAM_DARK
             )
             row = plugin.app.rest.build_message_action_row()
             row.add_link_button(link_url, label="Iniciar sesión con Steam", emoji="🎮")
@@ -232,14 +239,7 @@ class UnlinkAccount:
 
         try:
             # Remove managed roles first to prevent role leak (Bug 6)
-            guild_id = ctx.guild_id
-            if not guild_id:
-                try:
-                    guilds = list(plugin.app.cache.get_guilds_view())
-                    if guilds:
-                        guild_id = guilds[0]
-                except Exception:
-                    pass
+            guild_id = _resolve_guild_id(ctx.guild_id)
             if guild_id:
                 try:
                     res = await plugin.model.api.sync_memberships()
@@ -281,8 +281,8 @@ class SetWelcomeMessage:
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=False)
         
-        if len(self.message) > 60:
-            await ctx.respond("❌ El mensaje no puede tener más de 60 caracteres.")
+        if len(self.message) > MAX_WELCOME_MESSAGE_LENGTH:
+            await ctx.respond(f"❌ El mensaje no puede tener más de {MAX_WELCOME_MESSAGE_LENGTH} caracteres.")
             return
             
         target_steam = self.steam_id
@@ -364,7 +364,7 @@ class Profile:
         embed = hikari.Embed(
             title=f"Perfil de Jugador: {in_game_name}",
             description=f"**Steam ID:** {target_steam_id}",
-            color=0x2b2d31
+            color=COLOR_PROFILE_DARK
         )
         avatar_url = steam_data.get("avatar_url")
         if avatar_url:
