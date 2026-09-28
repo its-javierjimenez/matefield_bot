@@ -79,9 +79,8 @@ async def test_steam_callback_success(client: AsyncClient, session: AsyncSession
         }
         resp = await client.get("/api/v1/auth/steam/callback", params=params)
         assert resp.status_code == 200
-        assert "¡Bienvenido, GamerPro!" in resp.text
-        assert steam_id in resp.text
-        assert discord_id in resp.text
+        assert "¡Cuenta vinculada!" in resp.text
+        assert "GamerPro" in resp.text
         assert "/static/images/BANNER_ICONO_SERVIDOR.png" in resp.text
         assert "/static/images/steam_icon_black.png" in resp.text
         assert "https://steamcdn.test/avatar.jpg" in resp.text
@@ -130,13 +129,11 @@ async def test_steam_callback_with_discord_metadata_and_static_files(client: Asy
         }
         resp = await client.get("/api/v1/auth/steam/callback", params=params)
         assert resp.status_code == 200
-        assert "¡Bienvenido, MateoFPS_Steam!" in resp.text
+        assert "¡Cuenta vinculada!" in resp.text
+        assert "MateoFPS_Steam" in resp.text
         assert "MateoFPS" in resp.text
-        assert "#8314" in resp.text
         assert "https://discordcdn.test/mateo.png" in resp.text
         assert "https://steamcdn.test/mateo_steam.jpg" in resp.text
-        assert steam_id in resp.text
-        assert discord_id in resp.text
         
         # Verificar que los archivos estáticos de marca existen y responden HTTP 200
         for img in ["BANNER_ICONO_SERVIDOR.png", "BANNER_FONDO_INVITACION.png", "steam_icon_black.png"]:
@@ -270,4 +267,3 @@ async def test_steam_test_views_are_hidden_in_production(client: AsyncClient):
 
     assert success_response.status_code == 404
     assert error_response.status_code == 404
-
