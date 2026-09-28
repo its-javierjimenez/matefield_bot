@@ -114,7 +114,7 @@
 
     .card {
       width: min(590px, 100%);
-      min-height: 490px;
+      min-height: 400px;
       padding: 42px 28px 40px;
       border: 1px solid var(--card-border);
       border-radius: 17px;
@@ -280,12 +280,6 @@
       box-shadow: 0 0 18px rgba(240, 184, 0, 0.38);
     }
 
-    .community-note {
-      margin: 0 0 19px;
-      color: #aab6c8;
-      font-size: 12px;
-    }
-
     .button {
       display: inline-flex;
       align-items: center;
@@ -345,7 +339,7 @@
     </div>
 
     <h1 id="success-title">¡Cuenta vinculada!</h1>
-    <p class="subtitle">{{STEAM_NAME}} ahora está conectado con tu usuario de Discord.</p>
+    <p class="subtitle">Ya tenés acceso a la comunidad.</p>
 
     <section class="accounts" aria-label="Cuentas vinculadas">
       <div class="account account--discord">
@@ -380,8 +374,6 @@
         </div>
       </div>
     </section>
-
-    <p class="community-note">Ya tenés acceso a la comunidad.</p>
 
     <a class="button" href="{{DISCORD_GENERAL_CHANNEL_URL}}" target="_blank" rel="noopener noreferrer" aria-label="Ir al canal de Discord">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="white" aria-hidden="true">

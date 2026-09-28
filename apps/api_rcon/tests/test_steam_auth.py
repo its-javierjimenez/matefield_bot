@@ -253,9 +253,13 @@ async def test_steam_test_views_are_available_outside_production(client: AsyncCl
         error_response = await client.get("/api/v1/auth/steam/test/error")
 
     assert success_response.status_code == 200
-    assert "¡Bienvenido, Steam Test!" in success_response.text
+    assert "¡Cuenta vinculada!" in success_response.text
+    assert "Viejo Sordo" in success_response.text
+    assert "El Nono" in success_response.text
+    assert "/static/images/test_discord_avatar.svg" in success_response.text
+    assert "/static/images/test_steam_avatar.svg" in success_response.text
     assert error_response.status_code == 200
-    assert "Callback de prueba" in error_response.text
+    assert "Ocurrió un error" in error_response.text
 
 
 @pytest.mark.asyncio
@@ -266,5 +270,4 @@ async def test_steam_test_views_are_hidden_in_production(client: AsyncClient):
 
     assert success_response.status_code == 404
     assert error_response.status_code == 404
-
 
