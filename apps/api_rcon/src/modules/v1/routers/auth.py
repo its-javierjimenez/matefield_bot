@@ -102,6 +102,7 @@ async def steam_login(request: Request, token: str):
 async def steam_callback(request: Request, token: str, session: AsyncSession = Depends(get_session)):
     secret_key = ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY
     payload = verify_steam_link_token(token, secret_key)
+
     if not payload:
         return _redirect_to_error(
             request,
