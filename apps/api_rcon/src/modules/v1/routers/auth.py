@@ -2,14 +2,13 @@ import os
 import re
 import urllib.parse
 import logging
-from typing import Optional
 import httpx
 from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.config import ENVIRONMENT_SETTINGS
+from src.config import ENVIRONMENT_SETTINGS, is_prod
 from src.connections.databases.db import get_session, Player, BotConfig, Ban
 from src.connections.apis.steam import get_player_summary
 from src.modules.v1.schemas.dtos import LinkAccountRequest
@@ -21,9 +20,13 @@ logger = logging.getLogger("wardogs.auth")
 
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 
-# Aliases para retrocompatibilidad
 render_success_page = AuthPageService.render_success_page
 render_error_page = AuthPageService.render_error_page
+
+
+def _deny_test_routes_in_prod() -> None:
+    if is_prod():
+        raise HTTPException(status_code=404, detail="Test routes are unavailable in production")
 
 
 @router.get("/login")
@@ -34,7 +37,6 @@ async def steam_login(request: Request, token: str):
         html = render_error_page(
             title="Enlace Expirado o Inválido",
             message="El enlace de vinculación ha caducado o no es válido.",
-            detail="Por favor, regresa a Discord y vuelve a solicitar la vinculación con el comando /player link."
         )
         return HTMLResponse(content=html, status_code=400)
 
@@ -68,7 +70,6 @@ async def steam_callback(request: Request, token: str, session: AsyncSession = D
         html = render_error_page(
             title="Enlace Expirado",
             message="El tiempo para completar la vinculación ha expirado.",
-            detail="Por favor, solicita un nuevo enlace en Discord con /player link."
         )
         return HTMLResponse(content=html, status_code=400)
 
@@ -81,7 +82,6 @@ async def steam_callback(request: Request, token: str, session: AsyncSession = D
         html = render_error_page(
             title="Autenticación Cancelada",
             message="Has cancelado el inicio de sesión con Steam.",
-            detail="Puedes volver a intentarlo cuando desees desde Discord con /player link."
         )
         return HTMLResponse(content=html, status_code=400)
 
@@ -96,14 +96,12 @@ async def steam_callback(request: Request, token: str, session: AsyncSession = D
                 html = render_error_page(
                     title="Firma No Válida",
                     message="Steam no pudo verificar la autenticidad de la sesión.",
-                    detail="Por favor, intenta nuevamente desde Discord."
                 )
                 return HTMLResponse(content=html, status_code=400)
     except Exception as e:
         html = render_error_page(
             title="Error al conectar con Steam",
             message=f"No se pudo contactar los servidores de Steam para verificar la firma ({e}).",
-            detail="Verifica tu conexión o intenta más tarde."
         )
         return HTMLResponse(content=html, status_code=500)
 
@@ -114,7 +112,6 @@ async def steam_callback(request: Request, token: str, session: AsyncSession = D
         html = render_error_page(
             title="Steam ID no encontrado",
             message="No se pudo extraer el Steam ID de la respuesta de Steam.",
-            detail="La respuesta recibida no contiene un identificador válido."
         )
         return HTMLResponse(content=html, status_code=400)
 
@@ -129,22 +126,17 @@ async def steam_callback(request: Request, token: str, session: AsyncSession = D
         html = render_error_page(
             title="Error al Vincular",
             message=str(ex.detail),
-            detail="Si tu cuenta ya está vinculada a otro usuario, contacta con soporte en Discord."
         )
         return HTMLResponse(content=html, status_code=ex.status_code)
 
     # Obtener nombre y avatar de Steam
     player_name = None
     avatar_url = None
-    profile_url = f"https://steamcommunity.com/profiles/{steam_id}"
     try:
         steam_profile = await get_player_summary(steam_id)
         if steam_profile:
             player_name = steam_profile.get("personaname")
             avatar_url = steam_profile.get("avatarfull")
-            if steam_profile.get("profileurl"):
-                profile_url = steam_profile.get("profileurl")
-            
             player = await session.get(Player, steam_id)
             if player:
                 if player_name:
@@ -205,22 +197,17 @@ async def steam_callback(request: Request, token: str, session: AsyncSession = D
 
     # Obtener metadatos de Discord desde el payload o Discord REST API
     discord_username = payload.get("discord_username")
-    discord_tag = payload.get("discord_tag")
     discord_avatar = payload.get("discord_avatar")
 
     if discord_token and (not discord_username or not discord_avatar):
         dc_profile = await AuthPageService.fetch_discord_profile(discord_id_str, discord_token)
         if not discord_username:
             discord_username = dc_profile["username"]
-        if not discord_tag:
-            discord_tag = dc_profile["tag"]
         if not discord_avatar and dc_profile["avatar_url"]:
             discord_avatar = dc_profile["avatar_url"]
 
     if not discord_username:
         discord_username = f"Usuario ({discord_id_str})"
-    if not discord_tag:
-        discord_tag = f"ID: {discord_id_str}"
     if not discord_avatar:
         discord_avatar = "https://cdn.discordapp.com/embed/avatars/0.png"
 
@@ -239,13 +226,33 @@ async def steam_callback(request: Request, token: str, session: AsyncSession = D
     # Renderizar pantalla de éxito con templates mejorados y datos reales
     html = render_success_page(
         discord_name=discord_username,
-        discord_tag=discord_tag,
-        discord_id=discord_id_str,
         discord_avatar=discord_avatar,
         steam_name=player_name,
-        steam_id=steam_id,
         steam_avatar=avatar_url,
-        steam_profile_url=profile_url
     )
     
+    return HTMLResponse(content=html, status_code=200)
+
+
+@router.get("/test/success")
+async def steam_callback_test_success():
+    _deny_test_routes_in_prod()
+
+    html = render_success_page(
+        discord_name="Viejo Sordo",
+        discord_avatar="/static/images/test_discord_avatar.svg",
+        steam_name="El Nono",
+        steam_avatar="/static/images/test_steam_avatar.svg",
+    )
+    return HTMLResponse(content=html, status_code=200)
+
+
+@router.get("/test/error")
+async def steam_callback_test_error():
+    _deny_test_routes_in_prod()
+
+    html = render_error_page(
+        title="Ocurrió un error",
+        message="Esto es un error de prueba, acá se simula un fallo en el proceso de vinculación.",
+    )
     return HTMLResponse(content=html, status_code=200)

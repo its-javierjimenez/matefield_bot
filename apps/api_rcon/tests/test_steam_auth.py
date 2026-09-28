@@ -79,9 +79,8 @@ async def test_steam_callback_success(client: AsyncClient, session: AsyncSession
         }
         resp = await client.get("/api/v1/auth/steam/callback", params=params)
         assert resp.status_code == 200
-        assert "¡Bienvenido, GamerPro!" in resp.text
-        assert steam_id in resp.text
-        assert discord_id in resp.text
+        assert "¡Cuenta vinculada!" in resp.text
+        assert "GamerPro" in resp.text
         assert "/static/images/BANNER_ICONO_SERVIDOR.png" in resp.text
         assert "/static/images/steam_icon_black.png" in resp.text
         assert "https://steamcdn.test/avatar.jpg" in resp.text
@@ -130,13 +129,11 @@ async def test_steam_callback_with_discord_metadata_and_static_files(client: Asy
         }
         resp = await client.get("/api/v1/auth/steam/callback", params=params)
         assert resp.status_code == 200
-        assert "¡Bienvenido, MateoFPS_Steam!" in resp.text
+        assert "¡Cuenta vinculada!" in resp.text
+        assert "MateoFPS_Steam" in resp.text
         assert "MateoFPS" in resp.text
-        assert "#8314" in resp.text
         assert "https://discordcdn.test/mateo.png" in resp.text
         assert "https://steamcdn.test/mateo_steam.jpg" in resp.text
-        assert steam_id in resp.text
-        assert discord_id in resp.text
         
         # Verificar que los archivos estáticos de marca existen y responden HTTP 200
         for img in ["BANNER_ICONO_SERVIDOR.png", "BANNER_FONDO_INVITACION.png", "steam_icon_black.png"]:
@@ -246,4 +243,27 @@ async def test_steam_callback_immediate_ban_role_grant_when_banned(client: Async
         assert mock_put.call_args[0][0] == expected_url
 
 
+@pytest.mark.asyncio
+async def test_steam_test_views_are_available_outside_production(client: AsyncClient):
+    with patch("src.modules.v1.routers.auth.is_prod", return_value=False):
+        success_response = await client.get("/api/v1/auth/steam/test/success")
+        error_response = await client.get("/api/v1/auth/steam/test/error")
 
+    assert success_response.status_code == 200
+    assert "¡Cuenta vinculada!" in success_response.text
+    assert "Viejo Sordo" in success_response.text
+    assert "El Nono" in success_response.text
+    assert "/static/images/test_discord_avatar.svg" in success_response.text
+    assert "/static/images/test_steam_avatar.svg" in success_response.text
+    assert error_response.status_code == 200
+    assert "Ocurrió un error" in error_response.text
+
+
+@pytest.mark.asyncio
+async def test_steam_test_views_are_hidden_in_production(client: AsyncClient):
+    with patch("src.modules.v1.routers.auth.is_prod", return_value=True):
+        success_response = await client.get("/api/v1/auth/steam/test/success")
+        error_response = await client.get("/api/v1/auth/steam/test/error")
+
+    assert success_response.status_code == 404
+    assert error_response.status_code == 404
