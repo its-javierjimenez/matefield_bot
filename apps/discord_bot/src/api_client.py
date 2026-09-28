@@ -23,10 +23,13 @@ class APIClient:
         if self._session and not self._session.closed:
             await self._session.close()
 
+    DEFAULT_API_TIMEOUT = 15.0
+
     async def _request(self, method: str, endpoint: str, **kwargs) -> Any:
         url = f"{self.base_url}{endpoint}"
         session = await self._get_session()
-        async with session.request(method, url, **kwargs) as response:
+        timeout = kwargs.pop("timeout", aiohttp.ClientTimeout(total=self.DEFAULT_API_TIMEOUT))
+        async with session.request(method, url, timeout=timeout, **kwargs) as response:
             if response.status >= 400:
                 detail = None
                 try:

@@ -61,10 +61,12 @@ async def _get_or_create_team(session: AsyncSession, faction_name: Optional[str]
     name = str(faction_name).strip()
     if not name:
         return None
-    code = name[:3].upper() if len(name) >= 3 else name.upper()
-    t_stmt = select(Team).where(or_(Team.name == name, Team.code == code))
-    team = (await session.exec(t_stmt)).first()
+    team = (await session.exec(select(Team).where(Team.name == name))).first()
     if not team:
+        code = name[:3].upper() if len(name) >= 3 else name.upper()
+        existing_code = (await session.exec(select(Team).where(Team.code == code))).first()
+        if existing_code:
+            code = f"{name[:2].upper()}{len(name)}"[:3]
         team = Team(name=name, code=code)
         session.add(team)
         await session.flush()

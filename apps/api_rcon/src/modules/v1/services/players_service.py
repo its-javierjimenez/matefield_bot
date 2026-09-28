@@ -216,7 +216,8 @@ class PlayersService:
                 "discord_id": p.discord_id,
                 "is_online": False,
                 "is_linked": p.discord_id is not None,
-                "name": "Sin Nickname"
+                "name": p.in_game_name or "Sin Nickname",
+                "avatar_url": p.avatar_url
             })
             
         steam_ids = [p["steam_id"] for p in paginated_results]

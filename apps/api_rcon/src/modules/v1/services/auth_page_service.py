@@ -1,17 +1,16 @@
 import html
 import logging
-import os
 from pathlib import Path
 from typing import Dict, Optional
 
 import httpx
+from src.config import ENVIRONMENT_SETTINGS
 
 logger = logging.getLogger("wardogs.auth_pages")
 
 PAGES_DIR = Path(__file__).resolve().parents[4] / "pages" / "steam"
 SUCCESS_TEMPLATE_PATH = PAGES_DIR / "success_callback.html"
 ERROR_TEMPLATE_PATH = PAGES_DIR / "error_callback.html"
-DISCORD_CHANNEL_URL = "https://discord.com/channels/1187116902217171004/1537509330109202594"
 
 
 class AuthPageService:
@@ -83,8 +82,8 @@ class AuthPageService:
     @classmethod
     def _render_template(cls, template_path: Path, replacements: Dict[str, str]) -> str:
         content = cls._load_template(template_path)
-        replacements["{{DISCORD_GENERAL_CHANNEL_URL}}"] = os.environ.get(
-            "DISCORD_GENERAL_CHANNEL_URL", DISCORD_CHANNEL_URL
+        replacements["{{DISCORD_GENERAL_CHANNEL_URL}}"] = (
+            ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.DISCORD_GENERAL_CHANNEL_URL
         )
         for placeholder, value in replacements.items():
             content = content.replace(placeholder, html.escape(value, quote=True))

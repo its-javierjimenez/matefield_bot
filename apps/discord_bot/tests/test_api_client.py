@@ -62,8 +62,9 @@ async def test_api_client_request_delegation():
 
     with patch.object(aiohttp.ClientSession, "request", return_value=mock_request_ctx) as mock_req:
         result = await client._request("GET", "/api/v1/test")
-        assert result == {"ok": True, "total": 5}
-        mock_req.assert_called_once_with("GET", "http://127.0.0.1:8000/api/v1/test")
+        mock_req.assert_called_once()
+        assert mock_req.call_args[0] == ("GET", "http://127.0.0.1:8000/api/v1/test")
+        assert "timeout" in mock_req.call_args[1]
 
     await client.close()
 

@@ -234,7 +234,7 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
                 components=components
             )
         except Exception as e:
-            pass
+            logger.warning(f"[DB Interactions] Error al paginar jugadores ({custom_id}): {e}")
 
     elif custom_id == "db_players_select":
         steam_id = event.interaction.values[0]
@@ -267,7 +267,7 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
                 flags=hikari.MessageFlag.EPHEMERAL # Show ephemeral to not clutter chat
             )
         except Exception as e:
-            pass
+            logger.warning(f"[DB Interactions] Error al obtener histórico de jugador ({custom_id}): {e}")
 
     elif custom_id.startswith("prev_matches_") or custom_id.startswith("next_matches_"):
         parts = custom_id.split("_")
@@ -312,7 +312,7 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
                 components=components
             )
         except Exception as e:
-            pass
+            logger.warning(f"[DB Interactions] Error al paginar partidas ({custom_id}): {e}")
 
 @plugin.include
 @server_group.child
