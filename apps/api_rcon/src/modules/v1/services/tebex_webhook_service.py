@@ -363,8 +363,26 @@ class TebexWebhookService:
         first_product = products[0] if products else {}
         m_type = await TebexWebhookService.resolve_membership_type(first_product, session)
 
-        membership_type_code = m_type.code if m_type else "VIP_COMUN"
-        days_to_add = m_type.default_days if m_type else 30
+        if not m_type:
+            logger.error(f"[Tebex] No membership type resolved for transaction {transaction_id}. No active types in DB?")
+            record = PaymentRecord(
+                transaction_id=transaction_id,
+                event_type="payment.completed",
+                steam_id=steam_id,
+                discord_id=discord_id,
+                status="IGNORED",
+                raw_payload=raw_payload_str
+            )
+            session.add(record)
+            await session.commit()
+            return {
+                "status": "ignored",
+                "reason": "No membership type could be resolved",
+                "transaction_id": transaction_id
+            }
+
+        membership_type_code = m_type.code
+        days_to_add = m_type.default_days
         sub_ref = subject.get("recurring_payment_reference")
 
         # 3. Create or extend membership

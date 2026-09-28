@@ -19,11 +19,6 @@ class SyncEngineState:
 
 default_sync_state = SyncEngineState()
 
-# Backwards compatibility module-level references
-current_rotation_index: Optional[int] = None
-current_match_id: Optional[str] = None
-current_map: Optional[str] = None
-
 # Polling and game sync constants
 MAX_TIME_GAP_SECONDS = 60
 DEFAULT_POLL_INTERVAL_SECONDS = 10
@@ -113,7 +108,6 @@ async def process_sync_tick(
     3. Manages player sessions and calculates seeding rewards (runs even if 0 players online to close sessions).
     4. Tracks team scores and detects match win/completion.
     """
-    global current_rotation_index, current_match_id, current_map
     if state is None:
         state = default_sync_state
 
@@ -150,9 +144,6 @@ async def process_sync_tick(
         state.current_match_id = new_match.id
         state.current_rotation_index = rotation_index
         state.current_map = map_name
-        current_match_id = state.current_match_id
-        current_rotation_index = state.current_rotation_index
-        current_map = state.current_map
 
     # 2. Sync players & player stats
     current_players_list = players.players if (players and players.players) else []

@@ -265,17 +265,12 @@ class MembershipsService:
                 if m_type is not None:
                     type_days = m_type.default_days
                 else:
-                    if norm_type == "VIP_PERMANENTE":
-                        type_days = 0
+                    config_key = f"ROLE_DAYS_{norm_type}"
+                    config_days = (await session.exec(select(BotConfig).where(BotConfig.config_key == config_key))).first()
+                    if config_days and config_days.config_value.isdigit():
+                        type_days = int(config_days.config_value)
                     else:
-                        config_key = f"ROLE_DAYS_{norm_type}"
-                        config_days = (await session.exec(select(BotConfig).where(BotConfig.config_key == config_key))).first()
-                        if config_days and config_days.config_value.isdigit():
-                            type_days = int(config_days.config_value)
-                        elif norm_type == "VIP_EXPRESS":
-                            type_days = 15
-                        else:
-                            type_days = 30
+                        type_days = 30
                 
                 start_base = membership.start_time or datetime.now(timezone.utc)
                 if start_base.tzinfo is None:

@@ -37,11 +37,6 @@ def get_next_map(current_map: str, rotation: Any = None) -> str:
     if cur_norm in prod_chain:
         return prod_chain[cur_norm]
 
-    mock_maps = ["Urban Combat", "Desert Outpost", "Industrial Zone", "Snow Peak", "Bakurani"]
-    for i, m in enumerate(mock_maps):
-        if m.lower() == cur_norm:
-            return mock_maps[(i + 1) % len(mock_maps)]
-
     next_idx = getattr(rotation, "nextIndex", None) if rotation else None
     if next_idx is not None:
         standard_rotation = ["Zestafona", "Bakurani", "Ozeti"]
@@ -800,6 +795,6 @@ async def sync_ban_roles():
                                 await member.add_role(target_role, reason="Ban sincronizado desde RCON/DB")
                                 logger.info(f"[Bans] Rol {target_role} asignado a {discord_id} por sync.")
                     except Exception as e:
-                        pass
+                        logger.debug(f"[Bans] Error asignando rol de ban a {discord_id} en guild {guild_id}: {e}")
     except Exception as e:
         logger.error(f"[Bans Task] Error sincronizando roles de ban: {e}")
