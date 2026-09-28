@@ -7,6 +7,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.main import app
 from src.connections.databases.db import Player, BotConfig, Ban
+from src.security.tokens import generate_signed_payload_token, verify_signed_payload_token
 from wardogs_schemas.steam_token import create_steam_link_token, verify_steam_link_token
 
 @pytest.mark.asyncio
@@ -31,6 +32,16 @@ async def test_steam_token_creation_and_verification():
     expired_token = create_steam_link_token("123456789", secret, expires_in=-10)
     assert verify_steam_link_token(expired_token, secret) is None
 
+
+def test_signed_browser_payload_is_tamper_proof_and_expires():
+    with patch("src.config.ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY", "secret_key"):
+        token = generate_signed_payload_token({"result": "success"})
+        assert verify_signed_payload_token(token)["result"] == "success"
+        assert verify_signed_payload_token(f"{token}tampered") is None
+
+        expired_token = generate_signed_payload_token({"result": "success"}, expires_in_seconds=-1)
+        assert verify_signed_payload_token(expired_token) is None
+
 @pytest.mark.asyncio
 async def test_steam_login_redirect(client: AsyncClient):
     secret = "secret_key"
@@ -40,7 +51,7 @@ async def test_steam_login_redirect(client: AsyncClient):
         # Token inválido
         resp_invalid = await client.get("/api/v1/auth/steam/login?token=invalid.token")
         assert resp_invalid.status_code == 400
-        assert "Enlace Expirado o Inválido" in resp_invalid.text
+        assert "Ha ocurrido un error" in resp_invalid.text
         
         # Token válido
         token = create_steam_link_token("123456789", secret, expires_in=600)
@@ -77,13 +88,22 @@ async def test_steam_callback_success(client: AsyncClient, session: AsyncSession
             "openid.identity": f"https://steamcommunity.com/openid/id/{steam_id}",
             "openid.sig": "validsig123"
         }
-        resp = await client.get("/api/v1/auth/steam/callback", params=params)
-        assert resp.status_code == 200
-        assert "¡Cuenta vinculada!" in resp.text
-        assert "GamerPro" in resp.text
-        assert "/static/images/BANNER_ICONO_SERVIDOR.png" in resp.text
-        assert "/static/images/steam_icon_black.png" in resp.text
-        assert "https://steamcdn.test/avatar.jpg" in resp.text
+        callback_response = await client.get("/api/v1/auth/steam/callback", params=params)
+        assert callback_response.status_code == 303
+        assert callback_response.headers["location"] == "/api/v1/auth/steam/result"
+        assert "token" not in callback_response.headers["location"]
+        assert "openid" not in callback_response.headers["location"]
+        assert callback_response.headers["referrer-policy"] == "no-referrer"
+        assert "HttpOnly" in callback_response.headers["set-cookie"]
+        assert "SameSite=lax" in callback_response.headers["set-cookie"]
+
+        result_response = await client.get(callback_response.headers["location"])
+        assert result_response.status_code == 200
+        assert "¡Cuenta vinculada!" in result_response.text
+        assert "GamerPro" in result_response.text
+        assert "/static/images/BANNER_ICONO_SERVIDOR.png" in result_response.text
+        assert "/static/images/steam_icon_black.png" in result_response.text
+        assert "https://steamcdn.test/avatar.jpg" in result_response.text
         
         # Verificar en DB
         player = await session.get(Player, steam_id)
@@ -127,13 +147,16 @@ async def test_steam_callback_with_discord_metadata_and_static_files(client: Asy
             "openid.identity": f"https://steamcommunity.com/openid/id/{steam_id}",
             "openid.sig": "validsig123"
         }
-        resp = await client.get("/api/v1/auth/steam/callback", params=params)
-        assert resp.status_code == 200
-        assert "¡Cuenta vinculada!" in resp.text
-        assert "MateoFPS_Steam" in resp.text
-        assert "MateoFPS" in resp.text
-        assert "https://discordcdn.test/mateo.png" in resp.text
-        assert "https://steamcdn.test/mateo_steam.jpg" in resp.text
+        callback_response = await client.get("/api/v1/auth/steam/callback", params=params)
+        assert callback_response.status_code == 303
+
+        result_response = await client.get(callback_response.headers["location"])
+        assert result_response.status_code == 200
+        assert "¡Cuenta vinculada!" in result_response.text
+        assert "MateoFPS_Steam" in result_response.text
+        assert "MateoFPS" in result_response.text
+        assert "https://discordcdn.test/mateo.png" in result_response.text
+        assert "https://steamcdn.test/mateo_steam.jpg" in result_response.text
         
         # Verificar que los archivos estáticos de marca existen y responden HTTP 200
         for img in ["BANNER_ICONO_SERVIDOR.png", "BANNER_FONDO_INVITACION.png", "steam_icon_black.png"]:
@@ -183,7 +206,7 @@ async def test_steam_callback_immediate_role_grant(client: AsyncClient, session:
             "openid.sig": "validsig123"
         }
         resp = await client.get("/api/v1/auth/steam/callback", params=params)
-        assert resp.status_code == 200
+        assert resp.status_code == 303
 
         # Verificar que se llamó a la API de Discord para otorgar el rol de link inmediatamente
         expected_url = f"https://discord.com/api/v10/guilds/554433/members/{discord_id}/roles/998877"
@@ -235,7 +258,7 @@ async def test_steam_callback_immediate_ban_role_grant_when_banned(client: Async
             "openid.sig": "validsig123"
         }
         resp = await client.get("/api/v1/auth/steam/callback", params=params)
-        assert resp.status_code == 200
+        assert resp.status_code == 303
 
         # Verificar que se otorgó el rol de baneo en vez del rol verificado
         expected_url = f"https://discord.com/api/v10/guilds/554433/members/{discord_id}/roles/666999"
@@ -256,7 +279,34 @@ async def test_steam_test_views_are_available_outside_production(client: AsyncCl
     assert "/static/images/test_discord_avatar.svg" in success_response.text
     assert "/static/images/test_steam_avatar.svg" in success_response.text
     assert error_response.status_code == 200
-    assert "Ocurrió un error" in error_response.text
+    assert "Ha ocurrido un error" in error_response.text
+
+
+@pytest.mark.asyncio
+async def test_steam_callback_error_redirects_to_clean_url(client: AsyncClient):
+    with patch("src.config.ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY", "secret_key"):
+        callback_response = await client.get(
+            "/api/v1/auth/steam/callback",
+            params={"token": "invalid.token", "openid.mode": "cancel"},
+        )
+
+        assert callback_response.status_code == 303
+        assert callback_response.headers["location"] == "/api/v1/auth/steam/result"
+        assert "token" not in callback_response.headers["location"]
+        assert "openid" not in callback_response.headers["location"]
+
+        result_response = await client.get(callback_response.headers["location"])
+        assert result_response.status_code == 400
+        assert "Ha ocurrido un error" in result_response.text
+        assert "ha expirado" in result_response.text
+
+
+@pytest.mark.asyncio
+async def test_steam_result_rejects_missing_cookie(client: AsyncClient):
+    response = await client.get("/api/v1/auth/steam/result")
+
+    assert response.status_code == 400
+    assert "ha expirado o no es válido" in response.text
 
 
 @pytest.mark.asyncio
