@@ -1,11 +1,51 @@
+import base64
+import binascii
 import hashlib
 import hmac
+import json
 import logging
 import time
+from typing import Any, Dict, Optional
 
 from src.config import ENVIRONMENT_SETTINGS
 
 logger = logging.getLogger("wardogs.security.tokens")
+
+
+def generate_signed_payload_token(payload: Dict[str, Any], expires_in_seconds: int = 300) -> str:
+    """Generates a short-lived signed token for browser flow state."""
+    token_payload = {**payload, "exp": int(time.time()) + expires_in_seconds}
+    payload_bytes = json.dumps(token_payload, separators=(",", ":")).encode("utf-8")
+    encoded_payload = base64.urlsafe_b64encode(payload_bytes).decode("ascii").rstrip("=")
+    secret = ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY.encode("utf-8")
+    signature = hmac.new(secret, encoded_payload.encode("ascii"), hashlib.sha256).digest()
+    encoded_signature = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+    return f"{encoded_payload}.{encoded_signature}"
+
+
+def verify_signed_payload_token(token: str) -> Optional[Dict[str, Any]]:
+    """Returns a signed browser-flow payload when it is authentic and unexpired."""
+    try:
+        encoded_payload, encoded_signature = token.split(".", 1)
+        secret = ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY.encode("utf-8")
+        expected_signature = hmac.new(
+            secret, encoded_payload.encode("ascii"), hashlib.sha256
+        ).digest()
+        actual_signature = base64.urlsafe_b64decode(
+            encoded_signature + "=" * (-len(encoded_signature) % 4)
+        )
+        if not hmac.compare_digest(expected_signature, actual_signature):
+            return None
+
+        payload_bytes = base64.urlsafe_b64decode(
+            encoded_payload + "=" * (-len(encoded_payload) % 4)
+        )
+        payload = json.loads(payload_bytes.decode("utf-8"))
+        if not isinstance(payload, dict) or payload.get("exp", 0) < time.time():
+            return None
+        return payload
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError, binascii.Error):
+        return None
 
 
 def generate_secure_download_token(filename: str, expires_in_seconds: int = 1800) -> str:

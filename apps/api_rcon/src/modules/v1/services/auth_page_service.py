@@ -85,6 +85,10 @@ class AuthPageService:
         replacements["{{DISCORD_GENERAL_CHANNEL_URL}}"] = (
             ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.DISCORD_GENERAL_CHANNEL_URL
         )
+
+        replacements["{{DISCORD_REQUEST_HELP_CHANNEL_URL}}"] = (
+            ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.DISCORD_REQUEST_HELP_CHANNEL_URL
+        )
         for placeholder, value in replacements.items():
             content = content.replace(placeholder, html.escape(value, quote=True))
         return content
