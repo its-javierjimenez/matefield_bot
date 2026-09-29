@@ -57,10 +57,19 @@ RCON_PASSWORD=tu_password_rcon
 DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/dbname
 API_KEY=tu_api_key_secreta
 API_BASE_URL=http://api_rcon:8000
+PUBLIC_API_URL=http://localhost:8000
 STEAM_WEB_API_KEY=tu_steam_api_key
 TEBEX_WEBHOOK_SECRET=tu_tebex_secret
 TEBEX_API_KEY=tu_tebex_key
 ```
+
+El panel de `/player link_channel` usa un botón verde de interacción: Discord identifica a quien lo pulsa.
+Si ya tiene Steam vinculado, recibe una confirmación privada. Si no, recibe un enlace privado «Ir a Steam»,
+firmado y válido durante diez minutos. No necesita OAuth de Discord web ni una sesión de identidad del navegador.
+`PUBLIC_API_URL` debe apuntar a la API desde el navegador de los usuarios, no al hostname interno de Docker;
+en producción debe utilizar HTTPS. La pantalla final queda en `/vincular/discord-steam/resultado`.
+Al volver a ejecutar `/player link_channel` en el mismo canal se actualiza el mensaje existente.
+`/player link` ofrece el mismo recorrido privado. Aplicar `alembic upgrade head` antes de iniciar la API.
 
 ### 2. Levantar el Entorno Local
 Ejecuta el siguiente comando en la raíz del proyecto para construir y levantar todos los servicios con base de datos local y mock RCON:

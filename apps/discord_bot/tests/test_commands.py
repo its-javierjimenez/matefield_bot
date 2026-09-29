@@ -422,6 +422,9 @@ async def test_player_link_without_params(monkeypatch):
 
     plugin._client = MagicMock()
     plugin._client.model.api.api_key = "test_key"
+    plugin._client.model.api.get_player_by_discord = AsyncMock(return_value=None)
+    ctx.user.username = "Test user"
+    ctx.user.global_name = None
     plugin._client.model.public_api_url = "http://test-server:8000"
 
     await cmd.callback(ctx)
@@ -430,7 +433,7 @@ async def test_player_link_without_params(monkeypatch):
     kwargs = ctx.respond.call_args[1]
     assert kwargs.get("ephemeral") is True
     assert "embed" in kwargs
-    assert kwargs["embed"].title == "🎮 Vinculación con Steam"
+    assert kwargs["embed"].title == "Vinculá tu cuenta de Steam"
     mock_row.add_link_button.assert_called_once()
     link_url = mock_row.add_link_button.call_args[0][0]
     assert "http://test-server:8000/api/v1/auth/steam/login?token=" in link_url
@@ -480,6 +483,7 @@ async def test_player_link_channel_admin(monkeypatch):
     plugin._client = MagicMock()
     plugin._client.model.api.get_bot_config = AsyncMock(return_value=None)
     plugin._client.model.api.set_bot_config = AsyncMock()
+    plugin._client.model.public_api_url = "http://test-server:8000"
 
     monkeypatch.setattr("src.plugins.account.check_is_admin", AsyncMock(return_value=True))
 
@@ -491,6 +495,33 @@ async def test_player_link_channel_admin(monkeypatch):
     mock_row.add_interactive_button.assert_called_once()
     assert mock_row.add_interactive_button.call_args[0][1] == "btn_start_steam_link"
     assert "Panel de vinculación publicado exitosamente" in ctx.respond.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_player_link_channel_updates_pinned_panel_in_place(monkeypatch):
+    from src.plugins.account import LinkChannel, plugin
+
+    cmd = getattr(LinkChannel, "metadata").owner()
+    cmd.canal = None
+    ctx = MagicMock()
+    ctx.channel_id = 444555666
+    ctx.defer = AsyncMock()
+    ctx.respond = AsyncMock()
+    ctx.app.rest.edit_message = AsyncMock(return_value=MagicMock(id=123456789))
+    ctx.app.rest.create_message = AsyncMock()
+    plugin._client = MagicMock()
+    plugin._client.model.public_api_url = "http://test-server:8000"
+    plugin._client.model.api.get_bot_config = AsyncMock(side_effect=["444555666", "123456789"])
+    plugin._client.model.api.set_bot_config = AsyncMock()
+    monkeypatch.setattr("src.plugins.account.check_is_admin", AsyncMock(return_value=True))
+
+    await cmd.callback(ctx)
+
+    ctx.app.rest.edit_message.assert_awaited_once()
+    ctx.app.rest.create_message.assert_not_awaited()
+    components = ctx.app.rest.edit_message.call_args.kwargs["components"]
+    components[0].add_interactive_button.assert_called_once()
+    assert components[0].add_interactive_button.call_args[0][1] == "btn_start_steam_link"
 
 
 @pytest.mark.asyncio
@@ -861,8 +892,6 @@ async def test_rewards_plugin_commands():
         description="Membresía corta",
         is_active=True,
     )
-
-
 
 
 

@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import httpx
-from src.config import ENVIRONMENT_SETTINGS
 
 logger = logging.getLogger("wardogs.auth_pages")
 
@@ -58,10 +57,17 @@ class AuthPageService:
         discord_avatar: Optional[str] = "",
         steam_name: Optional[str] = "",
         steam_avatar: Optional[str] = "",
+        already_linked: bool = False,
     ) -> str:
         return cls._render_template(
             SUCCESS_TEMPLATE_PATH,
             {
+                "{{SUCCESS_TITLE}}": "Tu cuenta ya está vinculada" if already_linked else "¡Listo!",
+                "{{SUCCESS_CONFIRMATION}}": "" if already_linked else "Tu cuenta quedó vinculada.",
+                "{{SUCCESS_SUBTITLE}}": (
+                    "No tenés que hacer nada más."
+                    if already_linked else "Ya podés cerrar esta pestaña y volver a Discord."
+                ),
                 "{{DISCORD_NAME}}": discord_name or "Usuario",
                 "{{DISCORD_AVATAR}}": discord_avatar or "https://cdn.discordapp.com/embed/avatars/0.png",
                 "{{STEAM_NAME}}": steam_name or "Jugador",
@@ -82,13 +88,6 @@ class AuthPageService:
     @classmethod
     def _render_template(cls, template_path: Path, replacements: Dict[str, str]) -> str:
         content = cls._load_template(template_path)
-        replacements["{{DISCORD_GENERAL_CHANNEL_URL}}"] = (
-            ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.DISCORD_GENERAL_CHANNEL_URL
-        )
-
-        replacements["{{DISCORD_REQUEST_HELP_CHANNEL_URL}}"] = (
-            ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.DISCORD_REQUEST_HELP_CHANNEL_URL
-        )
         for placeholder, value in replacements.items():
             content = content.replace(placeholder, html.escape(value, quote=True))
         return content

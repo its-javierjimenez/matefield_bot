@@ -3,15 +3,17 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 from sqlmodel import select, func, text, col
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.connections.databases.db import Player, Membership, Role, PlayerRole, MatchPlayerStats, PlayerSession, Ban
+from src.connections.databases.db import Player, SteamLinkRedemption, Membership, Role, PlayerRole, MatchPlayerStats, PlayerSession, Ban
 from src.connections.apis.steam import get_player_summary, get_player_summaries
 from src.modules.v1.schemas.dtos import LinkAccountRequest, UnlinkAccountRequest, EditPlayerRequest
 
 class PlayersService:
     @staticmethod
-    async def link_account(req: LinkAccountRequest, session: AsyncSession) -> Dict[str, Any]:
+    async def link_account(req: LinkAccountRequest, session: AsyncSession, redemption: Optional[SteamLinkRedemption] = None) -> Dict[str, Any]:
         # 1. Validar que el SteamID no esté ya vinculado a otra cuenta de Discord
         player = await session.get(Player, req.steam_id)
         if player and player.discord_id and player.discord_id != req.discord_id:
@@ -30,14 +32,41 @@ class PlayersService:
                 detail=f"Tu cuenta de Discord ya está vinculada al Steam ID '{existing_discord.steam_id}'. Usa /player unlink primero."
             )
 
-        if not player:
-            player = Player(steam_id=req.steam_id, discord_id=req.discord_id)
-            session.add(player)
-        else:
-            player.discord_id = req.discord_id
-            session.add(player)
-        await session.commit()
-        return {"ok": True, "message": "Account linked"}
+        if existing_discord is not None or (player and player.discord_id == req.discord_id):
+            return {"ok": True, "message": "Account already linked", "already_linked": True}
+
+        try:
+            if redemption is not None:
+                session.add(redemption)
+                await session.flush()
+            if not player:
+                session.add(Player(steam_id=req.steam_id, discord_id=req.discord_id))
+            else:
+                # Compare-and-set prevents two Discord users claiming the same unlinked player.
+                result = await session.exec(
+                    update(Player).where(
+                        Player.steam_id == req.steam_id, Player.discord_id.is_(None)
+                    ).values(discord_id=req.discord_id)
+                )
+                if result.rowcount != 1:
+                    await session.rollback()
+                    return await PlayersService._resolve_link_race(req, session)
+            await session.commit()
+        except IntegrityError:
+            # PK + unique discord_id also protect simultaneous new-player inserts.
+            await session.rollback()
+            return await PlayersService._resolve_link_race(req, session)
+        return {"ok": True, "message": "Account linked", "already_linked": False}
+
+    @staticmethod
+    async def _resolve_link_race(req: LinkAccountRequest, session: AsyncSession) -> Dict[str, Any]:
+        player = await session.get(Player, req.steam_id)
+        if player and player.discord_id == req.discord_id:
+            return {"ok": True, "message": "Account already linked", "already_linked": True}
+        raise HTTPException(
+            status_code=409,
+            detail="Una de las cuentas ya está vinculada. Actualizá la página para ver su estado; no se reemplazó la vinculación.",
+        )
 
     @staticmethod
     async def unlink_account(req: UnlinkAccountRequest, session: AsyncSession) -> Dict[str, Any]:
@@ -58,6 +87,7 @@ class PlayersService:
             raise HTTPException(status_code=404, detail="Player not found")
         return {
             "steam_id": player.steam_id,
+            "in_game_name": player.in_game_name,
             "custom_welcome_message": player.custom_welcome_message,
             "observations": player.observations,
         }

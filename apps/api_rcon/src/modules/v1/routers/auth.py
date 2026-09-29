@@ -1,4 +1,5 @@
 import os
+import hashlib
 import re
 import urllib.parse
 import logging
@@ -9,7 +10,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.config import ENVIRONMENT_SETTINGS, is_prod
-from src.connections.databases.db import get_session, Player, BotConfig, Ban
+from src.connections.databases.db import get_session, Player, BotConfig, Ban, SteamLinkRedemption
 from src.connections.apis.steam import get_player_summary
 from src.modules.v1.schemas.dtos import LinkAccountRequest
 from src.modules.v1.services import PlayersService, AuthPageService
@@ -19,9 +20,8 @@ from wardogs_schemas.steam_token import verify_steam_link_token
 router = APIRouter(prefix="/auth/steam", tags=["Auth"])
 logger = logging.getLogger("wardogs.auth")
 
-DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 STEAM_RESULT_COOKIE = "steam_auth_result"
-STEAM_RESULT_PATH = "/api/v1/auth/steam/result"
+STEAM_RESULT_PATH = "/vincular/discord-steam/resultado"
 
 render_success_page = AuthPageService.render_success_page
 render_error_page = AuthPageService.render_error_page
@@ -48,16 +48,40 @@ def _redirect_to_result(request: Request, payload: dict) -> RedirectResponse:
     return response
 
 
-def _redirect_to_error(request: Request, message: str, status_code: int = 400) -> RedirectResponse:
-    return _redirect_to_result(
-        request,
-        {
-            "result": "error",
-            "title": "Ha ocurrido un error",
-            "message": message,
-            "status_code": status_code,
-        },
-    )
+ERROR_TITLE = "No pudimos completar la vinculación"
+ERROR_MESSAGE = "Volvé a Discord e intentá de nuevo. Si vuelve a pasar, contactá al equipo del servidor."
+EXPIRED_TITLE = "Este enlace venció"
+EXPIRED_MESSAGE = "Volvé a Discord y tocá “Vincular mi cuenta de Steam” para empezar de nuevo."
+CONFLICT_TITLE = "Esta cuenta de Steam ya está vinculada a otra cuenta de Discord"
+CONFLICT_MESSAGE = "Si necesitás ayuda, contactá al equipo del servidor."
+
+
+def _redirect_to_error(request: Request, message: str = ERROR_MESSAGE, status_code: int = 400,
+                       title: str = ERROR_TITLE) -> RedirectResponse:
+    return _redirect_to_result(request, {"result": "error", "title": title,
+                                        "message": message, "status_code": status_code})
+
+
+def _token_hash(token: str) -> str:
+    # Hash the signed payload, so alternate base64 padding of the signature cannot bypass redemption.
+    return hashlib.sha256(token.split(".", 1)[0].encode()).hexdigest()
+
+
+def _attempt_cookie(token: str) -> str:
+    return "steam_attempt_" + _token_hash(token)[:24]
+
+
+def _public_base_url(request: Request) -> str:
+    return (ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.PUBLIC_API_URL.strip() or str(request.base_url)).rstrip("/")
+
+
+def _return_to(request: Request, token: str) -> str:
+    return f"{_public_base_url(request)}/api/v1/auth/steam/callback?{urllib.parse.urlencode({'token': token})}"
+
+
+def _has_attempt(request: Request, token: str) -> bool:
+    saved = verify_signed_payload_token(request.cookies.get(_attempt_cookie(token), ""))
+    return bool(saved and saved.get("purpose") == "steam_attempt" and saved.get("token_hash") == _token_hash(token))
 
 
 def _deny_test_routes_in_prod() -> None:
@@ -65,25 +89,36 @@ def _deny_test_routes_in_prod() -> None:
         raise HTTPException(status_code=404, detail="Test routes are unavailable in production")
 
 
+async def _already_linked_response(request: Request, payload: dict, session: AsyncSession):
+    player = (await session.exec(
+        select(Player).where(Player.discord_id == str(payload["discord_id"]))
+    )).first()
+    if player is None:
+        return None
+    return _redirect_to_result(request, {
+        "result": "already_linked", "status_code": 200,
+        "discord_name": payload.get("discord_username") or "Tu cuenta de Discord",
+        "discord_avatar": payload.get("discord_avatar"),
+        "steam_name": player.in_game_name or "Tu cuenta de Steam",
+        "steam_avatar": player.avatar_url,
+    })
+
+
 @router.get("/login")
-async def steam_login(request: Request, token: str):
+async def steam_login(request: Request, token: str = "", session: AsyncSession = Depends(get_session)):
     secret_key = ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY
     payload = verify_steam_link_token(token, secret_key)
     if not payload:
-        html = render_error_page(
-            title="Ha ocurrido un error",
-            message="El enlace de vinculación ha caducado o no es válido.",
-        )
-        return HTMLResponse(content=html, status_code=400)
+        return HTMLResponse(render_error_page(title=EXPIRED_TITLE, message=EXPIRED_MESSAGE),
+                            status_code=400, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+    already = await _already_linked_response(request, payload, session)
+    if already is not None:
+        return already
+    if await session.get(SteamLinkRedemption, _token_hash(token)):
+        return _redirect_to_error(request, EXPIRED_MESSAGE, title=EXPIRED_TITLE)
 
-    # Construir retorno OpenID
-    base_url = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.PUBLIC_API_URL
-    if not base_url:
-        base_url = str(request.base_url).rstrip("/")
-    base_url = base_url.rstrip("/")
-
-    return_to = f"{base_url}/api/v1/auth/steam/callback?token={token}"
-    realm = f"{base_url}/"
+    return_to = _return_to(request, token)
+    realm = f"{_public_base_url(request)}/"
 
     params = {
         "openid.ns": "http://specs.openid.net/auth/2.0",
@@ -95,57 +130,64 @@ async def steam_login(request: Request, token: str):
     }
     
     steam_auth_url = f"https://steamcommunity.com/openid/login?{urllib.parse.urlencode(params)}"
-    return RedirectResponse(steam_auth_url, status_code=303)
+    response = RedirectResponse(steam_auth_url, status_code=303)
+    response.set_cookie(_attempt_cookie(token), generate_signed_payload_token(
+        {"purpose": "steam_attempt", "token_hash": _token_hash(token)}, expires_in_seconds=600
+    ), max_age=600, httponly=True, secure=_uses_https(request), samesite="lax", path="/api/v1/auth/steam/callback")
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @router.get("/callback")
-async def steam_callback(request: Request, token: str, session: AsyncSession = Depends(get_session)):
+async def steam_callback(request: Request, token: str = "", session: AsyncSession = Depends(get_session)):
     secret_key = ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY
     payload = verify_steam_link_token(token, secret_key)
 
     if not payload:
-        return _redirect_to_error(
-            request,
-            "El tiempo para completar la vinculación ha expirado.",
-        )
+        return _redirect_to_error(request, EXPIRED_MESSAGE, title=EXPIRED_TITLE)
+    already = await _already_linked_response(request, payload, session)
+    if already is not None:
+        return already
+    if await session.get(SteamLinkRedemption, _token_hash(token)):
+        return _redirect_to_error(request, EXPIRED_MESSAGE, title=EXPIRED_TITLE)
+    if not _has_attempt(request, token):
+        return _redirect_to_error(request)
 
-    discord_id = payload.get("discord_id")
+    discord_id = payload["discord_id"]
     guild_id = payload.get("guild_id")
-
     query_params = dict(request.query_params)
-    mode = query_params.get("openid.mode")
-    if mode != "id_res":
-        return _redirect_to_error(
-            request,
-            "Has cancelado el inicio de sesión con Steam.",
-        )
-
-    # Validar firma OpenID con Steam
-    check_params = query_params.copy()
+    if query_params.get("openid.mode") == "cancel":
+        return _redirect_to_error(request, "Volvé a Discord cuando quieras intentarlo de nuevo.",
+                                  title="Cancelaste la vinculación")
+    claimed = query_params.get("openid.claimed_id", "")
+    signed = set(query_params.get("openid.signed", "").split(","))
+    required = {"op_endpoint", "claimed_id", "identity", "return_to", "response_nonce", "assoc_handle"}
+    if (query_params.get("openid.mode") != "id_res"
+            or query_params.get("openid.ns") != "http://specs.openid.net/auth/2.0"
+            or query_params.get("openid.op_endpoint") != "https://steamcommunity.com/openid/login"
+            or query_params.get("openid.return_to") != _return_to(request, token)
+            or query_params.get("openid.identity") != claimed
+            or not required.issubset(signed)):
+        return _redirect_to_error(request)
+    check_params = {k: v for k, v in query_params.items() if k.startswith("openid.")}
     check_params["openid.mode"] = "check_authentication"
-
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post("https://steamcommunity.com/openid/login", data=check_params)
-            if "is_valid:true" not in resp.text:
-                return _redirect_to_error(
-                    request,
-                    "Steam no pudo verificar la autenticidad de la sesión.",
-                )
-    except Exception as e:
-        return _redirect_to_error(
-            request,
-            f"No se pudo contactar los servidores de Steam para verificar la firma ({e}).",
-            status_code=500,
-        )
+            resp.raise_for_status()
+            if "is_valid:true" not in resp.text.splitlines():
+                return _redirect_to_error(request)
+    except Exception:
+        logger.warning("Steam verification unavailable")
+        return _redirect_to_error(request, status_code=502)
 
     # Extraer Steam ID 64
-    claimed_id = query_params.get("openid.claimed_id", "")
-    match = re.search(r"https://steamcommunity.com/openid/id/(\d+)", claimed_id)
+    match = re.fullmatch(r"https://steamcommunity.com/openid/id/(\d{17})", claimed)
     if not match:
         return _redirect_to_error(
             request,
-            "No se pudo extraer el Steam ID de la respuesta de Steam.",
+            ERROR_MESSAGE,
         )
 
     steam_id = match.group(1)
@@ -154,13 +196,15 @@ async def steam_callback(request: Request, token: str, session: AsyncSession = D
     # Vincular cuenta en la base de datos
     try:
         link_req = LinkAccountRequest(discord_id=discord_id_str, steam_id=steam_id)
-        await PlayersService.link_account(link_req, session)
-    except HTTPException as ex:
-        return _redirect_to_error(
-            request,
-            str(ex.detail),
-            status_code=ex.status_code,
-        )
+        linked = await PlayersService.link_account(link_req, session, redemption=SteamLinkRedemption(
+            token_hash=_token_hash(token), expires_at=payload["exp"]))
+        if linked.get("already_linked"):
+            return await _already_linked_response(request, payload, session) or _redirect_to_error(request)
+    except HTTPException:
+        already = await _already_linked_response(request, payload, session)
+        if already is not None:
+            return already
+        return _redirect_to_error(request, CONFLICT_MESSAGE, status_code=409, title=CONFLICT_TITLE)
 
     # Obtener nombre y avatar de Steam
     player_name = None
@@ -179,7 +223,7 @@ async def steam_callback(request: Request, token: str, session: AsyncSession = D
                 session.add(player)
                 await session.commit()
     except Exception:
-        pass
+        await session.rollback()
 
     # Resolver guild_id si no vino en el token (ej: link solicitado por DM)
     if not guild_id:
@@ -190,7 +234,7 @@ async def steam_callback(request: Request, token: str, session: AsyncSession = D
             guild_id = os.environ.get("DISCORD_GUILD_ID")
 
     # Asignar roles en Discord de forma inmediata si se dispone de token y guild
-    discord_token = os.environ.get("DISCORD_TOKEN") or DISCORD_TOKEN
+    discord_token = os.environ.get("DISCORD_TOKEN")
     if discord_token and guild_id:
         try:
             # Consultar si el Steam ID tiene bans activos
@@ -240,7 +284,7 @@ async def steam_callback(request: Request, token: str, session: AsyncSession = D
             discord_avatar = dc_profile["avatar_url"]
 
     if not discord_username:
-        discord_username = f"Usuario ({discord_id_str})"
+        discord_username = "Tu cuenta de Discord"
     if not discord_avatar:
         discord_avatar = "https://cdn.discordapp.com/embed/avatars/0.png"
 
@@ -252,7 +296,7 @@ async def steam_callback(request: Request, token: str, session: AsyncSession = D
             avatar_url = existing_p.avatar_url
 
     if not player_name:
-        player_name = f"Steam ({steam_id})"
+        player_name = "Tu cuenta de Steam"
     if not avatar_url:
         avatar_url = "/static/images/steam_icon_black.png"
 
@@ -275,23 +319,24 @@ async def steam_auth_result(request: Request):
     payload = verify_signed_payload_token(token)
     if not payload:
         html = render_error_page(
-            title="Ha ocurrido un error",
-            message="El resultado de la vinculación ha expirado o no es válido.",
+            title=EXPIRED_TITLE,
+            message=EXPIRED_MESSAGE,
         )
         return HTMLResponse(content=html, status_code=400, headers={"Cache-Control": "no-store"})
 
     status_code = int(payload.get("status_code", 200))
-    if payload.get("result") == "success":
+    if payload.get("result") in {"success", "already_linked"}:
         html = render_success_page(
             discord_name=payload.get("discord_name"),
             discord_avatar=payload.get("discord_avatar"),
             steam_name=payload.get("steam_name"),
             steam_avatar=payload.get("steam_avatar"),
+            already_linked=payload.get("result") == "already_linked",
         )
     else:
         html = render_error_page(
-            title=payload.get("title", "Ha ocurrido un error"),
-            message=payload.get("message", "No se pudo completar la vinculación."),
+            title=payload.get("title", ERROR_TITLE),
+            message=payload.get("message", ERROR_MESSAGE),
         )
 
     return HTMLResponse(content=html, status_code=status_code, headers={"Cache-Control": "no-store"})
@@ -315,7 +360,7 @@ async def steam_callback_test_error():
     _deny_test_routes_in_prod()
 
     html = render_error_page(
-        title="Ha ocurrido un error",
-        message="Esto es un error de prueba, acá se simula un fallo en el proceso de vinculación.",
+        title=ERROR_TITLE,
+        message=ERROR_MESSAGE,
     )
     return HTMLResponse(content=html, status_code=200)
