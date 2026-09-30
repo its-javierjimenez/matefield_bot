@@ -38,7 +38,10 @@ async def test_persistent_handler_uses_each_clickers_identity_and_private_respon
         client.model.api.get_player_by_discord.assert_awaited_with(str(user_id))
         reply = ev.interaction.edit_initial_response.call_args.kwargs
         assert reply["embed"].title == "Vinculá tu cuenta de Steam"
-        assert reply["embed"].description == 'Tocá “Ir a Steam” e iniciá sesión para vincular tu cuenta.'
+        assert reply["embed"].description == (
+            "Vas a vincular esta cuenta de Discord con la cuenta de Steam con la que inicies sesión.\n\n"
+            "Tocá **«Ir a Steam»** para continuar. El enlace vence en **10 minutos**."
+        )
         assert "@everyone" not in reply["embed"].description
         assert reply["user_mentions"] is False
         row = reply["components"][0]
@@ -72,7 +75,8 @@ async def test_backend_failure_never_offers_link_or_leaks_details(client):
     ev = event()
     await account.on_steam_link_button_click.metadata.callback(ev)
     reply = ev.interaction.edit_initial_response.call_args.kwargs
-    assert reply["embed"].title == "No pudimos completar la vinculación"
+    assert reply["embed"].title == "No pudimos generar tu enlace"
+    assert "Probá de nuevo en unos minutos" in reply["embed"].description
     assert "secret-internal-error" not in reply["embed"].description
     assert reply["components"] == []
 
@@ -80,7 +84,11 @@ async def test_backend_failure_never_offers_link_or_leaks_details(client):
 def test_panel_is_green_and_persistent(client):
     rest = MagicMock()
     embed, row = account.build_link_panel(rest)
-    assert embed.title == "Vinculá tu cuenta de Steam"
+    assert embed.title == "🔗 Vinculá tu cuenta de Steam | MATEFIELD"
+    assert "1. Tocá **«Vincular mi cuenta de Steam»**" in embed.description
+    assert "2. En la respuesta privada, tocá **«Ir a Steam»**" in embed.description
+    assert "si tenés una membresía activa" in embed.description
+    assert "rol de miembro verificado, si corresponde" in embed.description
     row.add_interactive_button.assert_called_once_with(
         hikari.ButtonStyle.SUCCESS, "btn_start_steam_link", label="Vincular mi cuenta de Steam", emoji=account.STEAM_LINK_EMOJI)
 

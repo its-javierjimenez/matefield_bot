@@ -59,8 +59,22 @@ def _display_name(value: str) -> str:
 
 
 def build_link_panel(rest):
-    embed = hikari.Embed(title="Vinculá tu cuenta de Steam",
-                         description="Para empezar, tocá el botón de abajo.", color=COLOR_PANEL_BLUE)
+    embed = hikari.Embed(
+        title="🔗 Vinculá tu cuenta de Steam | MATEFIELD",
+        description=(
+            "¡Bienvenido a MATEFIELD!\n\n"
+            "Para acceder a las funciones que requieren verificación, **vinculá tus cuentas de Discord y Steam**.\n\n"
+            "Al vincularlas vas a poder:\n\n"
+            "- ✅ Recibir el rol de miembro verificado, si corresponde.\n"
+            "- 📊 Consultar tus estadísticas.\n"
+            "- 💎 Usar tus beneficios VIP, si tenés una membresía activa.\n"
+            "- 🎁 Reclamar tus recompensas.\n\n"
+            "**Para vincular tus cuentas:**\n"
+            "1. Tocá **«Vincular mi cuenta de Steam»**.\n"
+            "2. En la respuesta privada, tocá **«Ir a Steam»** e iniciá sesión con la cuenta que querés vincular."
+        ),
+        color=COLOR_PANEL_BLUE,
+    )
     row = rest.build_message_action_row()
     row.add_interactive_button(hikari.ButtonStyle.SUCCESS, STEAM_LINK_CUSTOM_ID,
                               label="Vincular mi cuenta de Steam", emoji=STEAM_LINK_EMOJI)
@@ -81,13 +95,15 @@ async def _link_reply(user, guild_id, rest):
     row = rest.build_message_action_row()
     row.add_link_button(_build_user_steam_link(user, guild_id), label="Ir a Steam", emoji=STEAM_LINK_EMOJI)
     return hikari.Embed(title="Vinculá tu cuenta de Steam",
-                        description='Tocá “Ir a Steam” e iniciá sesión para vincular tu cuenta.',
+                        description=("Vas a vincular esta cuenta de Discord con la cuenta de Steam "
+                                     "con la que inicies sesión.\n\n"
+                                     "Tocá **«Ir a Steam»** para continuar. El enlace vence en **10 minutos**."),
                         color=COLOR_STEAM_DARK), [row]
 
 
 def _link_error():
-    return hikari.Embed(title="No pudimos completar la vinculación",
-                        description="Volvé a Discord e intentá de nuevo. Si vuelve a pasar, contactá al equipo del servidor.",
+    return hikari.Embed(title="No pudimos generar tu enlace",
+                        description="Probá de nuevo en unos minutos. Si sigue pasando, contactá al equipo del servidor.",
                         color=COLOR_STEAM_DARK)
 
 
