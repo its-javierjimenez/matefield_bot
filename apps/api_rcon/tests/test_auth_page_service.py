@@ -12,8 +12,9 @@ def test_auth_page_service_render_success():
     )
     assert "Comandante" in html
     assert "Soldado_Mate" in html
-    assert "¡Cuenta vinculada!" in html
-    assert "Ya tenés acceso a la comunidad." in html
+    assert '<h1 id="success-title">¡Listo!</h1>' in html
+    assert '<p class="confirmation">Tu cuenta quedó vinculada.</p>' in html
+    assert "Ya podés cerrar esta pestaña y volver a Discord." in html
     assert "MATEFIELD" in html
     assert "COMUNIDAD" in html
     assert "LATINOAMERICANA" in html
@@ -22,7 +23,8 @@ def test_auth_page_service_render_success():
     assert "/static/images/discord_square.svg" in html
     assert "/static/images/steam_square.svg" in html
     assert "BANNER_ICONO_SERVIDOR.png" in html
-    assert "https://discord.com/channels/1187116902217171004/1537509330109202594" in html
+    assert 'class="button" href=' not in html
+    assert "cambiar-cuenta" not in html
 
 
 def test_auth_page_service_render_error():

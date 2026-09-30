@@ -3,6 +3,7 @@ import hashlib
 import json
 import base64
 import time
+import secrets
 from typing import Optional, Dict, Any
 
 def create_steam_link_token(
@@ -20,6 +21,8 @@ def create_steam_link_token(
     Por defecto expira en 10 minutos (600 segundos).
     """
     payload: Dict[str, Any] = {
+        "purpose": "steam_link",
+        "jti": secrets.token_urlsafe(32),
         "discord_id": str(discord_id),
         "guild_id": str(guild_id) if guild_id else None,
         "exp": int(time.time()) + expires_in
@@ -66,7 +69,10 @@ def verify_steam_link_token(token: str, secret_key: str) -> Optional[Dict[str, A
         payload_bytes = base64.urlsafe_b64decode(payload_b64_padded)
         payload = json.loads(payload_bytes.decode('utf-8'))
         
-        if payload.get("exp", 0) < time.time():
+        if (not isinstance(payload, dict) or payload.get("purpose") != "steam_link"
+                or not isinstance(payload.get("jti"), str) or len(payload["jti"]) < 32
+                or not str(payload.get("discord_id", "")).isdigit()
+                or payload.get("exp", 0) < time.time()):
             return None
             
         return payload

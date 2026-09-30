@@ -9,8 +9,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Rajdhani:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/steam_link.css" />
   <style>
     :root {
+      --glow-top: rgba(122, 53, 63, 0.22);
+      --glow-bottom: rgba(45, 70, 98, 0.16);
       --background: #05080b;
       --card: #0b1118;
       --card-border: rgba(239, 68, 68, 0.78);
@@ -19,96 +22,6 @@
       --discord: #5865f2;
       --danger: #f05a63;
       --gold: #f0b800;
-    }
-
-    * { box-sizing: border-box; }
-
-    body {
-      min-height: 100vh;
-      margin: 0;
-      padding: 18px;
-      color: var(--text);
-      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-      background:
-        radial-gradient(circle at 50% 12%, rgba(122, 53, 63, 0.22), transparent 42%),
-        radial-gradient(circle at 50% 100%, rgba(45, 70, 98, 0.16), transparent 38%),
-        var(--background);
-    }
-
-    .page {
-      min-height: calc(100vh - 36px);
-      display: grid;
-      place-content: center;
-      justify-items: center;
-    }
-
-    .brand {
-      margin-bottom: 24px;
-      color: #fff;
-      text-align: center;
-      user-select: none;
-    }
-
-    .brand-row {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 18px;
-    }
-
-    .brand-logo {
-      width: 84px;
-      height: 84px;
-      padding: 5px;
-      border: 2px solid rgba(240, 184, 0, 0.8);
-      border-radius: 19px;
-      background: #15170d;
-      box-shadow: 0 0 18px rgba(240, 184, 0, 0.3);
-    }
-
-    .brand-logo img {
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-      border-radius: 12px;
-    }
-
-    .brand-copy { text-align: left; }
-
-    .brand-name {
-      font-family: Rajdhani, Inter, sans-serif;
-      font-size: clamp(46px, 8vw, 68px);
-      font-weight: 800;
-      letter-spacing: 0.07em;
-      line-height: 0.85;
-    }
-
-    .brand-subtitle {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-top: 13px;
-      font-family: Rajdhani, Inter, sans-serif;
-      font-size: 16px;
-      font-weight: 800;
-      letter-spacing: 0.23em;
-    }
-
-    .brand-subtitle strong {
-      padding: 3px 10px 4px;
-      border-radius: 3px;
-      color: #14110a;
-      background: var(--gold);
-      letter-spacing: 0.16em;
-    }
-
-    .tagline {
-      margin: 14px 0 0;
-      color: #a6b0c0;
-      font-family: Rajdhani, Inter, sans-serif;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.4em;
     }
 
     .card {
@@ -175,26 +88,6 @@
       line-height: 1.5;
     }
 
-    .button {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 100%;
-      min-height: 45px;
-      gap: 10px;
-      border-radius: 10px;
-      color: #fff;
-      background: linear-gradient(135deg, #5b66ff, #4c58f5);
-      box-shadow: 0 9px 23px rgba(79, 91, 250, 0.38);
-      font-size: 13px;
-      font-weight: 700;
-      text-decoration: none;
-      transition: transform 0.16s ease, filter 0.16s ease;
-    }
-
-    .button:hover { filter: brightness(1.08); transform: translateY(-1px); }
-    .button:focus-visible { outline: 3px solid rgba(142, 151, 255, 0.7); outline-offset: 3px; }
-
     @media (max-width: 500px) {
       body { padding: 6px; }
       .page { min-height: calc(100vh - 12px); }
@@ -238,12 +131,7 @@
       <h1 id="error-title">{{ERROR_TITLE}}</h1>
       <p class="message">{{ERROR_MESSAGE}}</p>
 
-      <a class="button" href="{{DISCORD_REQUEST_HELP_CHANNEL_URL}}" target="_blank" rel="noopener noreferrer" aria-label="Ir al canal de Discord">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="white" aria-hidden="true">
-          <path d="M18.6 5.2A15 15 0 0 0 15 4.1l-.45.9a13 13 0 0 0-5.1 0L9 4.1a15 15 0 0 0-3.6 1.1C3.1 8.5 2.5 11.7 2.8 15a14.5 14.5 0 0 0 4.4 2.2l1.1-1.5a9.7 9.7 0 0 1-1.7-.8l.4-.3a12.4 12.4 0 0 0 10 0l.4.3a9.7 9.7 0 0 1-1.7.8l1.1 1.5a14.5 14.5 0 0 0 4.4-2.2c.4-3.8-.7-7-2.6-9.8ZM9 13.5c-.9 0-1.6-.8-1.6-1.8S8.1 10 9 10s1.6.8 1.6 1.7-.7 1.8-1.6 1.8Zm6 0c-.9 0-1.6-.8-1.6-1.8S14.1 10 15 10s1.6.8 1.6 1.7-.7 1.8-1.6 1.8Z"/>
-        </svg>
-        Solicitar ayuda
-      </a>
+
     </section>
   </main>
 </body>

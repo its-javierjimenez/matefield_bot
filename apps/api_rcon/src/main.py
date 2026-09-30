@@ -1,5 +1,7 @@
 import logging
 import asyncio
+import time
+from sqlalchemy import delete
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from dotenv import load_dotenv
@@ -11,7 +13,7 @@ from src.connections.apis.rcon import RCONManager
 from src.sync_engine import poll_rcon
 from src.modules.v1.services.memberships_service import MembershipsService
 from src.modules.v1.services.backup_service import create_database_sql_backup
-from src.connections.databases.db import engine
+from src.connections.databases.db import engine, SteamLinkRedemption
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 logging.basicConfig(
@@ -29,6 +31,8 @@ async def db_maintenance_loop():
     while True:
         try:
             async with AsyncSession(engine) as session:
+                await session.exec(delete(SteamLinkRedemption).where(SteamLinkRedemption.expires_at < int(time.time())))
+                await session.commit()
                 await MembershipsService.sync_memberships_logic(session)
         except asyncio.CancelledError:
             break
@@ -78,6 +82,9 @@ if STATIC_DIR.is_dir():
     app.mount("/api/static", StaticFiles(directory=str(STATIC_DIR)), name="api_static")
 
 app.include_router(V1_ROUTER, prefix="/api")
+
+from src.modules.v1.routers.discord_steam_link import router as discord_steam_link_router
+app.include_router(discord_steam_link_router)
 
 if __name__ == "__main__":
     import uvicorn

@@ -145,6 +145,12 @@ class MatchPlayerStats(SQLModel, table=True):
     team: Optional[Team] = Relationship()
 
 
+class SteamLinkRedemption(SQLModel, table=True):
+    __tablename__ = "steam_link_redemptions"
+    token_hash: str = Field(primary_key=True)
+    expires_at: int = Field(index=True)
+
+
 class BotConfig(SQLModel, table=True):
     __tablename__ = "bot_config"
     config_key: str = Field(primary_key=True)

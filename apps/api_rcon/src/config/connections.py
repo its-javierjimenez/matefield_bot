@@ -31,15 +31,3 @@ class ConnectionSettings(BaseSettings):
         validation_alias="BACKUP_DIR",
         description="Directory where SQL database backups are saved"
     )
-
-    DISCORD_GENERAL_CHANNEL_URL: str = pydantic.Field(
-        default="https://discord.com/channels/1187116902217171004/1537509330109202594",
-        validation_alias="DISCORD_GENERAL_CHANNEL_URL",
-        description="URL of the 'general' Discord channel for the auth callback page"
-    )
-
-    DISCORD_REQUEST_HELP_CHANNEL_URL: str = pydantic.Field(
-        default="https://discord.com/channels/1187116902217171004/1552778290253664347",
-        validation_alias="DISCORD_REQUEST_HELP_CHANNEL_URL",
-        description="URL of the 'pedir-ayuda' Discord channel for the auth callback page"
-    )
