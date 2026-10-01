@@ -29,6 +29,7 @@ from src.connections.apis.rcon import RCONManager
 from src.connections.databases.db import SteamLinkRedemption, engine
 from src.modules import V1_ROUTER
 from src.modules.v1.routers.discord_steam_link import router as discord_steam_link_router
+from src.modules.v1.routers.admin_dashboard import router as admin_dashboard_router
 from src.modules.v1.services.backup_service import create_database_sql_backup
 from src.modules.v1.services.memberships_service import MembershipsService
 from src.sync_engine import poll_rcon
@@ -117,7 +118,7 @@ async def lifespan(app: FastAPI):
 # ---------------------------------------------------------------------------
 app = FastAPI(
     title="Wardogs RCON API",
-    version="1.0.0",
+    version="1.4.0",
     lifespan=lifespan,
 )
 
@@ -129,6 +130,7 @@ if STATIC_DIR.is_dir():
 
 app.include_router(V1_ROUTER, prefix="/api")
 app.include_router(discord_steam_link_router)
+app.include_router(admin_dashboard_router)
 
 # ---------------------------------------------------------------------------
 # Dev runner

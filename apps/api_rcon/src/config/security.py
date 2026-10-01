@@ -57,3 +57,13 @@ class SecuritySettings(BaseSettings):
         validation_alias="DISCORD_CLIENT_SECRET",
         description="Discord OAuth2 application client secret",
     )
+    DISCORD_REDIRECT_URI: Optional[str] = pydantic.Field(
+        default=None,
+        validation_alias="DISCORD_REDIRECT_URI",
+        description="Discord OAuth2 redirect URI",
+    )
+    ADMIN_SESSION_SECRET: Optional[str] = pydantic.Field(
+        default=None,
+        validation_alias="ADMIN_SESSION_SECRET",
+        description="Secret key to sign admin session tokens (falls back to API_KEY)",
+    )
