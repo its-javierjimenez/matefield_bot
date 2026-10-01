@@ -10,14 +10,6 @@ y este proyecto se adhiere a [Semantic Versioning (SemVer 2.0.0)](https://semver
 ## [1.4.0] - 2026-10-01
 
 ### Agregado
-- **Admin Dashboard SPA Oficial**:
-  - Panel administrativo web moderno tipo SPA servido en `/admin` y `/api/v1/admin` con cabeceras de seguridad anti-clickjacking (`X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`).
-  - Flujo de autenticación Discord OAuth2 con protección CSRF (`oauth_state`), verificación de pertenencia a guild y validación estricta de roles administrativos (`SYSTEM` / Administrador nativo).
-  - Sesiones seguras HMAC-SHA256 con expiración de 7 días (`admin_session` cookie HttpOnly / Lax / Secure y soporte para `Authorization: Bearer`).
-  - Vinculación y desvinculación de Steam OpenID 2.0 para administradores con detección de conflictos y asignación automática del rol verificado (`LINK_ROLE_ID`).
-  - Gestión integral de servidores RCON: monitoreo de latencia en vivo (`/test`), sincronización forzada bajo demanda (`/sync-all`) y gestión de slots reservados.
-  - Moderación unificada de sanciones: listado en vivo de baneos en base de datos y motor de juego, aplicación de bans con duración en días y revocación atómica.
-  - Gestión de membresías, cupos máximos (`max_quota`) y whitelist de seguridad para Discord IDs protegidos.
 - **Motor Multi-RCON para Producción**:
   - Soporte completo para múltiples instancias de servidores de juego mediante la tabla `rcon_servers`.
   - Scoping inteligente de sincronización: membresías globales (`server_id = NULL`) se aplican a todos los servidores activos; membresías específicas (`server_id = N`) se sincronizan únicamente con el servidor asignado.
@@ -34,19 +26,17 @@ y este proyecto se adhiere a [Semantic Versioning (SemVer 2.0.0)](https://semver
   - Reestructuración integral y documentación exhaustiva de variables de entorno segmentadas en: `API`, `BOT` y `AMBOS` (compartidas).
 
 ### Cambiado
-- **Guardia de Seguridad Unificada (`verify_api_key_guard`)**:
-  - Soporte dual transparente para llamadas entre microservicios (mediante cabecera `X-API-Key`) y llamadas desde el navegador/dashboard (mediante cookie `admin_session` o token Bearer de administrador).
 - **Control de Tareas en Segundo Plano**:
   - Ciclos de mantenimiento asíncronos en `lifespan` de FastAPI con cancelación limpia y apagado coordinado del pool de conexiones RCON.
-- **Configuración Centralizada de Seguridad**:
-  - Migración de variables de Discord y Dashboard a `SecuritySettings` en `src/config/security.py` para prevenir accesos tempranos no inicializados de `os.environ`.
+- **Configuración Centralizada**:
+  - Consolidación de variables en `SecuritySettings` en `src/config/security.py` para prevenir accesos tempranos no inicializados de `os.environ`.
 
 ### Corregido
 - **Mocks de Pruebas Unitarias**:
   - Corrección en `test_steam_auth.py` para parchear atributos en el singleton `ENVIRONMENT_SETTINGS.SECURITY_SETTINGS` en lugar de variables de entorno volátiles.
   - Compatibilidad de aserciones en `test_interaction_link.py` para códigos de estado de autenticación.
 - **Estabilidad de la Suite de Tests**:
-  - Cobertura total alcanzada con **168 pruebas pasando al 100%** (135 en `api_rcon` y 33 en `discord_bot`).
+  - Cobertura total alcanzada con **100% de pruebas aprobadas** en `api_rcon` y `discord_bot`.
 
 ---
 
