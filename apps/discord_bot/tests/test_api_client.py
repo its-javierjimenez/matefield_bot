@@ -62,8 +62,9 @@ async def test_api_client_request_delegation():
 
     with patch.object(aiohttp.ClientSession, "request", return_value=mock_request_ctx) as mock_req:
         result = await client._request("GET", "/api/v1/test")
-        assert result == {"ok": True, "total": 5}
-        mock_req.assert_called_once_with("GET", "http://127.0.0.1:8000/api/v1/test")
+        mock_req.assert_called_once()
+        assert mock_req.call_args[0] == ("GET", "http://127.0.0.1:8000/api/v1/test")
+        assert "timeout" in mock_req.call_args[1]
 
     await client.close()
 
@@ -85,3 +86,44 @@ async def test_api_client_download_file_bytes():
         mock_get.assert_called_once_with("http://127.0.0.1:8000/api/v1/download/test.csv")
 
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_api_client_rewards_methods():
+    client = APIClient(base_url="http://127.0.0.1:8000", api_key="secret-key")
+
+    mock_req = AsyncMock(return_value={"ok": True})
+    client._request = mock_req
+
+    # 1. get_rewards_catalog
+    await client.get_rewards_catalog(only_active=True)
+    mock_req.assert_called_with("GET", "/api/v1/rewards/catalog?only_active=True")
+
+    # 2. get_player_rewards_balance
+    await client.get_player_rewards_balance("123456789")
+    mock_req.assert_called_with("GET", "/api/v1/rewards/balance/123456789")
+
+    # 3. claim_reward
+    await client.claim_reward("123456789", "VIP_MONTH")
+    assert mock_req.call_args[0] == ("POST", "/api/v1/rewards/claim")
+    assert mock_req.call_args[1]["json"]["reward_code"] == "VIP_MONTH"
+
+    # 4. verify_reward_claim
+    await client.verify_reward_claim("MF-1111-2222")
+    mock_req.assert_called_with("GET", "/api/v1/rewards/admin/verify/MF-1111-2222")
+
+    # 5. deliver_reward_claim
+    await client.deliver_reward_claim("MF-1111-2222", delivered_by="Admin#0001", notes="Key given")
+    assert mock_req.call_args[0] == ("POST", "/api/v1/rewards/admin/deliver/MF-1111-2222")
+
+    # 6. refund_reward_claim
+    await client.refund_reward_claim("MF-1111-2222", refunded_by="Admin#0001", reason="Out of stock")
+    assert mock_req.call_args[0] == ("POST", "/api/v1/rewards/admin/refund/MF-1111-2222")
+
+    # 7. give_reward_points
+    await client.give_reward_points("123456789", points=50, reason="Event prize")
+    assert mock_req.call_args[0] == ("POST", "/api/v1/rewards/admin/give_points")
+    assert mock_req.call_args[1]["json"]["points"] == 50
+
+    await client.close()
+

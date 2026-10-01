@@ -3,15 +3,17 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 from sqlmodel import select, func, text, col
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.connections.databases.db import Player, Membership, Role, PlayerRole, MatchPlayerStats, PlayerSession
+from src.connections.databases.db import Player, SteamLinkRedemption, Membership, Role, PlayerRole, MatchPlayerStats, PlayerSession, Ban
 from src.connections.apis.steam import get_player_summary, get_player_summaries
 from src.modules.v1.schemas.dtos import LinkAccountRequest, UnlinkAccountRequest, EditPlayerRequest
 
 class PlayersService:
     @staticmethod
-    async def link_account(req: LinkAccountRequest, session: AsyncSession) -> Dict[str, Any]:
+    async def link_account(req: LinkAccountRequest, session: AsyncSession, redemption: Optional[SteamLinkRedemption] = None) -> Dict[str, Any]:
         # 1. Validar que el SteamID no esté ya vinculado a otra cuenta de Discord
         player = await session.get(Player, req.steam_id)
         if player and player.discord_id and player.discord_id != req.discord_id:
@@ -30,14 +32,41 @@ class PlayersService:
                 detail=f"Tu cuenta de Discord ya está vinculada al Steam ID '{existing_discord.steam_id}'. Usa /player unlink primero."
             )
 
-        if not player:
-            player = Player(steam_id=req.steam_id, discord_id=req.discord_id)
-            session.add(player)
-        else:
-            player.discord_id = req.discord_id
-            session.add(player)
-        await session.commit()
-        return {"ok": True, "message": "Account linked"}
+        if existing_discord is not None or (player and player.discord_id == req.discord_id):
+            return {"ok": True, "message": "Account already linked", "already_linked": True}
+
+        try:
+            if redemption is not None:
+                session.add(redemption)
+                await session.flush()
+            if not player:
+                session.add(Player(steam_id=req.steam_id, discord_id=req.discord_id))
+            else:
+                # Compare-and-set prevents two Discord users claiming the same unlinked player.
+                result = await session.exec(
+                    update(Player).where(
+                        Player.steam_id == req.steam_id, Player.discord_id.is_(None)
+                    ).values(discord_id=req.discord_id)
+                )
+                if result.rowcount != 1:
+                    await session.rollback()
+                    return await PlayersService._resolve_link_race(req, session)
+            await session.commit()
+        except IntegrityError:
+            # PK + unique discord_id also protect simultaneous new-player inserts.
+            await session.rollback()
+            return await PlayersService._resolve_link_race(req, session)
+        return {"ok": True, "message": "Account linked", "already_linked": False}
+
+    @staticmethod
+    async def _resolve_link_race(req: LinkAccountRequest, session: AsyncSession) -> Dict[str, Any]:
+        player = await session.get(Player, req.steam_id)
+        if player and player.discord_id == req.discord_id:
+            return {"ok": True, "message": "Account already linked", "already_linked": True}
+        raise HTTPException(
+            status_code=409,
+            detail="Una de las cuentas ya está vinculada. Actualizá la página para ver su estado; no se reemplazó la vinculación.",
+        )
 
     @staticmethod
     async def unlink_account(req: UnlinkAccountRequest, session: AsyncSession) -> Dict[str, Any]:
@@ -58,6 +87,7 @@ class PlayersService:
             raise HTTPException(status_code=404, detail="Player not found")
         return {
             "steam_id": player.steam_id,
+            "in_game_name": player.in_game_name,
             "custom_welcome_message": player.custom_welcome_message,
             "observations": player.observations,
         }
@@ -100,8 +130,15 @@ class PlayersService:
             else:
                 active_roles.append(sr.code)
                 
+        stmt_ban = select(Ban).where(Ban.steam_id == steam_id, Ban.is_active == True)
+        active_ban = (await session.exec(stmt_ban)).first()
+        is_banned = active_ban is not None
+
         primary_role = None
-        if any(r in ("ADMIN", "OWNER", "SUPERVISOR") for r in active_roles):
+        if is_banned:
+            primary_role = "BANNED"
+            active_memberships = []
+        elif any(r in ("ADMIN", "OWNER", "SUPERVISOR") for r in active_roles):
             primary_role = "ADMIN"
         elif any("VIP" in r or "FUNDADOR" in r for r in active_roles):
             primary_role = "VIP"
@@ -116,6 +153,7 @@ class PlayersService:
             "custom_welcome_message": player.custom_welcome_message,
             "observations": player.observations,
             "active_role": primary_role,
+            "is_banned": is_banned,
             "memberships": active_memberships,
             "active_memberships": active_memberships,
             "special_roles": [r.name if (r.name and not r.name.isdigit()) else r.code for r in special_roles if r.role_type == "SPECIAL"]
@@ -184,23 +222,25 @@ class PlayersService:
 
     @staticmethod
     async def get_paginated_players(page: int, limit: int, linked: str, session: AsyncSession) -> Dict[str, Any]:
-        statement = select(Player)
+        # Build the optional filter once and reuse it in both count and data queries.
+        linked_filter = None
         if linked == "linked":
-            statement = statement.where(Player.discord_id != None)
+            linked_filter = Player.discord_id != None
         elif linked == "unlinked":
-            statement = statement.where(Player.discord_id == None)
-            
-        total_statement = select(func.count(col(Player.steam_id)))
-        if linked == "linked":
-            total_statement = total_statement.where(Player.discord_id != None)
-        elif linked == "unlinked":
-            total_statement = total_statement.where(Player.discord_id == None)
-        total = (await session.exec(total_statement)).one()
-        
-        offset = (page - 1) * limit
-        statement = statement.order_by(col(Player.steam_id)).offset(offset).limit(limit)
-        db_players = (await session.exec(statement)).all()
-        
+            linked_filter = Player.discord_id == None
+
+        count_stmt = select(func.count(col(Player.steam_id)))
+        data_stmt = select(Player)
+        if linked_filter is not None:
+            count_stmt = count_stmt.where(linked_filter)
+            data_stmt = data_stmt.where(linked_filter)
+
+        total = (await session.exec(count_stmt)).one()
+
+        offset = max(0, (page - 1) * limit)
+        data_stmt = data_stmt.order_by(col(Player.steam_id)).offset(offset).limit(limit)
+        db_players = (await session.exec(data_stmt)).all()
+
         paginated_results: List[Dict[str, Any]] = []
         for p in db_players:
             paginated_results.append({
@@ -208,7 +248,8 @@ class PlayersService:
                 "discord_id": p.discord_id,
                 "is_online": False,
                 "is_linked": p.discord_id is not None,
-                "name": "Sin Nickname"
+                "name": p.in_game_name or "Sin Nickname",
+                "avatar_url": p.avatar_url
             })
             
         steam_ids = [p["steam_id"] for p in paginated_results]

@@ -23,10 +23,13 @@ class APIClient:
         if self._session and not self._session.closed:
             await self._session.close()
 
+    DEFAULT_API_TIMEOUT = 15.0
+
     async def _request(self, method: str, endpoint: str, **kwargs) -> Any:
         url = f"{self.base_url}{endpoint}"
         session = await self._get_session()
-        async with session.request(method, url, **kwargs) as response:
+        timeout = kwargs.pop("timeout", aiohttp.ClientTimeout(total=self.DEFAULT_API_TIMEOUT))
+        async with session.request(method, url, timeout=timeout, **kwargs) as response:
             if response.status >= 400:
                 detail = None
                 try:
@@ -269,13 +272,20 @@ class APIClient:
         except Exception:
             return None
 
-    async def get_all_roles(self) -> List[Dict[str, Any]]:
+    async def get_all_roles(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
+        import time
+        now = time.time()
+        if not force_refresh and hasattr(self, "_roles_cache") and self._roles_cache and (now - self._roles_cache[0] < 15):
+            return self._roles_cache[1]
         try:
-            return await self._request("GET", "/api/v1/db/roles")
+            roles = await self._request("GET", "/api/v1/db/roles")
+            self._roles_cache = (now, roles)
+            return roles
         except Exception:
-            return []
+            return getattr(self, "_roles_cache", (0, []))[1] if getattr(self, "_roles_cache", None) else []
 
     async def register_role(self, code: str, name: str, role_type: str, discord_role_id: str) -> None:
+        self._roles_cache = None
         payload = schemas.RoleRegisterRequest(
             code=code,
             name=name,
@@ -283,6 +293,12 @@ class APIClient:
             discord_role_id=discord_role_id
         ).model_dump()
         await self._request("POST", "/api/v1/db/roles", json=payload)
+
+    async def give_player_role(self, steam_id: str, role_id: str) -> None:
+        await self.add_special_role(steam_id, role_id)
+
+    async def remove_player_role(self, steam_id: str, role_id: str) -> None:
+        await self.remove_special_role(steam_id, role_id)
 
     # RCON Server management endpoints
     async def get_rcon_servers(self) -> List[Dict[str, Any]]:
@@ -342,5 +358,35 @@ class APIClient:
 
     async def delete_membership_type(self, type_id: int) -> Dict[str, Any]:
         return await self._request("DELETE", f"/api/v1/membership-types/{type_id}")
+
+    # Rewards & Seeding
+    async def get_rewards_catalog(self, only_active: bool = True) -> List[Dict[str, Any]]:
+        return await self._request("GET", f"/api/v1/rewards/catalog?only_active={only_active}")
+
+    async def get_player_rewards_balance(self, identifier: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/rewards/balance/{identifier}")
+
+    async def claim_reward(self, player_identifier: str, reward_code: str) -> Dict[str, Any]:
+        payload = schemas.ClaimRewardRequest(player_identifier=player_identifier, reward_code=reward_code).model_dump()
+        return await self._request("POST", "/api/v1/rewards/claim", json=payload)
+
+    async def create_or_update_reward_item(self, **kwargs) -> Dict[str, Any]:
+        req = schemas.CreateRewardItemRequest(**kwargs)
+        return await self._request("POST", "/api/v1/rewards/admin/create", json=req.model_dump(exclude_none=True))
+
+    async def verify_reward_claim(self, claim_code: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/rewards/admin/verify/{claim_code}")
+
+    async def deliver_reward_claim(self, claim_code: str, delivered_by: str, notes: Optional[str] = None) -> Dict[str, Any]:
+        payload = schemas.DeliverClaimRequest(delivered_by=delivered_by, notes=notes).model_dump()
+        return await self._request("POST", f"/api/v1/rewards/admin/deliver/{claim_code}", json=payload)
+
+    async def refund_reward_claim(self, claim_code: str, refunded_by: str, reason: Optional[str] = None) -> Dict[str, Any]:
+        payload = schemas.RefundClaimRequest(refunded_by=refunded_by, reason=reason).model_dump()
+        return await self._request("POST", f"/api/v1/rewards/admin/refund/{claim_code}", json=payload)
+
+    async def give_reward_points(self, player_identifier: str, points: int, reason: Optional[str] = None) -> Dict[str, Any]:
+        payload = schemas.GiveRewardPointsRequest(player_identifier=player_identifier, points=points, reason=reason).model_dump()
+        return await self._request("POST", "/api/v1/rewards/admin/give_points", json=payload)
 
 

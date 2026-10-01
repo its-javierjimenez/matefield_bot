@@ -5,7 +5,9 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 async def post_migration_prod():
     cfg = dotenv_values(".env.prod")
-    db_url = cfg.get("DATABASE_URL", "")
+    db_url = cfg.get("DATABASE_URL")
+    if not db_url:
+        raise ValueError("DATABASE_URL not found in .env.prod")
     engine = create_async_engine(db_url)
     
     print("=== ASIGNANDO ROLES ADMIN EN PROD ===")

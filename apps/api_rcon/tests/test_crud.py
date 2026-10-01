@@ -4,7 +4,7 @@ from httpx import AsyncClient
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.connections.databases.db import Player, Membership, Role, PlayerRole
+from src.connections.databases.db import Player, Membership, Role, PlayerRole, MembershipType
 
 
 @pytest.mark.asyncio
@@ -93,6 +93,9 @@ async def test_edit_player(client: AsyncClient, session: AsyncSession):
 async def test_edit_membership_dynamic_date_adjustment(client: AsyncClient, session: AsyncSession):
     now = datetime.now(timezone.utc)
     p = Player(steam_id="dynamic_user_1")
+    # Register membership types so edit_membership resolves days from DB
+    mt_express = MembershipType(code="VIP_EXPRESS", name="VIP Express", default_days=15, is_active=True)
+    mt_perm = MembershipType(code="VIP_PERMANENTE", name="VIP Permanente", default_days=0, is_active=True)
     m = Membership(
         steam_id="dynamic_user_1",
         membership_type="VIP_COMUN",
@@ -101,10 +104,12 @@ async def test_edit_membership_dynamic_date_adjustment(client: AsyncClient, sess
         end_time=now + timedelta(days=30)
     )
     session.add(p)
+    session.add(mt_express)
+    session.add(mt_perm)
     session.add(m)
     await session.commit()
 
-    # 1. Edit type to VIP_EXPRESS without passing days -> adjusts to 15 days
+    # 1. Edit type to VIP_EXPRESS without passing days -> adjusts to 15 days (from MembershipType.default_days)
     resp1 = await client.put(f"/api/v1/db/memberships/{m.id}", json={
         "membership_type": "VIP_EXPRESS"
     })
@@ -114,7 +119,7 @@ async def test_edit_membership_dynamic_date_adjustment(client: AsyncClient, sess
     assert m.end_time is not None
     assert (m.end_time - m.start_time).days == 15
 
-    # 2. Edit type to VIP_PERMANENTE without passing days -> end_time becomes None
+    # 2. Edit type to VIP_PERMANENTE without passing days -> end_time becomes None (default_days=0)
     resp2 = await client.put(f"/api/v1/db/memberships/{m.id}", json={
         "membership_type": "VIP_PERMANENTE"
     })

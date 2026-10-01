@@ -239,4 +239,13 @@ from wardogs_schemas.dtos import (
     RconServerSyncResultItem,
     RconServersSyncAllResponse,
     ExportMembershipsResponse,
+    CreateRewardItemRequest,
+    ClaimRewardRequest,
+    DeliverClaimRequest,
+    RefundClaimRequest,
+    GiveRewardPointsRequest,
+    RewardItemResponse,
+    RewardClaimResponse,
+    PlayerRewardBalanceResponse,
 )
+

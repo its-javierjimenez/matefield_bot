@@ -4,10 +4,10 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
-from sqlmodel import select, col
+from sqlmodel import select, col, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.connections.databases.db import RconServer
+from src.connections.databases.db import RconServer, Membership, Ban
 from src.connections.apis.rcon import RCONManager, RCONClient
 from src.modules.v1.schemas.dtos import CreateRconServerRequest, UpdateRconServerRequest
 
@@ -223,9 +223,6 @@ class RconServersService:
     @staticmethod
     async def sync_all_servers(session: AsyncSession) -> Dict[str, Any]:
         active_servers = await RCONManager.get_all_active_servers(session)
-
-        from src.connections.databases.db import Membership, Ban
-        from sqlmodel import or_
 
         ban_stmt = select(Ban.steam_id).where(Ban.is_active == True).distinct()
         ban_ids = list(set((await session.exec(ban_stmt)).all()))

@@ -1,9 +1,27 @@
+"""
+RCON API client and connection pool manager.
+
+Provides:
+- ``RCONClient``: thin async HTTP client for a single game-server RCON API.
+- ``RCONManager``: class-level pool that routes requests to the correct
+  ``RCONClient`` by (base_url, password) key and falls back to the
+  .env-configured server when no DB rows are active.
+- ``_update_ini_array`` / ``_is_array_directive``: helpers for patching
+  Unreal Engine INI arrays (reserved/banned slots) in-place.
+"""
 import aiohttp
+import json
 import time
 import asyncio
-from typing import Any, Optional, Dict, Tuple
+from typing import Any, Optional
+from urllib.parse import urlparse
+from sqlmodel import select, col
 from wardogs_schemas import v1 as schemas
 from src.config import ENVIRONMENT_SETTINGS
+
+# Networking and Cache Constants
+DEFAULT_RCON_CACHE_TTL = 3.0
+DEFAULT_RCON_REQUEST_TIMEOUT = 10.0
 
 
 def _is_array_directive(line: str, key_prefix: str) -> bool:
@@ -84,7 +102,7 @@ class RCONClient:
         self._cache = {}
         self._cache_lock = asyncio.Lock()
         self._config_lock = ReentrantAsyncLock()
-        self._cache_ttl = 3.0
+        self._cache_ttl = DEFAULT_RCON_CACHE_TTL
         self._session: Optional[aiohttp.ClientSession] = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
@@ -114,7 +132,8 @@ class RCONClient:
     async def _request(self, method: str, endpoint: str, **kwargs) -> Any:
         url = f"{self.base_url}{endpoint}"
         session = await self._get_session()
-        async with session.request(method, url, **kwargs) as response:
+        timeout = kwargs.pop("timeout", aiohttp.ClientTimeout(total=DEFAULT_RCON_REQUEST_TIMEOUT))
+        async with session.request(method, url, timeout=timeout, **kwargs) as response:
             response.raise_for_status()
             if "application/json" in response.headers.get("Content-Type", ""):
                 return await response.json()
@@ -152,7 +171,7 @@ class RCONClient:
         # Try live route /v1/bans first (build CL-499480 & CL-501228 serve this)
         try:
             data = await self._request("GET", "/v1/bans")
-            if isinstance(data, dict) and "bans" in data and data["bans"]:
+            if isinstance(data, dict) and "bans" in data:
                 return [b["steamId"] for b in data["bans"] if isinstance(b, dict) and b.get("steamId")]
         except Exception:
             pass
@@ -191,7 +210,6 @@ class RCONClient:
     async def get_config(self) -> schemas.Config1:
         data = await self._request("GET", "/v1/config")
         if isinstance(data, str):
-            import json
             data = json.loads(data)
         return schemas.Config1.model_validate(data)
 
@@ -203,7 +221,6 @@ class RCONClient:
             }
             data = await self._request("PUT", "/v1/config?force=true&fullApply=true", headers=headers, data=new_text)
             if isinstance(data, str):
-                import json
                 data = json.loads(data)
             return schemas.ConfigResult.model_validate(data)
         
@@ -276,38 +293,39 @@ class RCONManager:
     @classmethod
     def get_client_for_server(cls, server: Any) -> RCONClient:
         return cls.get_client(server.base_url, server.password)
-        return cls.get_client(server.base_url, server.password)
+
+    @classmethod
+    def _get_fallback_server(cls) -> Any:
+        """Constructs a fallback RconServer instance from .env configurations."""
+        from src.connections.databases.db import RconServer
+        clean_url = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_URL.rstrip("/")
+        parsed = urlparse(clean_url if "://" in clean_url else f"http://{clean_url}")
+        scheme = parsed.scheme or "http"
+        ip = parsed.hostname or "127.0.0.1"
+        port = parsed.port or (443 if scheme == "https" else 80)
+        return RconServer(
+            id=0,
+            name="Default (.env)",
+            ip=ip,
+            port=port,
+            password=ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_PASSWORD,
+            scheme=scheme,
+            is_active=True,
+            is_default=True
+        )
 
     @classmethod
     async def get_all_active_servers(cls, session: Any) -> list[tuple[Any, RCONClient]]:
-        from sqlmodel import select, col
         from src.connections.databases.db import RconServer
         stmt = select(RconServer).where(RconServer.is_active == True).order_by(col(RconServer.is_default).desc(), col(RconServer.id))
         servers = (await session.exec(stmt)).all()
         if not servers:
-            # Fallback to .env configuration if DB has no registered servers
-            clean_url = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_URL.rstrip("/")
-            scheme = "https" if clean_url.startswith("https://") else "http"
-            host_port = clean_url.replace("https://", "").replace("http://", "")
-            parts = host_port.split(":")
-            ip = parts[0]
-            port = int(parts[1]) if len(parts) > 1 else (443 if scheme == "https" else 80)
-            fallback = RconServer(
-                id=0,
-                name="Default (.env)",
-                ip=ip,
-                port=port,
-                password=ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_PASSWORD,
-                scheme=scheme,
-                is_active=True,
-                is_default=True
-            )
+            fallback = cls._get_fallback_server()
             return [(fallback, cls.get_client(fallback.base_url, fallback.password))]
         return [(s, cls.get_client_for_server(s)) for s in servers]
 
     @classmethod
     async def get_default_server(cls, session: Any) -> tuple[Any, RCONClient]:
-        from sqlmodel import select, col
         from src.connections.databases.db import RconServer
         stmt = select(RconServer).where(RconServer.is_active == True, RconServer.is_default == True)
         default_server = (await session.exec(stmt)).first()
@@ -318,23 +336,7 @@ class RCONManager:
         if default_server:
             return default_server, cls.get_client_for_server(default_server)
 
-        # Fallback to .env configuration
-        clean_url = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_URL.rstrip("/")
-        scheme = "https" if clean_url.startswith("https://") else "http"
-        host_port = clean_url.replace("https://", "").replace("http://", "")
-        parts = host_port.split(":")
-        ip = parts[0]
-        port = int(parts[1]) if len(parts) > 1 else (443 if scheme == "https" else 80)
-        fallback = RconServer(
-            id=0,
-            name="Default (.env)",
-            ip=ip,
-            port=port,
-            password=ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.RCON_PASSWORD,
-            scheme=scheme,
-            is_active=True,
-            is_default=True
-        )
+        fallback = cls._get_fallback_server()
         return fallback, cls.get_client(fallback.base_url, fallback.password)
 
 

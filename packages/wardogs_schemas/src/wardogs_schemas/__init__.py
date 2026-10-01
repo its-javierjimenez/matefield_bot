@@ -24,6 +24,14 @@ from wardogs_schemas.dtos import (
     RconServerSyncResultItem,
     RconServersSyncAllResponse,
     ExportMembershipsResponse,
+    CreateRewardItemRequest,
+    ClaimRewardRequest,
+    DeliverClaimRequest,
+    RefundClaimRequest,
+    GiveRewardPointsRequest,
+    RewardItemResponse,
+    RewardClaimResponse,
+    PlayerRewardBalanceResponse,
 )
 from wardogs_schemas.steam_token import (
     create_steam_link_token,
@@ -57,7 +65,16 @@ __all__ = [
     "RconServerSyncResultItem",
     "RconServersSyncAllResponse",
     "ExportMembershipsResponse",
+    "CreateRewardItemRequest",
+    "ClaimRewardRequest",
+    "DeliverClaimRequest",
+    "RefundClaimRequest",
+    "GiveRewardPointsRequest",
+    "RewardItemResponse",
+    "RewardClaimResponse",
+    "PlayerRewardBalanceResponse",
     "create_steam_link_token",
     "verify_steam_link_token",
 ]
+
 

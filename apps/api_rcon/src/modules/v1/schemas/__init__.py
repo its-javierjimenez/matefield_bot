@@ -11,6 +11,14 @@ from src.modules.v1.schemas.dtos import (
     RoleRegisterRequest,
     PlayerBanRequest,
     UnbanRequest,
+    CreateRewardItemRequest,
+    ClaimRewardRequest,
+    DeliverClaimRequest,
+    RefundClaimRequest,
+    GiveRewardPointsRequest,
+    RewardItemResponse,
+    RewardClaimResponse,
+    PlayerRewardBalanceResponse,
 )
 
 __all__ = [
@@ -26,4 +34,12 @@ __all__ = [
     "RoleRegisterRequest",
     "PlayerBanRequest",
     "UnbanRequest",
+    "CreateRewardItemRequest",
+    "ClaimRewardRequest",
+    "DeliverClaimRequest",
+    "RefundClaimRequest",
+    "GiveRewardPointsRequest",
+    "RewardItemResponse",
+    "RewardClaimResponse",
+    "PlayerRewardBalanceResponse",
 ]

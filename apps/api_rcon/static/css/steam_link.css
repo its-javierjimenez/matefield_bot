@@ -1,0 +1,89 @@
+* { box-sizing: border-box; }
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  padding: 18px;
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background:
+    radial-gradient(circle at 50% 12%, var(--glow-top), transparent 42%),
+    radial-gradient(circle at 50% 100%, var(--glow-bottom), transparent 38%),
+    var(--background);
+}
+
+.page {
+  min-height: calc(100vh - 36px);
+  display: grid;
+  place-content: center;
+  justify-items: center;
+}
+
+.brand {
+  margin-bottom: 24px;
+  color: #fff;
+  text-align: center;
+  user-select: none;
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+}
+
+.brand-logo {
+  width: 84px;
+  height: 84px;
+  padding: 5px;
+  border: 2px solid rgba(240, 184, 0, 0.8);
+  border-radius: 19px;
+  background: #15170d;
+  box-shadow: 0 0 18px rgba(240, 184, 0, 0.3);
+}
+
+.brand-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 12px;
+}
+
+.brand-copy { text-align: left; }
+
+.brand-name {
+  font-family: Rajdhani, Inter, sans-serif;
+  font-size: clamp(46px, 8vw, 68px);
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  line-height: 0.85;
+}
+
+.brand-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 13px;
+  font-family: Rajdhani, Inter, sans-serif;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.23em;
+}
+
+.brand-subtitle strong {
+  padding: 3px 10px 4px;
+  border-radius: 3px;
+  color: #14110a;
+  background: var(--gold);
+  letter-spacing: 0.16em;
+}
+
+.tagline {
+  margin: 14px 0 0;
+  color: #a6b0c0;
+  font-family: Rajdhani, Inter, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4em;
+}

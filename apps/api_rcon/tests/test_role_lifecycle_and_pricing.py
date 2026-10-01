@@ -46,6 +46,7 @@ async def test_vip_expiry_revokes_vip_role_but_preserves_special_role(session: A
     session.add(player)
     await session.commit()
 
+    assert vip_role.id is not None and fundador_role.id is not None
     pr_vip = PlayerRole(steam_id="STEAM_FOUNDER_VIP", role_id=vip_role.id)
     pr_fundador = PlayerRole(steam_id="STEAM_FOUNDER_VIP", role_id=fundador_role.id)
     session.add(pr_vip)
@@ -101,6 +102,7 @@ async def test_multiple_active_vip_memberships_same_role(session: AsyncSession, 
 
     player = Player(steam_id="STEAM_MULTI_VIP", discord_id="888888888")
     session.add(player)
+    assert vip_role.id is not None
     session.add(PlayerRole(steam_id="STEAM_MULTI_VIP", role_id=vip_role.id))
 
     # One expired membership, one active membership
@@ -189,6 +191,7 @@ async def test_player_profile_isolates_special_roles(session: AsyncSession):
 
     player = Player(steam_id="STEAM_PROFILE_TEST", in_game_name="ElPadrino", observations="Buen jugador")
     session.add(player)
+    assert vip_role.id is not None and fundador_role.id is not None
     session.add(PlayerRole(steam_id="STEAM_PROFILE_TEST", role_id=vip_role.id))
     session.add(PlayerRole(steam_id="STEAM_PROFILE_TEST", role_id=fundador_role.id))
     await session.commit()
@@ -349,6 +352,8 @@ async def test_membership_edit_type_updates_granted_role(session: AsyncSession, 
     assert add_resp.status_code == 200
 
     m_row = (await session.exec(select(Membership).where(Membership.steam_id == "STEAM_EDIT_TYPE", Membership.is_active == True))).first()
+    assert m_row is not None and m_row.id is not None
+    assert r1.id is not None and r2.id is not None
     assert m_row.role_granted_id == r1.id
 
     # Edit membership to VIP_TYPE_B

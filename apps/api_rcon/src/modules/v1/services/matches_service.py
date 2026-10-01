@@ -8,7 +8,7 @@ from src.connections.databases.db import Match, MatchTeamStats, MatchPlayerStats
 class MatchesService:
     @staticmethod
     async def get_paginated_matches(page: int, limit: int, session: AsyncSession) -> Dict[str, Any]:
-        offset = (page - 1) * limit
+        offset = max(0, (page - 1) * limit)
         statement = select(Match).order_by(col(Match.start_time).desc()).offset(offset).limit(limit)
         matches = (await session.exec(statement)).all()
         

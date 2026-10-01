@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="title">
+  <title>Avatar de prueba estilo Steam</title>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#284c62"/>
+      <stop offset="1" stop-color="#0b1825"/>
+    </linearGradient>
+  </defs>
+  <rect width="240" height="240" rx="42" fill="url(#background)"/>
+  <path d="M0 29 240 0v69L0 116Z" fill="#5d9ab6" opacity=".16"/>
+  <path d="M0 195c40-35 76-44 121-34 36 8 73 32 119 68v11H0Z" fill="#07111b" opacity=".64"/>
+  <path d="M47 240c6-55 35-83 73-83s67 28 73 83" fill="#283a33"/>
+  <path d="M70 168c9-24 32-35 50-35 20 0 42 11 51 35l-13 41H82Z" fill="#5a6a52"/>
+  <ellipse cx="120" cy="102" rx="48" ry="55" fill="#d7a376"/>
+  <path d="M72 93c4-47 27-66 48-66 35 0 55 24 49 66-18-3-37-15-53-31-7 12-22 25-44 31Z" fill="#202824"/>
+  <path d="M66 93c3-25 20-47 42-56l-8-20h40l-4 20c26 6 39 29 39 56l-18-7-4-22-64 5-5 23Z" fill="#3a4c3c"/>
+  <path d="M69 83h102" stroke="#91a779" stroke-width="9"/>
+  <circle cx="102" cy="108" r="5" fill="#192018"/>
+  <circle cx="139" cy="108" r="5" fill="#192018"/>
+  <path d="M108 133c7 5 17 5 24 0" fill="none" stroke="#935d4d" stroke-linecap="round" stroke-width="5"/>
+  <path d="M94 157c12 10 38 10 52 0" fill="none" stroke="#bfc99a" stroke-width="9"/>
+  <path d="M61 46 85 24M181 42l-21-24" stroke="#9ccce0" stroke-linecap="round" stroke-width="5" opacity=".7"/>
+</svg>

@@ -1,12 +1,22 @@
+"""
+Database models (SQLModel / SQLAlchemy) and engine setup.
+
+All ORM tables are defined here so that ``SQLModel.metadata.sorted_tables``
+returns them in correct foreign-key dependency order for the backup service.
+
+The async engine and ``get_session`` dependency are also exported from this
+module so that routers and services have a single import point for DB access.
+"""
 from typing import Optional, List
-from sqlmodel import Field, Session, SQLModel, create_engine, Relationship
-from datetime import datetime, timezone
+from sqlmodel import Field, SQLModel, Relationship
+from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy import Column, DateTime, BigInteger, ForeignKey, Text
+from sqlalchemy.ext.asyncio import create_async_engine
+from datetime import datetime, timezone
+from enum import Enum
 import uuid
 
 from src.config import ENVIRONMENT_SETTINGS
-
-from enum import Enum
 
 class RoleType(str, Enum):
     SYSTEM = "SYSTEM"
@@ -44,11 +54,13 @@ class Player(SQLModel, table=True):
     observations: Optional[str] = Field(default=None)
     in_game_name: Optional[str] = Field(default=None)
     avatar_url: Optional[str] = Field(default=None)
+    reward_points: int = Field(default=0)
     
     # Relationships
     roles: List[Role] = Relationship(back_populates="players", link_model=PlayerRole)
     memberships: List["Membership"] = Relationship(back_populates="player")
     match_stats: List["MatchPlayerStats"] = Relationship(back_populates="player")
+    reward_claims: List["RewardClaim"] = Relationship(back_populates="player")
 
 
 class Membership(SQLModel, table=True):
@@ -83,6 +95,7 @@ class PlayerSession(SQLModel, table=True):
     
     total_seconds: int = Field(default=0)
     seeding_seconds: int = Field(default=0)
+    rewarded_seeding_seconds: int = Field(default=0)
 
 class Ban(SQLModel, table=True):
     __tablename__ = "bans"
@@ -140,6 +153,12 @@ class MatchPlayerStats(SQLModel, table=True):
     match: Match = Relationship(back_populates="player_stats")
     player: Player = Relationship(back_populates="match_stats")
     team: Optional[Team] = Relationship()
+
+
+class SteamLinkRedemption(SQLModel, table=True):
+    __tablename__ = "steam_link_redemptions"
+    token_hash: str = Field(primary_key=True)
+    expires_at: int = Field(index=True)
 
 
 class BotConfig(SQLModel, table=True):
@@ -204,13 +223,47 @@ class RconServer(SQLModel, table=True):
         return f"{self.scheme}://{self.ip}:{self.port}"
 
 
-from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlalchemy.ext.asyncio import create_async_engine
+class RewardItem(SQLModel, table=True):
+    __tablename__ = "reward_items"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    code: str = Field(unique=True, index=True)
+    name: str
+    description: Optional[str] = Field(default=None)
+    cost_points: int = Field(default=1)
+    delivery_type: str = Field(default="AUTOMATIC") # AUTOMATIC or MANUAL_TICKET
+    reward_type: str = Field(default="MEMBERSHIP")  # MEMBERSHIP, ROLE, CUSTOM
+    reward_value: str = Field(default="")           # Membership type code, role code, or custom item
+    duration_days: Optional[int] = Field(default=None)
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
+
+    claims: List["RewardClaim"] = Relationship(back_populates="reward")
+
+
+class RewardClaim(SQLModel, table=True):
+    __tablename__ = "reward_claims"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    steam_id: str = Field(foreign_key="players.steam_id", index=True)
+    reward_id: int = Field(foreign_key="reward_items.id", index=True)
+    claim_code: str = Field(unique=True, index=True)
+    status: str = Field(default="PENDING", index=True) # PENDING, DELIVERED, REFUNDED
+    points_spent: int = Field(default=0)
+    claimed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
+    delivered_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    delivered_by: Optional[str] = Field(default=None)
+    notes: Optional[str] = Field(default=None)
+
+    # Relationships
+    reward: Optional[RewardItem] = Relationship(back_populates="claims")
+    player: Optional[Player] = Relationship(back_populates="reward_claims")
+
 
 # --- Database Setup ---
 engine = create_async_engine(ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.DATABASE_URL, echo=False)
 
-async def get_session():
-    async with AsyncSession(engine) as session:
-        yield session
 
+async def get_session():
+    """FastAPI dependency that yields an async database session."""
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        yield session

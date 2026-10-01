@@ -19,4 +19,8 @@ leaderboard_group = crescent.Group("leaderboard", "Top jugadores")
 ban_role_group = crescent.Group("ban_role", "Mapeo de roles a baneos", hooks=[admin_only])
 rcon_group = crescent.Group("rcon", "Gestión de servidores RCON", hooks=[admin_only])
 membership_type_group = crescent.Group("membership_type", "Gestión de paquetes y tipos de membresía", hooks=[admin_only])
-role_group = crescent.Group("role", "Configuración de roles", hooks=[admin_only])
+role_group = crescent.Group("role", "Configuración de roles", hooks=[admin_only])
+
+rewards_group = crescent.Group("rewards", "Sistema de puntos y recompensas")
+rewards_admin_group = rewards_group.sub_group("admin", "Administración del sistema de recompensas", hooks=[admin_only])
+

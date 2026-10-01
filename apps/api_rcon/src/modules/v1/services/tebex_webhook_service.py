@@ -9,7 +9,7 @@ from sqlmodel import select, func, or_, col
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.config import ENVIRONMENT_SETTINGS
-from src.connections.databases.db import Player, Membership, PaymentRecord, MembershipType
+from src.connections.databases.db import Player, Membership, PaymentRecord, MembershipType, PlayerRole
 from src.modules.v1.schemas.dtos import AddMembershipRequest
 from src.modules.v1.services.memberships_service import MembershipsService
 from src.modules.v1.services.membership_types_service import MembershipTypesService
@@ -217,20 +217,15 @@ class TebexWebhookService:
             if m_type:
                 return m_type
 
-            # Substring matching
-            if "EXPRESS" in pkg_name:
-                m_type = (await session.exec(
-                    select(MembershipType).where(MembershipType.code == "VIP_EXPRESS")
-                )).first()
-                if m_type:
-                    return m_type
-
-            if "COMUN" in pkg_name or "COMMON" in pkg_name:
-                m_type = (await session.exec(
-                    select(MembershipType).where(MembershipType.code == "VIP_COMUN")
-                )).first()
-                if m_type:
-                    return m_type
+            # Generic substring fallback: find the first active type whose code
+            # appears as a substring of the normalised package name.
+            # This is more extensible than hardcoding individual product keywords.
+            all_active = (await session.exec(
+                select(MembershipType).where(MembershipType.is_active == True).order_by(col(MembershipType.id))
+            )).all()
+            for candidate in all_active:
+                if candidate.code.upper() in norm_name or candidate.name.upper() in pkg_name:
+                    return candidate
 
         # Default fallback
         return (await session.exec(
@@ -245,47 +240,26 @@ class TebexWebhookService:
     ) -> Dict[str, Any]:
         """
         Dispatches the parsed Tebex webhook event to the appropriate handler.
+
+        Adding support for a new event type requires only one entry in the
+        ``_HANDLERS`` dispatch table — no new ``if`` block needed.
         """
         event_type = payload.get("type", "")
         event_id = payload.get("id", "")
 
-        # 1. Tebex Endpoint Handshake / Validation Event
         if event_type == "validation.webhook":
-            logger.info(f"[Tebex] Responding to validation handshake for event ID: {event_id}")
+            logger.info("[Tebex] Responding to validation handshake for event ID: %s", event_id)
             return {"id": event_id}
 
-        logger.info(f"[Tebex] Received webhook event: {event_type} (ID: {event_id})")
+        logger.info("[Tebex] Received webhook event: %s (ID: %s)", event_type, event_id)
 
-        # 2. Payment Completed (New Purchase)
-        if event_type == "payment.completed":
-            return await TebexWebhookService.process_payment_completed(payload, raw_payload_str, session)
+        # _WEBHOOK_HANDLERS is a module-level dict built once at import time.
+        handler = _WEBHOOK_HANDLERS.get(event_type)
+        if handler:
+            return await handler(payload, raw_payload_str, session)
 
-        # 3. Recurring Payment Started
-        if event_type in ("recurring-payment.started", "recurring-payment-started"):
-            return await TebexWebhookService.process_recurring_started(payload, raw_payload_str, session)
-
-        # 4. Recurring Payment Renewed
-        if event_type == "recurring-payment.renewed":
-            return await TebexWebhookService.process_recurring_renewed(payload, raw_payload_str, session)
-
-        # 5. Recurring Payment Ended / Cancelled
-        if event_type in ("recurring-payment.ended", "recurring-payment.cancellation.requested"):
-            return await TebexWebhookService.process_recurring_ended(payload, raw_payload_str, session)
-
-        # 6. Recurring Payment Status Changed
-        if event_type in ("recurring-payment.status.changed", "recurring-payment.status-changed"):
-            return await TebexWebhookService.process_recurring_status_changed(payload, raw_payload_str, session)
-
-        # 7. Payment Refunded / Dispute Lost
-        if event_type in ("payment.refunded", "payment.dispute.lost"):
-            return await TebexWebhookService.process_payment_refunded(payload, raw_payload_str, session)
-
-        # Unhandled / Informational events (e.g. payment.declined, basket.abandoned)
-        return {
-            "status": "ignored",
-            "event": event_type,
-            "id": event_id
-        }
+        # Unhandled / informational (e.g. payment.declined, basket.abandoned)
+        return {"status": "ignored", "event": event_type, "id": event_id}
 
     @staticmethod
     async def process_payment_completed(
@@ -363,8 +337,26 @@ class TebexWebhookService:
         first_product = products[0] if products else {}
         m_type = await TebexWebhookService.resolve_membership_type(first_product, session)
 
-        membership_type_code = m_type.code if m_type else "VIP_COMUN"
-        days_to_add = m_type.default_days if m_type else 30
+        if not m_type:
+            logger.error(f"[Tebex] No membership type resolved for transaction {transaction_id}. No active types in DB?")
+            record = PaymentRecord(
+                transaction_id=transaction_id,
+                event_type="payment.completed",
+                steam_id=steam_id,
+                discord_id=discord_id,
+                status="IGNORED",
+                raw_payload=raw_payload_str
+            )
+            session.add(record)
+            await session.commit()
+            return {
+                "status": "ignored",
+                "reason": "No membership type could be resolved",
+                "transaction_id": transaction_id
+            }
+
+        membership_type_code = m_type.code
+        days_to_add = m_type.default_days
         sub_ref = subject.get("recurring_payment_reference")
 
         # 3. Create or extend membership
@@ -579,15 +571,15 @@ class TebexWebhookService:
             membership.is_active = True
             if membership.role_granted_id:
                 vip_pr = (await session.exec(select(PlayerRole).where(
-                    PlayerRole.steam_id == membership.steam_id,
-                    PlayerRole.role_id == membership.role_granted_id
+                    col(PlayerRole.steam_id) == membership.steam_id,
+                    col(PlayerRole.role_id) == membership.role_granted_id
                 ))).first()
                 if not vip_pr:
                     session.add(PlayerRole(steam_id=membership.steam_id, role_id=membership.role_granted_id))
             if membership.special_role_id:
                 sp_pr = (await session.exec(select(PlayerRole).where(
-                    PlayerRole.steam_id == membership.steam_id,
-                    PlayerRole.role_id == membership.special_role_id
+                    col(PlayerRole.steam_id) == membership.steam_id,
+                    col(PlayerRole.role_id) == membership.special_role_id
                 ))).first()
                 if not sp_pr:
                     session.add(PlayerRole(steam_id=membership.steam_id, role_id=membership.special_role_id))
@@ -794,3 +786,22 @@ class TebexWebhookService:
             "event": event_type,
             "revoked_count": len(revoked_memberships)
         }
+
+
+# ---------------------------------------------------------------------------
+# Webhook dispatch table (module-level — built once, not per-call).
+# Maps Tebex event type strings to their handler coroutines.
+# To support a new event type, add one entry here.
+# ---------------------------------------------------------------------------
+_WEBHOOK_HANDLERS: Dict[str, Any] = {
+    "payment.completed":                        TebexWebhookService.process_payment_completed,
+    "recurring-payment.started":                TebexWebhookService.process_recurring_started,
+    "recurring-payment-started":                TebexWebhookService.process_recurring_started,
+    "recurring-payment.renewed":                TebexWebhookService.process_recurring_renewed,
+    "recurring-payment.ended":                  TebexWebhookService.process_recurring_ended,
+    "recurring-payment.cancellation.requested": TebexWebhookService.process_recurring_ended,
+    "recurring-payment.status.changed":         TebexWebhookService.process_recurring_status_changed,
+    "recurring-payment.status-changed":         TebexWebhookService.process_recurring_status_changed,
+    "payment.refunded":                         TebexWebhookService.process_payment_refunded,
+    "payment.dispute.lost":                     TebexWebhookService.process_payment_refunded,
+}

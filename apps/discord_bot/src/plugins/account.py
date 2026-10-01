@@ -1,30 +1,110 @@
 import crescent
 import hikari
 import logging
+import os
+import re
 from typing import Optional
 from src.model import Model
-from src.hooks import check_is_admin, vip_or_admin, admin_only
+from src.hooks import check_is_admin, admin_only
 
 logger = logging.getLogger(__name__)
 
-plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 from src.groups import player_group
 from wardogs_schemas.steam_token import create_steam_link_token
 
+plugin = crescent.Plugin[hikari.GatewayBot, Model]()
+
+
+# UI / Theme Constants
+STEAM_LINK_EMOJI = hikari.Emoji.parse(os.environ.get("STEAM_LINK_EMOJI", "🎮"))
+COLOR_STEAM_DARK = 0x1B2838
+COLOR_PANEL_BLUE = 0x2B6CB0
+COLOR_PROFILE_DARK = 0x2B2D31
+MAX_WELCOME_MESSAGE_LENGTH = 60
+
+
+def _resolve_guild_id(guild_id: Optional[hikari.Snowflake] = None) -> Optional[hikari.Snowflake]:
+    """Resuelve el ID de la guild proporcionada o retorna la primera encontrada en caché."""
+    if guild_id:
+        return guild_id
+    try:
+        guilds = list(plugin.app.cache.get_guilds_view())
+        if guilds:
+            return guilds[0]
+    except Exception:
+        pass
+    return None
+
 
 def _build_user_steam_link(user: hikari.User, guild_id: Optional[hikari.Snowflake] = None) -> str:
+    """Genera una URL firmada de OpenID para vincular Steam con Discord de forma segura."""
     secret_key = plugin.model.api.api_key
-    disc_tag = f"#{user.discriminator}" if user.discriminator and user.discriminator != "0" else f"@{user.username}"
+    resolved_guild = _resolve_guild_id(guild_id)
     token = create_steam_link_token(
         discord_id=str(user.id),
         secret_key=secret_key,
-        guild_id=str(guild_id) if guild_id else None,
-        discord_username=user.global_name or user.username,
-        discord_tag=disc_tag,
-        discord_avatar=str(user.display_avatar_url)
+        guild_id=str(resolved_guild) if resolved_guild else None
     )
     public_url = plugin.model.public_api_url.rstrip("/")
     return f"{public_url}/api/v1/auth/steam/login?token={token}"
+
+
+STEAM_LINK_CUSTOM_ID = "btn_start_steam_link"
+
+
+def _display_name(value: str) -> str:
+    # Escape Discord formatting and suppress mention syntax in user-controlled names.
+    value = str(value).replace("@", "@\u200b").replace("<", "‹").replace(">", "›")
+    return re.sub(r"([\\`*_{}\[\]()~|])", r"\\\1", value)
+
+
+def build_link_panel(rest):
+    embed = hikari.Embed(
+        title="🔗 Vinculá tu cuenta de Steam | MATEFIELD",
+        description=(
+            "¡Bienvenido a MATEFIELD!\n\n"
+            "Para acceder a las funciones que requieren verificación, **vinculá tus cuentas de Discord y Steam**.\n\n"
+            "Al vincularlas vas a poder:\n\n"
+            "- ✅ Recibir el rol de miembro verificado, si corresponde.\n"
+            "- 📊 Consultar tus estadísticas.\n"
+            "- 💎 Usar tus beneficios VIP, si tenés una membresía activa.\n"
+            "- 🎁 Reclamar tus recompensas.\n\n"
+            "**Para vincular tus cuentas:**\n"
+            "1. Tocá **«Vincular mi cuenta de Steam»**.\n"
+            "2. En la respuesta privada, tocá **«Ir a Steam»** e iniciá sesión con la cuenta que querés vincular."
+        ),
+        color=COLOR_PANEL_BLUE,
+    )
+    row = rest.build_message_action_row()
+    row.add_interactive_button(hikari.ButtonStyle.SUCCESS, STEAM_LINK_CUSTOM_ID,
+                              label="Vincular mi cuenta de Steam", emoji=STEAM_LINK_EMOJI)
+    return embed, row
+
+
+async def _link_reply(user, guild_id, rest):
+    player = await plugin.model.api.get_player_by_discord(str(user.id))
+    if player and player.get("steam_id"):
+        name = _display_name(user.global_name or user.username)
+        steam_name = player.get("in_game_name")
+        steam = _display_name(steam_name) if steam_name else "tu cuenta de Steam"
+        embed = hikari.Embed(title="Tu cuenta ya está vinculada",
+                             description="No tenés que hacer nada más.", color=0x54ED72)
+        embed.add_field("Discord", name, inline=True)
+        embed.add_field("Steam", steam, inline=True)
+        return embed, []
+    row = rest.build_message_action_row()
+    row.add_link_button(_build_user_steam_link(user, guild_id), label="Ir a Steam", emoji=STEAM_LINK_EMOJI)
+    return hikari.Embed(title="Vinculá tu cuenta de Steam",
+                        description=("Vas a vincular esta cuenta de Discord con la cuenta de Steam "
+                                     "con la que inicies sesión.\n\n"
+                                     "Tocá **«Ir a Steam»** para continuar. El enlace vence en **10 minutos**."),
+                        color=COLOR_STEAM_DARK), [row]
+
+
+def _link_error():
+    return hikari.Embed(title="No pudimos generar tu enlace",
+                        description="Probá de nuevo en unos minutos. Si sigue pasando, contactá al equipo del servidor.",
+                        color=COLOR_STEAM_DARK)
 
 
 @plugin.include
@@ -39,22 +119,13 @@ class LinkAccount:
 
         # 1. Flujo automático sin parámetros: Genera enlace seguro de Steam OpenID
         if not self.steam_id and not self.usuario:
-            link_url = _build_user_steam_link(ctx.user, ctx.guild_id)
-
-            embed = hikari.Embed(
-                title="🎮 Vinculación con Steam",
-                description=(
-                    f"Hola {ctx.user.mention},\n\n"
-                    "Para vincular tu cuenta de Steam de forma segura y automática, "
-                    "haz clic en el botón de abajo para iniciar sesión directamente en Steam.\n\n"
-                    "🔒 **Seguro:** La autenticación se realiza de forma directa en los servidores de Valve (Steam).\n"
-                    "⏱️ **Vigencia:** Este enlace personal expira en 10 minutos."
-                ),
-                color=0x1b2838
-            )
-            row = ctx.app.rest.build_message_action_row()
-            row.add_link_button(link_url, label="Iniciar sesión con Steam", emoji="🎮")
-            await ctx.respond(embed=embed, components=[row], ephemeral=True)
+            try:
+                embed, rows = await _link_reply(ctx.user, ctx.guild_id, ctx.app.rest)
+                await ctx.respond(embed=embed, components=rows, ephemeral=True,
+                                  user_mentions=False, role_mentions=False, mentions_everyone=False)
+            except Exception:
+                logger.warning("Steam link lookup failed")
+                await ctx.respond(embed=_link_error(), ephemeral=True)
             return
 
         # 2. Flujo manual con parámetros: Exclusivo para administradores
@@ -77,7 +148,7 @@ class LinkAccount:
             await plugin.model.api.link_account(target_id, str(self.steam_id))
             
             link_msg = ""
-            guild_id = ctx.guild_id
+            guild_id = _resolve_guild_id(ctx.guild_id)
             if guild_id:
                 try:
                     try:
@@ -94,16 +165,11 @@ class LinkAccount:
                             if ban_role_id and ban_role_id.isdigit() and int(ban_role_id) not in member.role_ids:
                                 await member.add_role(int(ban_role_id), reason="Baneo activo detectado al vincular cuenta")
                                 link_msg += f"\n🔒 Rol de sanción <@&{ban_role_id}> asignado automáticamente."
-                                
-                            unset_role_id = await plugin.model.api.get_bot_config("BAN_UNSET_ROLE_ID")
-                            if unset_role_id and unset_role_id.isdigit() and int(unset_role_id) in member.role_ids:
-                                await member.remove_role(int(unset_role_id), reason="Baneo activo: rol revocado al vincular")
-                                link_msg += f"\n🔓 Rol <@&{unset_role_id}> removido."
                         else:
                             link_role_id = await plugin.model.api.get_bot_config("LINK_ROLE_ID")
                             if link_role_id and link_role_id.isdigit() and int(link_role_id) not in member.role_ids:
                                 await member.add_role(int(link_role_id), reason="Rol asignado por vincular cuenta (/player link)")
-                                link_msg = f"\n🔗 Rol <@&{link_role_id}> asignado automáticamente."
+                                link_msg += f"\n🔗 Rol verificado <@&{link_role_id}> asignado automáticamente."
                 except Exception as ex:
                     logger.warning(f"No se pudieron actualizar los roles al vincular {target_id}: {ex}")
             
@@ -130,38 +196,26 @@ class LinkChannel:
 
         target_channel_id = self.canal.id if self.canal else ctx.channel_id
         
-        embed = hikari.Embed(
-            title="🔗 Vinculación Oficial de Cuentas | Matefield",
-            description=(
-                "¡Bienvenido a los servidores de **Matefield**!\n\n"
-                "Para obtener tu rol de miembro verificado, sincronizar membresías VIP, "
-                "guardar tus estadísticas de juego y acceder a los servidores protegidos, "
-                "debes vincular tu cuenta oficial de Steam con Discord.\n\n"
-                "👉 **Haz clic en el botón de abajo para iniciar la vinculación.**"
-            ),
-            color=0x2b6cb0
-        )
-        embed.set_footer(text="Autenticación oficial y segura provista por Steam OpenID")
-        
-        row = ctx.app.rest.build_message_action_row()
-        row.add_interactive_button(
-            hikari.ButtonStyle.PRIMARY,
-            "btn_start_steam_link",
-            label="Vincular mi cuenta de Steam",
-            emoji="🎮"
-        )
-        
+        embed, row = build_link_panel(ctx.app.rest)
+
         try:
-            # Borrar panel anterior si existe para garantizar idempotencia
+            # Editar el panel del mismo canal para conservar el mensaje fijado.
             old_chan = await plugin.model.api.get_bot_config("LINK_PANEL_CHANNEL_ID")
             old_msg = await plugin.model.api.get_bot_config("LINK_PANEL_MESSAGE_ID")
+            new_msg = None
             if old_chan and old_msg and old_chan.isdigit() and old_msg.isdigit():
                 try:
-                    await ctx.app.rest.delete_message(int(old_chan), int(old_msg))
+                    if int(old_chan) == int(target_channel_id):
+                        new_msg = await ctx.app.rest.edit_message(
+                            int(old_chan), int(old_msg), embed=embed, components=[row]
+                        )
+                    else:
+                        await ctx.app.rest.delete_message(int(old_chan), int(old_msg))
                 except Exception:
                     pass
 
-            new_msg = await ctx.app.rest.create_message(target_channel_id, embed=embed, components=[row])
+            if new_msg is None:
+                new_msg = await ctx.app.rest.create_message(target_channel_id, embed=embed, components=[row])
             await plugin.model.api.set_bot_config("LINK_PANEL_CHANNEL_ID", str(target_channel_id))
             await plugin.model.api.set_bot_config("LINK_PANEL_MESSAGE_ID", str(new_msg.id))
 
@@ -175,31 +229,20 @@ class LinkChannel:
 async def on_steam_link_button_click(event: hikari.InteractionCreateEvent) -> None:
     if not isinstance(event.interaction, hikari.ComponentInteraction):
         return
-    if event.interaction.custom_id == "btn_start_steam_link":
-        try:
-            link_url = _build_user_steam_link(event.interaction.user, event.interaction.guild_id)
-            
-            embed = hikari.Embed(
-                title="🎮 Vinculación con Steam",
-                description=(
-                    f"Hola <@{event.interaction.user.id}>,\n\n"
-                    "Haz clic en el siguiente botón para iniciar sesión en Steam y verificar tu cuenta de forma 100% segura.\n\n"
-                    "🔒 **Seguro:** La autenticación se realiza de forma directa en los servidores de Valve (Steam).\n"
-                    "⏱️ **Vigencia:** Este enlace personal expira en 10 minutos."
-                ),
-                color=0x1b2838
-            )
-            row = plugin.app.rest.build_message_action_row()
-            row.add_link_button(link_url, label="Iniciar sesión con Steam", emoji="🎮")
-            
-            await event.interaction.create_initial_response(
-                hikari.ResponseType.MESSAGE_CREATE,
-                embed=embed,
-                components=[row],
-                flags=hikari.MessageFlag.EPHEMERAL
-            )
-        except Exception as e:
-            logger.error(f"[Steam Link Button] Error al procesar interacción: {e}", exc_info=True)
+    interaction = event.interaction
+    if interaction.custom_id != STEAM_LINK_CUSTOM_ID:
+        return
+    # Gateway event carries Discord's authenticated user; no identity comes from the browser.
+    await interaction.create_initial_response(
+        hikari.ResponseType.DEFERRED_MESSAGE_CREATE, flags=hikari.MessageFlag.EPHEMERAL
+    )
+    try:
+        embed, rows = await _link_reply(interaction.user, interaction.guild_id, plugin.app.rest)
+        await interaction.edit_initial_response(embed=embed, components=rows,
+                                                user_mentions=False, role_mentions=False, mentions_everyone=False)
+    except Exception as error:
+        logger.warning("Steam link interaction failed: %s (status=%s)", type(error).__name__, getattr(error, "status_code", None))
+        await interaction.edit_initial_response(embed=_link_error(), components=[])
 
 
 
@@ -222,7 +265,7 @@ class UnlinkAccount:
 
         try:
             # Remove managed roles first to prevent role leak (Bug 6)
-            guild_id = ctx.guild_id
+            guild_id = _resolve_guild_id(ctx.guild_id)
             if guild_id:
                 try:
                     res = await plugin.model.api.sync_memberships()
@@ -264,8 +307,8 @@ class SetWelcomeMessage:
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=False)
         
-        if len(self.message) > 60:
-            await ctx.respond("❌ El mensaje no puede tener más de 60 caracteres.")
+        if len(self.message) > MAX_WELCOME_MESSAGE_LENGTH:
+            await ctx.respond(f"❌ El mensaje no puede tener más de {MAX_WELCOME_MESSAGE_LENGTH} caracteres.")
             return
             
         target_steam = self.steam_id
@@ -347,7 +390,7 @@ class Profile:
         embed = hikari.Embed(
             title=f"Perfil de Jugador: {in_game_name}",
             description=f"**Steam ID:** {target_steam_id}",
-            color=0x2b2d31
+            color=COLOR_PROFILE_DARK
         )
         avatar_url = steam_data.get("avatar_url")
         if avatar_url:
@@ -386,5 +429,3 @@ class Profile:
             embed.add_field(name="📊 Estadísticas Históricas", value=f"**Partidas jugadas:** {matches}\n**Kills:** {kills} | **Deaths:** {deaths}\n**Cash total:** ${cash}", inline=False)
             
         await ctx.respond(embed=embed)
-
-

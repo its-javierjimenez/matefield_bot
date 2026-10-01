@@ -1,12 +1,11 @@
 import pytest
-import time
 from unittest.mock import patch, AsyncMock, MagicMock
-from httpx import AsyncClient, ASGITransport
-from sqlmodel import select
+from httpx import AsyncClient
+from urllib.parse import urlparse, parse_qs
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.main import app
-from src.connections.databases.db import Player
+from src.connections.databases.db import Player, BotConfig, Ban
+from src.security.tokens import generate_signed_payload_token, verify_signed_payload_token
 from wardogs_schemas.steam_token import create_steam_link_token, verify_steam_link_token
 
 @pytest.mark.asyncio
@@ -31,6 +30,16 @@ async def test_steam_token_creation_and_verification():
     expired_token = create_steam_link_token("123456789", secret, expires_in=-10)
     assert verify_steam_link_token(expired_token, secret) is None
 
+
+def test_signed_browser_payload_is_tamper_proof_and_expires():
+    with patch("src.config.ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY", "secret_key"):
+        token = generate_signed_payload_token({"result": "success"})
+        assert verify_signed_payload_token(token)["result"] == "success"
+        assert verify_signed_payload_token(f"{token}tampered") is None
+
+        expired_token = generate_signed_payload_token({"result": "success"}, expires_in_seconds=-1)
+        assert verify_signed_payload_token(expired_token) is None
+
 @pytest.mark.asyncio
 async def test_steam_login_redirect(client: AsyncClient):
     secret = "secret_key"
@@ -40,7 +49,7 @@ async def test_steam_login_redirect(client: AsyncClient):
         # Token inválido
         resp_invalid = await client.get("/api/v1/auth/steam/login?token=invalid.token")
         assert resp_invalid.status_code == 400
-        assert "Enlace Expirado o Inválido" in resp_invalid.text
+        assert "Este enlace venció" in resp_invalid.text
         
         # Token válido
         token = create_steam_link_token("123456789", secret, expires_in=600)
@@ -77,14 +86,23 @@ async def test_steam_callback_success(client: AsyncClient, session: AsyncSession
             "openid.identity": f"https://steamcommunity.com/openid/id/{steam_id}",
             "openid.sig": "validsig123"
         }
-        resp = await client.get("/api/v1/auth/steam/callback", params=params)
-        assert resp.status_code == 200
-        assert "¡Bienvenido, GamerPro!" in resp.text
-        assert steam_id in resp.text
-        assert discord_id in resp.text
-        assert "/static/images/BANNER_ICONO_SERVIDOR.png" in resp.text
-        assert "/static/images/steam_icon_black.png" in resp.text
-        assert "https://steamcdn.test/avatar.jpg" in resp.text
+        await prepare_callback(client, token, params)
+        callback_response = await client.get("/api/v1/auth/steam/callback", params=params)
+        assert callback_response.status_code == 303
+        assert callback_response.headers["location"] == "/vincular/discord-steam/resultado"
+        assert "token" not in callback_response.headers["location"]
+        assert "openid" not in callback_response.headers["location"]
+        assert callback_response.headers["referrer-policy"] == "no-referrer"
+        assert "HttpOnly" in callback_response.headers["set-cookie"]
+        assert "SameSite=lax" in callback_response.headers["set-cookie"]
+
+        result_response = await client.get(callback_response.headers["location"])
+        assert result_response.status_code == 200
+        assert "¡Listo!" in result_response.text
+        assert "GamerPro" in result_response.text
+        assert "/static/images/BANNER_ICONO_SERVIDOR.png" in result_response.text
+        assert "/static/images/steam_icon_black.png" in result_response.text
+        assert "https://steamcdn.test/avatar.jpg" in result_response.text
         
         # Verificar en DB
         player = await session.get(Player, steam_id)
@@ -128,15 +146,17 @@ async def test_steam_callback_with_discord_metadata_and_static_files(client: Asy
             "openid.identity": f"https://steamcommunity.com/openid/id/{steam_id}",
             "openid.sig": "validsig123"
         }
-        resp = await client.get("/api/v1/auth/steam/callback", params=params)
-        assert resp.status_code == 200
-        assert "¡Bienvenido, MateoFPS_Steam!" in resp.text
-        assert "MateoFPS" in resp.text
-        assert "#8314" in resp.text
-        assert "https://discordcdn.test/mateo.png" in resp.text
-        assert "https://steamcdn.test/mateo_steam.jpg" in resp.text
-        assert steam_id in resp.text
-        assert discord_id in resp.text
+        await prepare_callback(client, token, params)
+        callback_response = await client.get("/api/v1/auth/steam/callback", params=params)
+        assert callback_response.status_code == 303
+
+        result_response = await client.get(callback_response.headers["location"])
+        assert result_response.status_code == 200
+        assert "¡Listo!" in result_response.text
+        assert "MateoFPS_Steam" in result_response.text
+        assert "MateoFPS" in result_response.text
+        assert "https://discordcdn.test/mateo.png" in result_response.text
+        assert "https://steamcdn.test/mateo_steam.jpg" in result_response.text
         
         # Verificar que los archivos estáticos de marca existen y responden HTTP 200
         for img in ["BANNER_ICONO_SERVIDOR.png", "BANNER_FONDO_INVITACION.png", "steam_icon_black.png"]:
@@ -144,3 +164,170 @@ async def test_steam_callback_with_discord_metadata_and_static_files(client: Asy
             assert img_resp.status_code == 200
             assert len(img_resp.content) > 0
 
+
+@pytest.mark.asyncio
+async def test_steam_callback_immediate_role_grant(client: AsyncClient, session: AsyncSession, monkeypatch):
+    secret = "secret_key"
+    discord_id = "1122334455"
+    steam_id = "76561198000000777"
+    
+    # Configurar LINK_ROLE_ID y GUILD_ID en base de datos
+    session.add(BotConfig(config_key="LINK_ROLE_ID", config_value="998877"))
+    session.add(BotConfig(config_key="GUILD_ID", config_value="554433"))
+    await session.commit()
+
+    monkeypatch.setenv("DISCORD_TOKEN", "mock_discord_token")
+
+    # Token sin guild_id explícito para comprobar fallback a BotConfig
+    token = create_steam_link_token(discord_id=discord_id, secret_key=secret, expires_in=600)
+
+    mock_post_resp = MagicMock()
+    mock_post_resp.text = "ns:http://specs.openid.net/auth/2.0\nis_valid:true\n"
+
+    mock_put_resp = MagicMock()
+    mock_put_resp.status_code = 204
+    mock_put = AsyncMock(return_value=mock_put_resp)
+
+    mock_steam_summary = {
+        "personaname": "VerifiedUser",
+        "avatarfull": "https://steamcdn.test/verified.jpg"
+    }
+
+    with patch("src.config.ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY", secret), \
+         patch("src.config.ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.DISCORD_TOKEN", "mock_discord_token"), \
+         patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_post_resp)), \
+         patch("httpx.AsyncClient.put", new=mock_put), \
+         patch("src.modules.v1.routers.auth.get_player_summary", new=AsyncMock(return_value=mock_steam_summary)):
+
+        params = {
+            "token": token,
+            "openid.mode": "id_res",
+            "openid.claimed_id": f"https://steamcommunity.com/openid/id/{steam_id}",
+            "openid.identity": f"https://steamcommunity.com/openid/id/{steam_id}",
+            "openid.sig": "validsig123"
+        }
+        await prepare_callback(client, token, params)
+        resp = await client.get("/api/v1/auth/steam/callback", params=params)
+        assert resp.status_code == 303
+
+        # Verificar que se llamó a la API de Discord para otorgar el rol de link inmediatamente
+        expected_url = f"https://discord.com/api/v10/guilds/554433/members/{discord_id}/roles/998877"
+        mock_put.assert_called_once()
+        assert mock_put.call_args[0][0] == expected_url
+        assert "Authorization" in mock_put.call_args[1]["headers"]
+        assert mock_put.call_args[1]["headers"]["Authorization"] == "Bot mock_discord_token"
+
+
+@pytest.mark.asyncio
+async def test_steam_callback_immediate_ban_role_grant_when_banned(client: AsyncClient, session: AsyncSession, monkeypatch):
+    secret = "secret_key"
+    discord_id = "2233445566"
+    steam_id = "76561198000000666"
+
+    # Configurar roles y registrar baneo activo para este steam_id
+    session.add(BotConfig(config_key="LINK_ROLE_ID", config_value="998877"))
+    session.add(BotConfig(config_key="BAN_ROLE_DEFAULT", config_value="666999"))
+    session.add(BotConfig(config_key="GUILD_ID", config_value="554433"))
+    session.add(Ban(steam_id=steam_id, reason="Cheating", is_active=True))
+    await session.commit()
+
+    monkeypatch.setenv("DISCORD_TOKEN", "mock_discord_token")
+
+    token = create_steam_link_token(discord_id=discord_id, secret_key=secret, expires_in=600)
+
+    mock_post_resp = MagicMock()
+    mock_post_resp.text = "ns:http://specs.openid.net/auth/2.0\nis_valid:true\n"
+
+    mock_put_resp = MagicMock()
+    mock_put_resp.status_code = 204
+    mock_put = AsyncMock(return_value=mock_put_resp)
+
+    mock_steam_summary = {
+        "personaname": "BannedUser",
+        "avatarfull": "https://steamcdn.test/banned.jpg"
+    }
+
+    with patch("src.config.ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY", secret), \
+         patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_post_resp)), \
+         patch("httpx.AsyncClient.put", new=mock_put), \
+         patch("src.modules.v1.routers.auth.get_player_summary", new=AsyncMock(return_value=mock_steam_summary)):
+
+        params = {
+            "token": token,
+            "openid.mode": "id_res",
+            "openid.claimed_id": f"https://steamcommunity.com/openid/id/{steam_id}",
+            "openid.identity": f"https://steamcommunity.com/openid/id/{steam_id}",
+            "openid.sig": "validsig123"
+        }
+        await prepare_callback(client, token, params)
+        resp = await client.get("/api/v1/auth/steam/callback", params=params)
+        assert resp.status_code == 303
+
+        # Verificar que se otorgó el rol de baneo en vez del rol verificado
+        expected_url = f"https://discord.com/api/v10/guilds/554433/members/{discord_id}/roles/666999"
+        mock_put.assert_called_once()
+        assert mock_put.call_args[0][0] == expected_url
+
+
+@pytest.mark.asyncio
+async def test_steam_test_views_are_available_outside_production(client: AsyncClient):
+    with patch("src.modules.v1.routers.auth.is_prod", return_value=False):
+        success_response = await client.get("/api/v1/auth/steam/test/success")
+        error_response = await client.get("/api/v1/auth/steam/test/error")
+
+    assert success_response.status_code == 200
+    assert "¡Listo!" in success_response.text
+    assert "Viejo Sordo" in success_response.text
+    assert "El Nono" in success_response.text
+    assert "/static/images/test_discord_avatar.svg" in success_response.text
+    assert "/static/images/test_steam_avatar.svg" in success_response.text
+    assert error_response.status_code == 200
+    assert "No pudimos completar la vinculación" in error_response.text
+
+
+@pytest.mark.asyncio
+async def test_steam_callback_error_redirects_to_clean_url(client: AsyncClient):
+    with patch("src.config.ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY", "secret_key"):
+        callback_response = await client.get(
+            "/api/v1/auth/steam/callback",
+            params={"token": "invalid.token", "openid.mode": "cancel"},
+        )
+
+        assert callback_response.status_code == 303
+        assert callback_response.headers["location"] == "/vincular/discord-steam/resultado"
+        assert "token" not in callback_response.headers["location"]
+        assert "openid" not in callback_response.headers["location"]
+
+        result_response = await client.get(callback_response.headers["location"])
+        assert result_response.status_code == 400
+        assert "Este enlace venció" in result_response.text
+        assert "Volvé a Discord" in result_response.text
+
+
+@pytest.mark.asyncio
+async def test_steam_result_rejects_missing_cookie(client: AsyncClient):
+    response = await client.get("/vincular/discord-steam/resultado")
+
+    assert response.status_code == 400
+    assert "Este enlace venció" in response.text
+
+
+@pytest.mark.asyncio
+async def test_steam_test_views_are_hidden_in_production(client: AsyncClient):
+    with patch("src.modules.v1.routers.auth.is_prod", return_value=True):
+        success_response = await client.get("/api/v1/auth/steam/test/success")
+        error_response = await client.get("/api/v1/auth/steam/test/error")
+
+    assert success_response.status_code == 404
+    assert error_response.status_code == 404
+
+
+async def prepare_callback(client, token, params):
+    login = await client.get("/api/v1/auth/steam/login", params={"token": token})
+    return_to = parse_qs(urlparse(login.headers["location"]).query)["openid.return_to"][0]
+    params.update({"openid.ns": "http://specs.openid.net/auth/2.0",
+                   "openid.op_endpoint": "https://steamcommunity.com/openid/login",
+                   "openid.return_to": return_to,
+                   "openid.response_nonce": "nonce-verified-by-steam",
+                   "openid.assoc_handle": "handle",
+                   "openid.signed": "op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle"})

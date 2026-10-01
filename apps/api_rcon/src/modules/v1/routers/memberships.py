@@ -20,6 +20,9 @@ from src.modules.v1.services.export_service import (
 
 router = APIRouter(tags=["Memberships"])
 
+# TTL for the one-time CSV export download token
+_EXPORT_TOKEN_TTL_SECONDS = 1800  # 30 minutes
+
 @router.post("/db/players/membership", dependencies=[Depends(verify_api_key_guard)], response_model=schemas.Ok)
 async def add_membership(req: AddMembershipRequest, session: AsyncSession = Depends(get_session)):
     return await MembershipsService.add_membership(req, session)
@@ -53,16 +56,12 @@ async def export_memberships_endpoint(
     request: Request,
     session: AsyncSession = Depends(get_session)
 ):
+    """Generates a CSV export and returns a short-lived authenticated download URL."""
     csv_file, filename, count = await generate_memberships_csv(session)
-    expires_in_seconds = 1800  # 30 minutes
-    token = generate_export_download_token(filename, expires_in_seconds=expires_in_seconds)
+    token = generate_export_download_token(filename, expires_in_seconds=_EXPORT_TOKEN_TTL_SECONDS)
 
     public_url = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.PUBLIC_API_URL.strip()
-    if public_url:
-        base_url = public_url.rstrip("/")
-    else:
-        base_url = str(request.base_url).rstrip("/")
-
+    base_url = (public_url or str(request.base_url)).rstrip("/")
     download_url = f"{base_url}/api/v1/db/memberships/export/download/{filename}?token={token}"
 
     return {
@@ -71,7 +70,7 @@ async def export_memberships_endpoint(
         "total_records": count,
         "size_bytes": csv_file.stat().st_size,
         "download_url": download_url,
-        "expires_in_seconds": expires_in_seconds
+        "expires_in_seconds": _EXPORT_TOKEN_TTL_SECONDS
     }
 
 @router.get("/db/memberships/export/download/{filename}")

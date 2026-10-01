@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 from src.plugins.memberships import build_player_memberships_view
 from src.api_client import APIClient
 
@@ -115,7 +115,8 @@ async def test_role_set_link_retroactive_grant():
     if task:
         await task
 
-    plugin._client.model.api.set_bot_config.assert_called_once_with("LINK_ROLE_ID", "112233")
+    plugin._client.model.api.set_bot_config.assert_any_call("LINK_ROLE_ID", "112233")
+    plugin._client.model.api.set_bot_config.assert_any_call("GUILD_ID", "987654321")
     mock_member_1.add_role.assert_called_once_with(112233, reason="Rol de vinculación asignado retroactivamente (/role set_link)")
     mock_member_2.add_role.assert_not_called()
     ctx.respond.assert_called_once()
@@ -124,6 +125,35 @@ async def test_role_set_link_retroactive_grant():
     edit_text = ctx.edit.call_args[1]["content"]
     assert "1 rol(es) asignado(s)" in edit_text
     assert "1 ya lo tenían" in edit_text
+
+
+@pytest.mark.asyncio
+async def test_roles_set_link_plural_command_alias():
+    from src.plugins.config import RolesSetLink, plugin
+
+    ctx = MagicMock()
+    ctx.guild_id = 123456
+    ctx.defer = AsyncMock()
+    ctx.respond = AsyncMock()
+
+    mock_role = MagicMock()
+    mock_role.id = 887766
+    mock_role.is_managed = False
+
+    cmd = getattr(RolesSetLink, "metadata").owner()
+    cmd.rol = mock_role
+
+    plugin._client = MagicMock()
+    plugin._client.model.api.set_bot_config = AsyncMock()
+    plugin._client.model.api.get_paginated_players = AsyncMock(return_value={"total": 0, "players": []})
+
+    with patch("src.plugins.config._sync_retroactive_link_role", new=AsyncMock(return_value=(0, 0))):
+        await cmd.callback(ctx)
+
+    plugin._client.model.api.set_bot_config.assert_any_call("LINK_ROLE_ID", "887766")
+    plugin._client.model.api.set_bot_config.assert_any_call("GUILD_ID", "123456")
+    ctx.respond.assert_called_once()
+    assert "Rol de vinculación configurado" in ctx.respond.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -212,15 +242,13 @@ async def test_ban_player_solo_discord():
     ctx.respond = AsyncMock()
 
     mock_member = MagicMock()
-    mock_member.role_ids = [777888]  # Already has the unset_ban role
+    mock_member.role_ids = []
     mock_member.add_role = AsyncMock()
     mock_member.remove_role = AsyncMock()
 
     def mock_configs(k):
         if "BAN_ROLE" in k:
             return "999888"
-        if k == "BAN_UNSET_ROLE_ID":
-            return "777888"
         return None
 
     plugin._client = MagicMock()
@@ -234,11 +262,9 @@ async def test_ban_player_solo_discord():
     # Asserts
     plugin._client.model.api.ban_player.assert_called_once_with("76561198000000001", "Insultos en chat de Discord", 0, solo_discord=True)
     mock_member.add_role.assert_called_once_with(999888, reason="Baneo Discord: Insultos en chat de Discord (permanentemente)")
-    mock_member.remove_role.assert_called_once_with(777888, reason="Baneo Discord: rol revocado (permanentemente)")
     ctx.respond.assert_called_once()
     msg = ctx.respond.call_args[0][0]
     assert "Rol de baneo <@&999888> asignado a <@123456>" in msg
-    assert "Rol <@&777888> removido" in msg
     assert "Sanción aplicada únicamente en Discord (no se sincronizó con RCON)" in msg
 
     # 1b. solo_discord = True on unlinked player -> saves in DB, informs that roles apply on link
@@ -285,7 +311,6 @@ async def test_ban_player_solo_discord():
 
     plugin._client.model.api.ban_player.assert_called_once_with("76561198000000001", "Cheat/Aimbot", 7, solo_discord=False)
     mock_member.add_role.assert_called_once_with(999888, reason="Baneado por 7 días")
-    mock_member.remove_role.assert_called_once_with(777888, reason="Baneado: rol revocado (por 7 días)")
     assert "baneado por 7 días" in ctx_normal.respond.call_args[0][0]
 
     # 3. Ban by @user directly (resolves linked Steam ID)
@@ -361,8 +386,7 @@ async def test_unban_player_role_switch():
     plugin._client.app.cache.get_member.return_value = mock_member
     plugin._client.model.api.get_player_by_steam = AsyncMock(return_value={"steam_id": "76561198000000001", "discord_id": "123456"})
     plugin._client.model.api.get_bot_configs = AsyncMock(return_value={
-        "BAN_ROLE_DEFAULT": "999888",
-        "BAN_UNSET_ROLE_ID": "777888"
+        "BAN_ROLE_DEFAULT": "999888"
     })
     plugin._client.model.api.unban_player = AsyncMock()
 
@@ -371,35 +395,10 @@ async def test_unban_player_role_switch():
     # Asserts
     plugin._client.model.api.unban_player.assert_called_once_with("76561198000000001")
     mock_member.remove_role.assert_called_once_with(999888, reason="Desbaneado")
-    mock_member.add_role.assert_called_once_with(777888, reason="Desbaneado: rol restituido")
     ctx.respond.assert_called_once()
     msg = ctx.respond.call_args[0][0]
     assert "desbaneado y sincronizado con RCON" in msg
     assert "Se quitaron 1 rol(es) de ban" in msg
-    assert "Rol <@&777888> restituido" in msg
-
-
-@pytest.mark.asyncio
-async def test_role_unset_ban_config():
-    from src.plugins.config import RoleUnsetBan, plugin
-
-    cmd_cls = getattr(RoleUnsetBan, "metadata").owner
-    cmd = cmd_cls()
-    mock_role = MagicMock()
-    mock_role.id = 777888
-    cmd.rol = mock_role
-
-    ctx = MagicMock()
-    ctx.defer = AsyncMock()
-    ctx.respond = AsyncMock()
-
-    plugin._client = MagicMock()
-    plugin._client.model.api.set_bot_config = AsyncMock()
-
-    await cmd.callback(ctx)
-
-    plugin._client.model.api.set_bot_config.assert_called_once_with("BAN_UNSET_ROLE_ID", "777888")
-    assert "Rol de desbaneo configurado a <@&777888>" in ctx.respond.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -423,6 +422,9 @@ async def test_player_link_without_params(monkeypatch):
 
     plugin._client = MagicMock()
     plugin._client.model.api.api_key = "test_key"
+    plugin._client.model.api.get_player_by_discord = AsyncMock(return_value=None)
+    ctx.user.username = "Test user"
+    ctx.user.global_name = None
     plugin._client.model.public_api_url = "http://test-server:8000"
 
     await cmd.callback(ctx)
@@ -431,7 +433,7 @@ async def test_player_link_without_params(monkeypatch):
     kwargs = ctx.respond.call_args[1]
     assert kwargs.get("ephemeral") is True
     assert "embed" in kwargs
-    assert kwargs["embed"].title == "🎮 Vinculación con Steam"
+    assert kwargs["embed"].title == "Vinculá tu cuenta de Steam"
     mock_row.add_link_button.assert_called_once()
     link_url = mock_row.add_link_button.call_args[0][0]
     assert "http://test-server:8000/api/v1/auth/steam/login?token=" in link_url
@@ -481,6 +483,7 @@ async def test_player_link_channel_admin(monkeypatch):
     plugin._client = MagicMock()
     plugin._client.model.api.get_bot_config = AsyncMock(return_value=None)
     plugin._client.model.api.set_bot_config = AsyncMock()
+    plugin._client.model.public_api_url = "http://test-server:8000"
 
     monkeypatch.setattr("src.plugins.account.check_is_admin", AsyncMock(return_value=True))
 
@@ -492,6 +495,33 @@ async def test_player_link_channel_admin(monkeypatch):
     mock_row.add_interactive_button.assert_called_once()
     assert mock_row.add_interactive_button.call_args[0][1] == "btn_start_steam_link"
     assert "Panel de vinculación publicado exitosamente" in ctx.respond.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_player_link_channel_updates_pinned_panel_in_place(monkeypatch):
+    from src.plugins.account import LinkChannel, plugin
+
+    cmd = getattr(LinkChannel, "metadata").owner()
+    cmd.canal = None
+    ctx = MagicMock()
+    ctx.channel_id = 444555666
+    ctx.defer = AsyncMock()
+    ctx.respond = AsyncMock()
+    ctx.app.rest.edit_message = AsyncMock(return_value=MagicMock(id=123456789))
+    ctx.app.rest.create_message = AsyncMock()
+    plugin._client = MagicMock()
+    plugin._client.model.public_api_url = "http://test-server:8000"
+    plugin._client.model.api.get_bot_config = AsyncMock(side_effect=["444555666", "123456789"])
+    plugin._client.model.api.set_bot_config = AsyncMock()
+    monkeypatch.setattr("src.plugins.account.check_is_admin", AsyncMock(return_value=True))
+
+    await cmd.callback(ctx)
+
+    ctx.app.rest.edit_message.assert_awaited_once()
+    ctx.app.rest.create_message.assert_not_awaited()
+    components = ctx.app.rest.edit_message.call_args.kwargs["components"]
+    components[0].add_interactive_button.assert_called_once()
+    assert components[0].add_interactive_button.call_args[0][1] == "btn_start_steam_link"
 
 
 @pytest.mark.asyncio
@@ -597,6 +627,271 @@ async def test_membership_sync_command(monkeypatch):
     assert "➕ Roles Añadidos" in field_names
     assert "➖ Roles Removidos" in field_names
     assert "🛡️ Whitelist" in field_names
+
+
+@pytest.mark.asyncio
+async def test_role_commands_and_autocompletes():
+    from src.plugins.config import GiveRole, RemoveRole, autocomplete_db_roles, plugin as cfg_plugin
+    from src.plugins.database import (
+        DbAddSpecialRole,
+        DbRemoveSpecialRole,
+        PlayerSetRole,
+        PlayerRemoveRole,
+        autocomplete_special_roles,
+        plugin as db_plugin
+    )
+
+    mock_roles = [
+        {"code": "VIP_COMUN", "name": "VIP Común", "role_type": "VIP", "discord_role_id": "111"},
+        {"code": "FUNDADOR", "name": "Fundador", "role_type": "SPECIAL", "discord_role_id": "222"},
+        {"code": "STAFF", "name": "Staff Matefield", "role_type": "SYSTEM", "discord_role_id": "333"},
+    ]
+
+    mock_api = MagicMock()
+    mock_api.get_all_roles = AsyncMock(return_value=mock_roles)
+    mock_api.get_player_by_discord = AsyncMock(return_value={"steam_id": "76561198000000001"})
+    mock_api.add_special_role = AsyncMock()
+    mock_api.remove_special_role = AsyncMock()
+
+    cfg_plugin._client = MagicMock()
+    cfg_plugin.model.api = mock_api
+    db_plugin._client = MagicMock()
+    db_plugin.model.api = mock_api
+
+    # 1. Test autocomplete_db_roles (shows all roles with types)
+    auto_opt = MagicMock(value="")
+    ac_ctx = MagicMock()
+    all_res = await autocomplete_db_roles(ac_ctx, auto_opt)
+    assert len(all_res) == 3
+    assert ("Fundador (FUNDADOR) [SPECIAL]", "FUNDADOR") in all_res
+    assert ("VIP Común (VIP_COMUN) [VIP]", "VIP_COMUN") in all_res
+
+    # 2. Test autocomplete_special_roles (ONLY shows role_type == SPECIAL)
+    sp_res = await autocomplete_special_roles(ac_ctx, auto_opt)
+    assert len(sp_res) == 1
+    assert sp_res[0] == ("Fundador (FUNDADOR)", "FUNDADOR")
+
+    # 3. Test /roles give (GiveRole)
+    give_cmd = getattr(GiveRole, "metadata").owner()
+    give_cmd.usuario = MagicMock(id=123, mention="<@123>")
+    give_cmd.rol = "STAFF"
+    ctx = MagicMock(guild_id=888, defer=AsyncMock(), respond=AsyncMock())
+    ctx.app.rest.add_role_to_member = AsyncMock()
+
+    await give_cmd.callback(ctx)
+    mock_api.add_special_role.assert_awaited_with("76561198000000001", "STAFF")
+    ctx.app.rest.add_role_to_member.assert_awaited_with(888, 123, 333)
+    assert "Rol `STAFF` asignado" in ctx.respond.call_args[0][0]
+
+    # 4. Test /roles remove (RemoveRole)
+    remove_cmd = getattr(RemoveRole, "metadata").owner()
+    remove_cmd.usuario = MagicMock(id=123, mention="<@123>")
+    remove_cmd.rol = "STAFF"
+    ctx.reset_mock()
+    ctx.app.rest.remove_role_from_member = AsyncMock()
+
+    await remove_cmd.callback(ctx)
+    mock_api.remove_special_role.assert_awaited_with("76561198000000001", "STAFF")
+    ctx.app.rest.remove_role_from_member.assert_awaited_with(888, 123, 333)
+    assert "Rol `STAFF` removido" in ctx.respond.call_args[0][0]
+
+    # 5. Test /player set_role (PlayerSetRole)
+    pset_cmd = getattr(PlayerSetRole, "metadata").owner()
+    pset_cmd.usuario = MagicMock(id=456, mention="<@456>")
+    pset_cmd.rol = "VIP_COMUN"
+    ctx.reset_mock()
+    ctx.app.rest.add_role_to_member = AsyncMock()
+
+    await pset_cmd.callback(ctx)
+    mock_api.add_special_role.assert_awaited_with("76561198000000001", "VIP_COMUN")
+    ctx.app.rest.add_role_to_member.assert_awaited_with(888, 456, 111)
+
+    # 6. Test /player remove_role (PlayerRemoveRole)
+    prem_cmd = getattr(PlayerRemoveRole, "metadata").owner()
+    prem_cmd.usuario = MagicMock(id=456, mention="<@456>")
+    prem_cmd.rol = "VIP_COMUN"
+    ctx.reset_mock()
+    ctx.app.rest.remove_role_from_member = AsyncMock()
+
+    await prem_cmd.callback(ctx)
+    mock_api.remove_special_role.assert_awaited_with("76561198000000001", "VIP_COMUN")
+    ctx.app.rest.remove_role_from_member.assert_awaited_with(888, 456, 111)
+
+    # 7. Test /special_role add rejecting non-SPECIAL role
+    sp_add_cmd = getattr(DbAddSpecialRole, "metadata").owner()
+    sp_add_cmd.usuario = MagicMock(id=789, mention="<@789>")
+    sp_add_cmd.rol_especial = "STAFF"  # Not a SPECIAL role
+    ctx.reset_mock()
+
+    await sp_add_cmd.callback(ctx)
+    assert "Debes seleccionar un rol registrado con categoría `SPECIAL`" in ctx.respond.call_args[0][0]
+
+    # 8. Test /special_role add accepting SPECIAL role
+    sp_add_cmd.rol_especial = "FUNDADOR"
+    ctx.reset_mock()
+    ctx.app.rest.add_role_to_member = AsyncMock()
+
+    await sp_add_cmd.callback(ctx)
+    mock_api.add_special_role.assert_awaited_with("76561198000000001", "FUNDADOR")
+    ctx.app.rest.add_role_to_member.assert_awaited_with(888, 789, 222)
+    assert "Rol especial `Fundador` (`FUNDADOR`) añadido" in ctx.respond.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_rewards_plugin_commands():
+    from src.plugins.rewards import (
+        RewardsBalance,
+        RewardsCatalog,
+        RewardsClaim,
+        RewardsSetThreshold,
+        RewardsSetRate,
+        RewardsVerifyClaim,
+        RewardsDeliverClaim,
+        RewardsRefundClaim,
+        RewardsGivePoints,
+        RewardsAddItem,
+        plugin as rewards_plugin,
+    )
+
+    mock_api = MagicMock()
+    mock_api.get_player_rewards_balance = AsyncMock(return_value={
+        "steam_id": "76561198000000001",
+        "discord_id": "123456",
+        "in_game_name": "ProGamer",
+        "reward_points": 75,
+        "total_seeding_minutes": 150,
+        "claims": [{"reward_name": "Key Game", "claim_code": "MF-AAAA-BBBB", "status": "PENDING"}]
+    })
+    mock_api.get_rewards_catalog = AsyncMock(return_value=[
+        {"code": "VIP_MONTH", "name": "VIP 30d", "cost_points": 60, "delivery_type": "AUTOMATIC", "description": "Acceso VIP"},
+        {"code": "STEAM_KEY", "name": "Key Game", "cost_points": 100, "delivery_type": "MANUAL_TICKET", "description": "Ticket key"}
+    ])
+    mock_api.claim_reward = AsyncMock(return_value={
+        "claim_code": "MF-1111-2222",
+        "reward_name": "VIP 30d",
+        "cost_points": 60,
+        "remaining_points": 15,
+        "delivery": {"delivery_type": "AUTOMATIC"}
+    })
+    mock_api.set_bot_config = AsyncMock(return_value={"ok": True})
+    mock_api.verify_reward_claim = AsyncMock(return_value={
+        "claim_code": "MF-1111-2222",
+        "status": "PENDING",
+        "reward_code": "STEAM_KEY",
+        "reward_name": "Key Game",
+        "points_spent": 100,
+        "steam_id": "76561198000000001",
+        "discord_id": "123456",
+        "claimed_at": "2026-09-27T12:00:00"
+    })
+    mock_api.deliver_reward_claim = AsyncMock(return_value={"ok": True, "message": "Entregado"})
+    mock_api.refund_reward_claim = AsyncMock(return_value={"ok": True, "message": "Reembolsado"})
+    mock_api.give_reward_points = AsyncMock(return_value={"ok": True, "steam_id": "76561198000000001", "new_balance": 125})
+    mock_api.create_or_update_reward_item = AsyncMock(return_value={"ok": True, "message": "Item creado"})
+
+    rewards_plugin._client = MagicMock()
+    rewards_plugin.model.api = mock_api
+
+    ctx = MagicMock()
+    ctx.defer = AsyncMock()
+    ctx.respond = AsyncMock()
+    ctx.user = MagicMock(id=123456, mention="<@123456>")
+
+    # 1. Test /rewards balance
+    bal_cmd = getattr(RewardsBalance, "metadata").owner()
+    bal_cmd.usuario = None
+    await bal_cmd.callback(ctx)
+    mock_api.get_player_rewards_balance.assert_awaited_with("123456")
+    embed = ctx.respond.call_args[1]["embed"]
+    assert "Centro de Recompensas" in embed.title
+
+    # 2. Test /rewards catalog
+    cat_cmd = getattr(RewardsCatalog, "metadata").owner()
+    ctx.reset_mock()
+    await cat_cmd.callback(ctx)
+    mock_api.get_rewards_catalog.assert_awaited_with(only_active=True)
+    embed = ctx.respond.call_args[1]["embed"]
+    assert "Catálogo de Recompensas" in embed.title
+
+    # 3. Test /rewards claim
+    claim_cmd = getattr(RewardsClaim, "metadata").owner()
+    claim_cmd.recompensa = "VIP_MONTH"
+    ctx.reset_mock()
+    await claim_cmd.callback(ctx)
+    mock_api.claim_reward.assert_awaited_with("123456", "VIP_MONTH")
+    embed = ctx.respond.call_args[1]["embed"]
+    assert "Canje Exitoso" in embed.title
+
+    # 4. Test /rewards admin set_threshold
+    thresh_cmd = getattr(RewardsSetThreshold, "metadata").owner()
+    thresh_cmd.limite = 25
+    ctx.reset_mock()
+    await thresh_cmd.callback(ctx)
+    mock_api.set_bot_config.assert_awaited_with("SEEDING_MIN_PLAYERS", "25")
+
+    # 5. Test /rewards admin set_rate
+    rate_cmd = getattr(RewardsSetRate, "metadata").owner()
+    rate_cmd.minutos = 45
+    ctx.reset_mock()
+    await rate_cmd.callback(ctx)
+    mock_api.set_bot_config.assert_awaited_with("SEEDING_MINUTES_PER_POINT", "45")
+
+    # 6. Test /rewards admin verify
+    verify_cmd = getattr(RewardsVerifyClaim, "metadata").owner()
+    verify_cmd.codigo_canje = "MF-1111-2222"
+    ctx.reset_mock()
+    await verify_cmd.callback(ctx)
+    mock_api.verify_reward_claim.assert_awaited_with("MF-1111-2222")
+
+    # 7. Test /rewards admin deliver
+    deliver_cmd = getattr(RewardsDeliverClaim, "metadata").owner()
+    deliver_cmd.codigo_canje = "MF-1111-2222"
+    deliver_cmd.notas = "Entregado en ticket #12"
+    ctx.reset_mock()
+    await deliver_cmd.callback(ctx)
+    mock_api.deliver_reward_claim.assert_awaited_with("MF-1111-2222", delivered_by=str(ctx.user), notes="Entregado en ticket #12")
+
+    # 8. Test /rewards admin refund
+    refund_cmd = getattr(RewardsRefundClaim, "metadata").owner()
+    refund_cmd.codigo_canje = "MF-1111-2222"
+    refund_cmd.motivo = "Sin stock"
+    ctx.reset_mock()
+    await refund_cmd.callback(ctx)
+    mock_api.refund_reward_claim.assert_awaited_with("MF-1111-2222", refunded_by=str(ctx.user), reason="Sin stock")
+
+    # 9. Test /rewards admin give_points
+    give_cmd = getattr(RewardsGivePoints, "metadata").owner()
+    give_cmd.usuario = None
+    give_cmd.steam_id = "76561198000000001"
+    give_cmd.puntos = 50
+    give_cmd.motivo = "Evento de navidad"
+    ctx.reset_mock()
+    await give_cmd.callback(ctx)
+    mock_api.give_reward_points.assert_awaited_with("76561198000000001", 50, "Evento de navidad")
+
+    # 10. Test /rewards admin add_item
+    add_cmd = getattr(RewardsAddItem, "metadata").owner()
+    add_cmd.codigo = "VIP_15D"
+    add_cmd.nombre = "VIP 15 Días"
+    add_cmd.costo = 30
+    add_cmd.tipo_entrega = "AUTOMATIC"
+    add_cmd.tipo_recompensa = "MEMBERSHIP"
+    add_cmd.valor = "VIP"
+    add_cmd.duracion_dias = 15
+    add_cmd.descripcion = "Membresía corta"
+    ctx.reset_mock()
+    await add_cmd.callback(ctx)
+    mock_api.create_or_update_reward_item.assert_awaited_with(
+        code="VIP_15D",
+        name="VIP 15 Días",
+        cost_points=30,
+        delivery_type="AUTOMATIC",
+        reward_type="MEMBERSHIP",
+        reward_value="VIP",
+        duration_days=15,
+        description="Membresía corta",
+        is_active=True,
+    )
 
 
 

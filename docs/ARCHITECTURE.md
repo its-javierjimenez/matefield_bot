@@ -105,8 +105,10 @@ Servidor mock en FastAPI que replica la API RCON oficial de Wardogs (CL-501228).
      - Firma directa de contingencia: `HMAC-SHA256(secret, raw_body)`.
    - Registro de transacciones procesadas en `payment_records` para garantizar idempotencia y evitar dobles activaciones.
 4. **Vinculación de Cuentas Steam**:
+   - El botón verde recibe la identidad autenticada de Discord. Consulta el vínculo por la API interna antes de ofrecer un enlace privado a Steam.
    - Generación de token temporal con HMAC-SHA256 (`create_steam_link_token`) con expiración estricta de 10 minutos.
-   - Handshake directo con servidores de Valve (`https://steamcommunity.com/openid/login`).
+   - Handshake directo con servidores de Valve (`https://steamcommunity.com/openid/login`), con retorno firmado y cookie temporal por intento; no se utiliza OAuth de Discord web.
+   - El enlace se consume en la misma transacción que el vínculo; índices únicos y actualización condicional impiden reemplazos y carreras.
    - Al completar la vinculación, se consultan sanciones pendientes y se aplican los roles correspondientes en Discord inmediatamente.
 
 ---
@@ -115,6 +117,7 @@ Servidor mock en FastAPI que replica la API RCON oficial de Wardogs (CL-501228).
 
 | Tabla | Propósito | Claves / Índices Principales |
 |---|---|---|
+| `steam_link_redemptions` | Enlaces consumidos hasta su vencimiento | `token_hash` (PK), `expires_at` (Index) |
 | `players` | Identidad del usuario (Steam ID <-> Discord ID) | `steam_id` (PK), `discord_id` (Unique, Index) |
 | `memberships` | Suscripciones VIP y slots reservados | `id` (PK), `steam_id` (FK, Index), `type` (Index), `is_active` |
 | `roles` | Catálogo de roles de dominio (SYSTEM, VIP, PUBLIC, SPECIAL) | `id` (PK), `code` (Unique), `discord_role_id` (Index) |

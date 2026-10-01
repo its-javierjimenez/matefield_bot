@@ -1,12 +1,24 @@
 from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
-from sqlmodel import select
+from sqlmodel import select, func, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.connections.databases.db import Player, Role, PlayerRole
 from src.modules.v1.schemas.dtos import RoleRegisterRequest
 
 class RolesService:
+    @staticmethod
+    async def _find_role(role_identifier: str, session: AsyncSession) -> Optional[Role]:
+        clean_id = role_identifier.strip()
+        conditions = [
+            func.upper(Role.code) == clean_id.upper(),
+            Role.discord_role_id == clean_id,
+            func.upper(Role.name) == clean_id.upper()
+        ]
+        if clean_id.isdigit() and len(clean_id) < 10:
+            conditions.append(Role.id == int(clean_id))
+        return (await session.exec(select(Role).where(or_(*conditions)))).first()
+
     @staticmethod
     async def register_role(req: RoleRegisterRequest, session: AsyncSession) -> Dict[str, Any]:
         normalized_code = req.code.strip().upper()
@@ -51,7 +63,7 @@ class RolesService:
         if not player:
             raise HTTPException(status_code=404, detail="Player not found")
             
-        role = (await session.exec(select(Role).where((Role.code == role_id) | (Role.discord_role_id == role_id)))).first()
+        role = await RolesService._find_role(role_id, session)
         if not role:
             raise HTTPException(status_code=404, detail=f"Role code or discord_role_id '{role_id}' not registered")
             
@@ -67,7 +79,7 @@ class RolesService:
 
     @staticmethod
     async def remove_special_role(steam_id: str, role_id: str, session: AsyncSession) -> Dict[str, Any]:
-        role = (await session.exec(select(Role).where((Role.code == role_id) | (Role.discord_role_id == role_id)))).first()
+        role = await RolesService._find_role(role_id, session)
         if not role:
             raise HTTPException(status_code=404, detail="Role not found")
             

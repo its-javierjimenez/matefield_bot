@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlmodel import select, func, col, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.connections.databases.db import Player, Membership, Role, PlayerRole, BotConfig, MembershipType
+from src.connections.databases.db import Player, Membership, Role, PlayerRole, BotConfig, MembershipType, Ban
 from src.connections.apis.rcon import RCONManager
 from src.modules.v1.schemas.dtos import AddMembershipRequest, EditMembershipRequest, CompensateRequest
 
@@ -109,10 +109,16 @@ class MembershipsService:
                 if sr_obj:
                     attached_special_role_id = sr_obj.id
                 else:
-                    new_sr = Role(code=role_identifier.upper().replace(" ", "_"), name=role_identifier, discord_role_id=role_identifier, role_type="SPECIAL")
+                    new_sr = Role(
+                        code=role_identifier.upper().replace(" ", "_"),
+                        name=role_identifier,
+                        discord_role_id=role_identifier,
+                        role_type="SPECIAL"
+                    )
                     session.add(new_sr)
-                    await session.commit()
-                    await session.refresh(new_sr)
+                    # flush (not commit) — keeps new Role inside the current transaction
+                    # so that the subsequent Membership insert is atomic with it.
+                    await session.flush()
                     attached_special_role_id = new_sr.id
         elif not attached_special_role_id and existing_membership and existing_membership.special_role_id:
             attached_special_role_id = existing_membership.special_role_id
@@ -265,17 +271,12 @@ class MembershipsService:
                 if m_type is not None:
                     type_days = m_type.default_days
                 else:
-                    if norm_type == "VIP_PERMANENTE":
-                        type_days = 0
+                    config_key = f"ROLE_DAYS_{norm_type}"
+                    config_days = (await session.exec(select(BotConfig).where(BotConfig.config_key == config_key))).first()
+                    if config_days and config_days.config_value.isdigit():
+                        type_days = int(config_days.config_value)
                     else:
-                        config_key = f"ROLE_DAYS_{norm_type}"
-                        config_days = (await session.exec(select(BotConfig).where(BotConfig.config_key == config_key))).first()
-                        if config_days and config_days.config_value.isdigit():
-                            type_days = int(config_days.config_value)
-                        elif norm_type == "VIP_EXPRESS":
-                            type_days = 15
-                        else:
-                            type_days = 30
+                        type_days = 30
                 
                 start_base = membership.start_time or datetime.now(timezone.utc)
                 if start_base.tzinfo is None:
@@ -289,8 +290,10 @@ class MembershipsService:
                     membership.end_time = start_base + timedelta(days=type_days)
                     if req.is_active is None:
                         now_utc = datetime.now(timezone.utc)
-                        end_comp = membership.end_time if membership.end_time.tzinfo else membership.end_time.replace(tzinfo=timezone.utc)
-                        membership.is_active = end_comp > now_utc
+                        end_dt = membership.end_time
+                        if end_dt is not None and end_dt.tzinfo is None:
+                            end_dt = end_dt.replace(tzinfo=timezone.utc)
+                        membership.is_active = end_dt is not None and end_dt > now_utc
             
         if req.days is not None:
             if req.days == 0:
@@ -380,7 +383,7 @@ class MembershipsService:
                 }
             target_steam_id = player.steam_id
 
-        offset = (page - 1) * limit
+        offset = max(0, (page - 1) * limit)
         statement = select(Membership).order_by(col(Membership.start_time).desc())
         total_statement = select(func.count(col(Membership.id)))
         if target_steam_id:
@@ -391,23 +394,32 @@ class MembershipsService:
         memberships = (await session.exec(statement)).all()
         total = (await session.exec(total_statement)).one()
         
+        # Batch load roles to avoid N+1 queries
+        role_ids = {
+            r_id for m in memberships
+            for r_id in (m.special_role_id, m.role_granted_id)
+            if r_id is not None
+        }
+        roles_by_id: Dict[int, Role] = {}
+        if role_ids:
+            fetched_roles = (await session.exec(select(Role).where(col(Role.id).in_(role_ids)))).all()
+            roles_by_id = {r.id: r for r in fetched_roles if r.id is not None}
+
         results = []
         for m in memberships:
             special_role_name = None
             special_discord_role_id = None
-            if m.special_role_id:
-                r = await session.get(Role, m.special_role_id)
-                if r:
-                    special_role_name = r.name
-                    special_discord_role_id = r.discord_role_id
+            if m.special_role_id and m.special_role_id in roles_by_id:
+                r = roles_by_id[m.special_role_id]
+                special_role_name = r.name
+                special_discord_role_id = r.discord_role_id
 
             role_granted_name = None
             role_granted_discord_id = None
-            if m.role_granted_id:
-                rg = await session.get(Role, m.role_granted_id)
-                if rg:
-                    role_granted_name = rg.name
-                    role_granted_discord_id = rg.discord_role_id
+            if m.role_granted_id and m.role_granted_id in roles_by_id:
+                rg = roles_by_id[m.role_granted_id]
+                role_granted_name = rg.name
+                role_granted_discord_id = rg.discord_role_id
             
             results.append({
                 "id": m.id,
@@ -451,11 +463,18 @@ class MembershipsService:
         if expired:
             await session.commit()
             
-        # 2. Get active steam_ids
+        # 2. Get active steam_ids & active bans
         active_stmt = select(Membership.steam_id).where(Membership.is_active == True).distinct()
         active_steam_ids = set((await session.exec(active_stmt)).all())
         
-        # 3. Sync RCON per-server (respecting server_id scope)
+        # Query active bans to reconcile RCON reserved slots and Discord roles
+        active_bans_stmt = select(Ban).where(Ban.is_active == True)
+        all_active_bans = (await session.exec(active_bans_stmt)).all()
+        rcon_banned_steam_ids = {b.steam_id for b in all_active_bans if b.rcon_sync_status != "DISCORD_ONLY"}
+        bans_by_steam: Dict[str, Ban] = {b.steam_id: b for b in all_active_bans}
+
+        # 3. Sync RCON per-server (respecting server_id scope and excluding banned players)
+        sync_failed = False
         try:
             active_servers = await RCONManager.get_all_active_servers(session)
             for s_info, client in active_servers:
@@ -470,18 +489,23 @@ class MembershipsService:
                             Membership.is_active == True,
                             Membership.server_id == None
                         ).distinct()
-                    server_steam_ids = list(set((await session.exec(s_vip_stmt)).all()))
+                    raw_sids = set((await session.exec(s_vip_stmt)).all())
+                    server_steam_ids = list(raw_sids - rcon_banned_steam_ids)
                     await client.sync_reserved_slots(server_steam_ids)
                 except Exception as s_err:
+                    sync_failed = True
                     logger.warning(f"Failed to sync RCON reserved slots to {s_info.name} ({s_info.base_url}): {s_err}")
             
-            for sid in active_steam_ids:
-                m_stmt = select(Membership).where(Membership.steam_id == sid, Membership.is_active == True)
-                for m in (await session.exec(m_stmt)).all():
-                    if m.rcon_sync_status != "SUCCESS":
-                        m.rcon_sync_status = "SUCCESS"
-                        session.add(m)
-            await session.commit()
+            if not sync_failed:
+                # Update pending RCON sync status only if all active servers succeeded
+                pending_m_stmt = select(Membership).where(
+                    Membership.is_active == True,
+                    Membership.rcon_sync_status != "SUCCESS"
+                )
+                for m in (await session.exec(pending_m_stmt)).all():
+                    m.rcon_sync_status = "SUCCESS"
+                    session.add(m)
+                await session.commit()
             
         except Exception as e:
             logger.error(f"Failed to sync RCON reserved slots: {e}", exc_info=True)
@@ -497,13 +521,12 @@ class MembershipsService:
         for sid, mtype in all_active_m:
             m_types_by_steam.setdefault(sid, []).append(mtype)
 
-        # Batch query all special roles by steam_id (only SPECIAL roles that are Discord-managed)
+        # Batch query all player roles by steam_id (roles assigned to player that are Discord-managed)
         pr_stmt = (
             select(PlayerRole.steam_id, Role.discord_role_id)
-            .join(Role, PlayerRole.role_id == Role.id)
+            .join(Role, col(PlayerRole.role_id) == col(Role.id))
             .where(
-                Role.discord_role_id != None,
-                Role.role_type == "SPECIAL"
+                Role.discord_role_id != None
             )
         )
         all_pr = (await session.exec(pr_stmt)).all()
@@ -513,11 +536,22 @@ class MembershipsService:
                 roles_by_steam.setdefault(sid, []).append(int(dr_id))
 
         discord_sync_data = []
+        banned_discord_map: Dict[str, Optional[int]] = {}
         for p in players:
+            ban_obj = bans_by_steam.get(p.steam_id)
+            is_banned = ban_obj is not None
+            if is_banned and p.discord_id:
+                ban_days = None
+                if ban_obj.expires_at and ban_obj.banned_at:
+                    ban_days = max(1, round((ban_obj.expires_at - ban_obj.banned_at).total_seconds() / 86400))
+                elif not ban_obj.expires_at:
+                    ban_days = 0
+                banned_discord_map[str(p.discord_id)] = ban_days
+
             discord_sync_data.append({
                 "discord_id": p.discord_id,
-                "active_memberships": m_types_by_steam.get(p.steam_id, []),
-                "special_roles": roles_by_steam.get(p.steam_id, [])
+                "active_memberships": [] if is_banned else m_types_by_steam.get(p.steam_id, []),
+                "special_roles": [] if is_banned else roles_by_steam.get(p.steam_id, [])
             })
             
         all_roles = (await session.exec(select(Role))).all()
@@ -525,7 +559,11 @@ class MembershipsService:
         role_maps: Dict[str, int] = {}
         for r in all_roles:
             if r.role_type == "VIP" and r.discord_role_id and str(r.discord_role_id).isdigit():
-                role_maps[r.code] = int(r.discord_role_id)
+                dr_val = int(r.discord_role_id)
+                role_maps[r.code] = dr_val
+                role_maps[r.code.upper()] = dr_val
+                role_maps[r.name] = dr_val
+                role_maps[r.code.replace("_", " ")] = dr_val
 
         all_types = (await session.exec(select(MembershipType))).all()
         for mt in all_types:
@@ -533,12 +571,16 @@ class MembershipsService:
             if mt.role_id and mt.role_id in roles_by_id:
                 dr_id = roles_by_id[mt.role_id].discord_role_id
             if dr_id and str(dr_id).isdigit():
-                role_maps[mt.code] = int(dr_id)
+                dr_val = int(dr_id)
+                role_maps[mt.code] = dr_val
+                role_maps[mt.code.upper()] = dr_val
+                role_maps[mt.name] = dr_val
+                role_maps[mt.code.replace("_", " ")] = dr_val
 
         managed_special_roles = [
             int(r.discord_role_id)
             for r in all_roles
-            if r.role_type == "SPECIAL" and r.discord_role_id and str(r.discord_role_id).isdigit()
+            if r.role_type != "VIP" and r.discord_role_id and str(r.discord_role_id).isdigit()
         ]
             
         return {
@@ -546,7 +588,8 @@ class MembershipsService:
             "role_maps": role_maps,
             "managed_special_roles": managed_special_roles,
             "expired_count": len(expired),
-            "active_rcon_slots": len(active_steam_ids)
+            "active_rcon_slots": len(active_steam_ids - rcon_banned_steam_ids),
+            "banned_discord_ids": banned_discord_map
         }
 
     @staticmethod
