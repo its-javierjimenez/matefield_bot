@@ -104,6 +104,42 @@ class ListRoles:
 @plugin.include
 @crescent.hook(admin_only)
 @roles_group.child
+@crescent.command(name="player_list", description="Lista todos los jugadores que poseen un rol específico en la BD")
+class ListPlayersByRole:
+    rol = crescent.option(str, "Rol registrado en la Base de Datos", autocomplete=autocomplete_db_roles)
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer(ephemeral=True)
+        try:
+            roles = await plugin.model.api.get_all_roles()
+            role_obj = next((r for r in roles if r.get("code", "").upper() == self.rol.strip().upper()), None)
+            role_code = str(role_obj["code"]) if (role_obj and "code" in role_obj) else self.rol.strip().upper()
+            
+            players = await plugin.model.api.get_players_by_role(role_code)
+            
+            if not players:
+                await ctx.respond(f"ℹ️ Ningún jugador tiene el rol `{role_code}`.")
+                return
+                
+            msg = f"**Jugadores con el rol `{role_code}` ({len(players)}):**\n"
+            for p in players:
+                steam_id = p.get("steam_id")
+                discord_id = p.get("discord_id")
+                discord_str = f"<@{discord_id}>" if discord_id else "Sin Discord"
+                msg += f"- `{steam_id}` | {discord_str}\n"
+                
+            # split message if too long
+            if len(msg) > 1900:
+                for i in range(0, len(msg), 1900):
+                    await ctx.respond(msg[i:i+1900])
+            else:
+                await ctx.respond(msg)
+        except Exception as e:
+            await ctx.respond(f"❌ Error al listar jugadores por rol: {e}")
+
+@plugin.include
+@crescent.hook(admin_only)
+@roles_group.child
 @crescent.command(name="give", description="Asigna un rol registrado en la Base de Datos a un jugador vinculado")
 class GiveRole:
     usuario = crescent.option(hikari.User, "Usuario de Discord a asignar el rol")

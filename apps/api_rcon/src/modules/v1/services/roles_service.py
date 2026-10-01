@@ -58,6 +58,24 @@ class RolesService:
         ]
 
     @staticmethod
+    async def get_players_by_role(role_id: str, session: AsyncSession) -> List[Dict[str, Any]]:
+        role = await RolesService._find_role(role_id, session)
+        if not role:
+            raise HTTPException(status_code=404, detail="Role not found")
+        
+        stmt = select(Player).join(PlayerRole).where(PlayerRole.role_id == role.id)
+        players = (await session.exec(stmt)).all()
+        
+        return [
+            {
+                "steam_id": p.steam_id,
+                "discord_id": p.discord_id,
+                "in_game_name": p.in_game_name
+            }
+            for p in players
+        ]
+
+    @staticmethod
     async def add_special_role(steam_id: str, role_id: str, session: AsyncSession) -> Dict[str, Any]:
         player = await session.get(Player, steam_id)
         if not player:
