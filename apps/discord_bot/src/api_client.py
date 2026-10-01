@@ -284,6 +284,9 @@ class APIClient:
         except Exception:
             return getattr(self, "_roles_cache", (0, []))[1] if getattr(self, "_roles_cache", None) else []
 
+    async def get_players_by_role(self, role_id: str) -> List[Dict[str, Any]]:
+        return await self._request("GET", f"/api/v1/db/roles/{role_id}/players")
+
     async def register_role(self, code: str, name: str, role_type: str, discord_role_id: str) -> None:
         self._roles_cache = None
         payload = schemas.RoleRegisterRequest(

@@ -7,8 +7,21 @@ y este proyecto se adhiere a [Semantic Versioning (SemVer 2.0.0)](https://semver
 
 ---
 
-## [1.4.0] - 2026-10-01
+## [1.4.1] - 2026-10-01
 
+### Agregado
+- **Comando `/roles player_list`**:
+  - Nuevo endpoint en `api_rcon` (`GET /api/v1/db/roles/{role_id}/players`) y comando en Discord para listar los jugadores que poseen un rol determinado. Esto facilita la auditoría de roles cruzados y depuración.
+
+### Corregido
+- **Cruce de Datos en Asignación de Roles (Script Fix)**:
+  - Se identificó y resolvió un problema grave originado en la migración `j6f7a8b9c0d1` (que mapeó tipos de membresías a roles VIP con IDs rígidos y obsoletos en lugar de IDs dinámicos en base al nombre/código en BD).
+  - Como el servidor de producción tenía el ID del rol de Administrador/Fundador como `1`, y los IDs hardcodeados (`2`, `3`, `6`) se mezclaron, la migración `k7g8b9c0d1e2` provocó un cruce de datos masivo, otorgando permisos VIP incorrectos (e incluso de Administrador/Fundador) a usuarios con membresías que no correspondían.
+  - Se proveyó el script local `fix_roles.py` para ejecutarse en producción, reasignando dinámicamente los roles de membresía en base a los códigos correctos y limpiando el cruce de datos en `player_roles`.
+
+---
+
+## [1.4.0] - 2026-10-01
 ### Agregado
 - **Motor Multi-RCON para Producción**:
   - Soporte completo para múltiples instancias de servidores de juego mediante la tabla `rcon_servers`.
