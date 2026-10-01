@@ -1,8 +1,21 @@
+"""
+RCON API client and connection pool manager.
+
+Provides:
+- ``RCONClient``: thin async HTTP client for a single game-server RCON API.
+- ``RCONManager``: class-level pool that routes requests to the correct
+  ``RCONClient`` by (base_url, password) key and falls back to the
+  .env-configured server when no DB rows are active.
+- ``_update_ini_array`` / ``_is_array_directive``: helpers for patching
+  Unreal Engine INI arrays (reserved/banned slots) in-place.
+"""
 import aiohttp
+import json
 import time
 import asyncio
-from typing import Any, Optional, Dict, Tuple
+from typing import Any, Optional
 from urllib.parse import urlparse
+from sqlmodel import select, col
 from wardogs_schemas import v1 as schemas
 from src.config import ENVIRONMENT_SETTINGS
 
@@ -197,7 +210,6 @@ class RCONClient:
     async def get_config(self) -> schemas.Config1:
         data = await self._request("GET", "/v1/config")
         if isinstance(data, str):
-            import json
             data = json.loads(data)
         return schemas.Config1.model_validate(data)
 
@@ -209,7 +221,6 @@ class RCONClient:
             }
             data = await self._request("PUT", "/v1/config?force=true&fullApply=true", headers=headers, data=new_text)
             if isinstance(data, str):
-                import json
                 data = json.loads(data)
             return schemas.ConfigResult.model_validate(data)
         
@@ -305,7 +316,6 @@ class RCONManager:
 
     @classmethod
     async def get_all_active_servers(cls, session: Any) -> list[tuple[Any, RCONClient]]:
-        from sqlmodel import select, col
         from src.connections.databases.db import RconServer
         stmt = select(RconServer).where(RconServer.is_active == True).order_by(col(RconServer.is_default).desc(), col(RconServer.id))
         servers = (await session.exec(stmt)).all()
@@ -316,7 +326,6 @@ class RCONManager:
 
     @classmethod
     async def get_default_server(cls, session: Any) -> tuple[Any, RCONClient]:
-        from sqlmodel import select, col
         from src.connections.databases.db import RconServer
         stmt = select(RconServer).where(RconServer.is_active == True, RconServer.is_default == True)
         default_server = (await session.exec(stmt)).first()

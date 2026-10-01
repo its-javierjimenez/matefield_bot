@@ -1,14 +1,29 @@
-import asyncio
-from sqlmodel import select, col, or_
-from typing import Optional, Any
+"""
+Sync Engine — continuous RCON polling and game-state synchronisation.
 
-from src.connections.databases.db import engine, Player, Match, MatchPlayerStats, PlayerSession, Team, MatchTeamStats, BotConfig
-from sqlmodel.ext.asyncio.session import AsyncSession
-from src.connections.apis.rcon import rcon_client
-from src.connections.apis.steam import get_player_summary
-from src.modules.v1.services.rewards_service import RewardsService
+Responsibilities:
+- Detect match transitions (start / end) via rotation index changes.
+- Upsert ``Player``, ``MatchPlayerStats``, and ``Team`` rows per tick.
+- Track per-player ``PlayerSession`` durations and award seeding reward points.
+- Update team scores and detect match completion when score_cap is reached.
+- Fetch Steam avatar / persona name in a fire-and-forget background task.
+
+All heavy I/O is routed through the active default RCON server resolved from
+the database (``RCONManager.get_default_server``), falling back to the .env
+configuration when no DB server rows exist.
+"""
+import asyncio
 import datetime
 import logging
+from typing import Optional, Any
+
+from sqlmodel import select, col, or_
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from src.connections.databases.db import engine, Player, Match, MatchPlayerStats, PlayerSession, Team, MatchTeamStats, BotConfig
+from src.connections.apis.rcon import RCONManager
+from src.connections.apis.steam import get_player_summary
+from src.modules.v1.services.rewards_service import RewardsService
 
 class SyncEngineState:
     """Encapsulates the in-memory state of match tracking and map rotations."""
@@ -28,14 +43,7 @@ DEFAULT_SEEDING_MIN_PLAYERS = 20
 DEFAULT_SEEDING_MINUTES_PER_POINT = 30
 DEFAULT_SCORE_CAP = 100
 
-logger = logging.getLogger("sync_engine")
-logger.setLevel(logging.INFO)
-# Basic config if not already set by FastAPI
-if not logger.handlers:
-    ch = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
+logger = logging.getLogger("wardogs.sync_engine")
 
 
 async def _get_int_config(session: AsyncSession, key: str, default: int) -> int:
@@ -290,15 +298,20 @@ async def poll_rcon(state: Optional[SyncEngineState] = None):
             
             # Prevent time leaps if the polling loop was blocked or delayed
             if delta_seconds > MAX_TIME_GAP_SECONDS:
-                logger.warning(f"[Match Engine] Large time gap detected ({delta_seconds}s). Capping to {MAX_TIME_GAP_SECONDS}s.")
+                logger.warning(
+                    "[Match Engine] Large time gap detected (%ds). Capping to %ds.",
+                    delta_seconds,
+                    MAX_TIME_GAP_SECONDS,
+                )
                 delta_seconds = MAX_TIME_GAP_SECONDS
                 
             last_poll_time = now
             
-            status = await rcon_client.get_status()
-            players = await rcon_client.get_players()
-            
+            # Resolve the active RCON server from DB (falls back to .env if no rows)
             async with AsyncSession(engine) as session:
+                _, client = await RCONManager.get_default_server(session)
+                status = await client.get_status()
+                players = await client.get_players()
                 await process_sync_tick(session, status, players, now, delta_seconds, state=state)
 
             # Dynamic polling rate: poll faster near match end
@@ -311,5 +324,5 @@ async def poll_rcon(state: Optional[SyncEngineState] = None):
             await asyncio.sleep(sleep_time)
 
         except Exception as e:
-            logger.error(f"[Match Engine] Error polling RCON in sync_engine: {e}")
+            logger.error("[Match Engine] Error polling RCON in sync_engine: %s", e)
             await asyncio.sleep(DEFAULT_POLL_INTERVAL_SECONDS)

@@ -109,10 +109,16 @@ class MembershipsService:
                 if sr_obj:
                     attached_special_role_id = sr_obj.id
                 else:
-                    new_sr = Role(code=role_identifier.upper().replace(" ", "_"), name=role_identifier, discord_role_id=role_identifier, role_type="SPECIAL")
+                    new_sr = Role(
+                        code=role_identifier.upper().replace(" ", "_"),
+                        name=role_identifier,
+                        discord_role_id=role_identifier,
+                        role_type="SPECIAL"
+                    )
                     session.add(new_sr)
-                    await session.commit()
-                    await session.refresh(new_sr)
+                    # flush (not commit) — keeps new Role inside the current transaction
+                    # so that the subsequent Membership insert is atomic with it.
+                    await session.flush()
                     attached_special_role_id = new_sr.id
         elif not attached_special_role_id and existing_membership and existing_membership.special_role_id:
             attached_special_role_id = existing_membership.special_role_id
@@ -284,8 +290,10 @@ class MembershipsService:
                     membership.end_time = start_base + timedelta(days=type_days)
                     if req.is_active is None:
                         now_utc = datetime.now(timezone.utc)
-                        end_comp = membership.end_time if membership.end_time.tzinfo else membership.end_time.replace(tzinfo=timezone.utc)
-                        membership.is_active = end_comp > now_utc
+                        end_dt = membership.end_time
+                        if end_dt is not None and end_dt.tzinfo is None:
+                            end_dt = end_dt.replace(tzinfo=timezone.utc)
+                        membership.is_active = end_dt is not None and end_dt > now_utc
             
         if req.days is not None:
             if req.days == 0:

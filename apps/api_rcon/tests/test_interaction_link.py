@@ -149,7 +149,7 @@ async def test_bot_lookup_requires_api_key(client):
     override = app.dependency_overrides.pop(verify_api_key_guard)
     try:
         response = await client.get("/api/v1/db/players/discord/" + A)
-        assert response.status_code == 403
+        assert response.status_code == 401  # 401: missing header (RFC 7235); 403 would be wrong key
     finally:
         app.dependency_overrides[verify_api_key_guard] = override
 

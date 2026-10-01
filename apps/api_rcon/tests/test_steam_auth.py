@@ -194,6 +194,7 @@ async def test_steam_callback_immediate_role_grant(client: AsyncClient, session:
     }
 
     with patch("src.config.ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY", secret), \
+         patch("src.config.ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.DISCORD_TOKEN", "mock_discord_token"), \
          patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_post_resp)), \
          patch("httpx.AsyncClient.put", new=mock_put), \
          patch("src.modules.v1.routers.auth.get_player_summary", new=AsyncMock(return_value=mock_steam_summary)):

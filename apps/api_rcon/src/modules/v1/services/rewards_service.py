@@ -207,9 +207,16 @@ class RewardsService:
         )
         claims = (await session.exec(claims_stmt)).all()
 
+        # Batch-load reward items to avoid N+1 queries
+        reward_ids = {c.reward_id for c in claims}
+        rewards_by_id: Dict[int, RewardItem] = {}
+        if reward_ids:
+            fetched = (await session.exec(select(RewardItem).where(col(RewardItem.id).in_(reward_ids)))).all()
+            rewards_by_id = {r.id: r for r in fetched if r.id is not None}
+
         claims_data = []
         for c in claims:
-            reward = await session.get(RewardItem, c.reward_id)
+            reward = rewards_by_id.get(c.reward_id)
             claims_data.append(
                 {
                     "id": c.id,

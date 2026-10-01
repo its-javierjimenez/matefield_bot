@@ -5,8 +5,8 @@ from wardogs_schemas import v1 as schemas
 
 from src.security.guard import verify_api_key_guard
 from src.connections.databases.db import get_session
-from src.connections.apis.rcon import rcon_client as rcon
 from src.modules.v1.schemas.dtos import ConfigUpdateRequest
+from src.modules.v1.services.backup_service import create_database_sql_backup
 from src.modules.v1.services.server_service import ServerService
 
 router = APIRouter(tags=["Server & RCON"])
@@ -60,16 +60,18 @@ async def switch_faction(steam_id: str, req: schemas.FactionRequest, session: As
     return {"ok": True}
 
 @router.get("/config", dependencies=[Depends(verify_api_key_guard)])
-async def get_config():
-    return await rcon.get_config()
+async def get_config(session: AsyncSession = Depends(get_session)):
+    """Returns the active server INI configuration text."""
+    _, client = await ServerService._get_client(session)
+    return await client.get_config()
 
 @router.put("/config", dependencies=[Depends(verify_api_key_guard)], response_model=schemas.ConfigResult)
-async def update_config(req: ConfigUpdateRequest):
-    return await ServerService.update_config(req.revision, req.new_text)
+async def update_config(req: ConfigUpdateRequest, session: AsyncSession = Depends(get_session)):
+    return await ServerService.update_config(req.revision, req.new_text, session=session)
 
 @router.post("/db/backup", dependencies=[Depends(verify_api_key_guard)])
 async def trigger_database_backup(session: AsyncSession = Depends(get_session)):
-    from src.modules.v1.services.backup_service import create_database_sql_backup
+    """Triggers an on-demand SQL backup of the full database."""
     file_path = await create_database_sql_backup(session)
     return {
         "ok": True,

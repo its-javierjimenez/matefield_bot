@@ -107,8 +107,9 @@ async def create_database_sql_backup(
     except Exception as e:
         logger.warning(f"Could not update latest.sql copy: {e}")
 
-    # Enforce retention policy
-    cleanup_old_backups(target_dir, max_days=14, keep_min=10)
+    # Enforce retention policy (thresholds configurable via BACKUP_RETENTION_DAYS / BACKUP_KEEP_MIN)
+    cfg = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS
+    cleanup_old_backups(target_dir, max_days=cfg.BACKUP_RETENTION_DAYS, keep_min=cfg.BACKUP_KEEP_MIN)
 
     logger.info(f"[Backup] Successfully generated SQL backup: {sql_file.name} ({sql_file.stat().st_size} bytes)")
     return sql_file

@@ -1,4 +1,3 @@
-import os
 import hashlib
 import re
 import urllib.parse
@@ -19,6 +18,10 @@ from wardogs_schemas.steam_token import verify_steam_link_token
 
 router = APIRouter(prefix="/auth/steam", tags=["Auth"])
 logger = logging.getLogger("wardogs.auth")
+
+# Resolved once after load_dotenv() — consistent with the rest of the system.
+_security = ENVIRONMENT_SETTINGS.SECURITY_SETTINGS
+_connections = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS
 
 STEAM_RESULT_COOKIE = "steam_auth_result"
 STEAM_RESULT_PATH = "/vincular/discord-steam/resultado"
@@ -106,8 +109,7 @@ async def _already_linked_response(request: Request, payload: dict, session: Asy
 
 @router.get("/login")
 async def steam_login(request: Request, token: str = "", session: AsyncSession = Depends(get_session)):
-    secret_key = ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY
-    payload = verify_steam_link_token(token, secret_key)
+    payload = verify_steam_link_token(token, _security.API_KEY)
     if not payload:
         return HTMLResponse(render_error_page(title=EXPIRED_TITLE, message=EXPIRED_MESSAGE),
                             status_code=400, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
@@ -141,8 +143,7 @@ async def steam_login(request: Request, token: str = "", session: AsyncSession =
 
 @router.get("/callback")
 async def steam_callback(request: Request, token: str = "", session: AsyncSession = Depends(get_session)):
-    secret_key = ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY
-    payload = verify_steam_link_token(token, secret_key)
+    payload = verify_steam_link_token(token, _security.API_KEY)
 
     if not payload:
         return _redirect_to_error(request, EXPIRED_MESSAGE, title=EXPIRED_TITLE)
@@ -230,11 +231,11 @@ async def steam_callback(request: Request, token: str = "", session: AsyncSessio
         cfg_guild = await session.get(BotConfig, "GUILD_ID")
         if cfg_guild and cfg_guild.config_value:
             guild_id = cfg_guild.config_value
-        elif os.environ.get("DISCORD_GUILD_ID"):
-            guild_id = os.environ.get("DISCORD_GUILD_ID")
+        elif _security.DISCORD_GUILD_ID:
+            guild_id = str(_security.DISCORD_GUILD_ID)
 
     # Asignar roles en Discord de forma inmediata si se dispone de token y guild
-    discord_token = os.environ.get("DISCORD_TOKEN")
+    discord_token = _security.DISCORD_TOKEN
     if discord_token and guild_id:
         try:
             # Consultar si el Steam ID tiene bans activos

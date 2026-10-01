@@ -1,12 +1,22 @@
+"""
+Database models (SQLModel / SQLAlchemy) and engine setup.
+
+All ORM tables are defined here so that ``SQLModel.metadata.sorted_tables``
+returns them in correct foreign-key dependency order for the backup service.
+
+The async engine and ``get_session`` dependency are also exported from this
+module so that routers and services have a single import point for DB access.
+"""
 from typing import Optional, List
-from sqlmodel import Field, Session, SQLModel, create_engine, Relationship
-from datetime import datetime, timezone
+from sqlmodel import Field, SQLModel, Relationship
+from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy import Column, DateTime, BigInteger, ForeignKey, Text
+from sqlalchemy.ext.asyncio import create_async_engine
+from datetime import datetime, timezone
+from enum import Enum
 import uuid
 
 from src.config import ENVIRONMENT_SETTINGS
-
-from enum import Enum
 
 class RoleType(str, Enum):
     SYSTEM = "SYSTEM"
@@ -249,13 +259,11 @@ class RewardClaim(SQLModel, table=True):
     player: Optional[Player] = Relationship(back_populates="reward_claims")
 
 
-from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlalchemy.ext.asyncio import create_async_engine
-
 # --- Database Setup ---
 engine = create_async_engine(ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.DATABASE_URL, echo=False)
 
+
 async def get_session():
+    """FastAPI dependency that yields an async database session."""
     async with AsyncSession(engine, expire_on_commit=False) as session:
         yield session
-

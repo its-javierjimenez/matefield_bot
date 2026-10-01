@@ -1,3 +1,14 @@
+"""
+Security token utilities.
+
+Provides HMAC-signed tokens for two purposes:
+- ``generate_signed_payload_token`` / ``verify_signed_payload_token``: short-lived
+  browser-flow state tokens (e.g. Steam OpenID callback round-trip).
+- ``generate_secure_download_token`` / ``verify_secure_download_token``: stateless
+  tamper-proof download links with expiry (e.g. CSV export).
+
+All tokens are signed with the API_KEY from SecuritySettings. No JWT lib needed.
+"""
 import base64
 import binascii
 import hashlib
@@ -71,6 +82,6 @@ def verify_secure_download_token(filename: str, token: str) -> bool:
         secret = ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY.encode("utf-8")
         expected_sig = hmac.new(secret, message, hashlib.sha256).hexdigest()
         return hmac.compare_digest(expected_sig, sig)
-    except Exception as e:
-        logger.warning(f"Error verifying download token for {filename}: {e}")
+    except Exception:
+        logger.warning("Error verifying download token for %s", filename)
         return False

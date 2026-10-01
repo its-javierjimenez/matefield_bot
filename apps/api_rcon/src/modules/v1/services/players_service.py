@@ -222,23 +222,25 @@ class PlayersService:
 
     @staticmethod
     async def get_paginated_players(page: int, limit: int, linked: str, session: AsyncSession) -> Dict[str, Any]:
-        statement = select(Player)
+        # Build the optional filter once and reuse it in both count and data queries.
+        linked_filter = None
         if linked == "linked":
-            statement = statement.where(Player.discord_id != None)
+            linked_filter = Player.discord_id != None
         elif linked == "unlinked":
-            statement = statement.where(Player.discord_id == None)
-            
-        total_statement = select(func.count(col(Player.steam_id)))
-        if linked == "linked":
-            total_statement = total_statement.where(Player.discord_id != None)
-        elif linked == "unlinked":
-            total_statement = total_statement.where(Player.discord_id == None)
-        total = (await session.exec(total_statement)).one()
-        
+            linked_filter = Player.discord_id == None
+
+        count_stmt = select(func.count(col(Player.steam_id)))
+        data_stmt = select(Player)
+        if linked_filter is not None:
+            count_stmt = count_stmt.where(linked_filter)
+            data_stmt = data_stmt.where(linked_filter)
+
+        total = (await session.exec(count_stmt)).one()
+
         offset = max(0, (page - 1) * limit)
-        statement = statement.order_by(col(Player.steam_id)).offset(offset).limit(limit)
-        db_players = (await session.exec(statement)).all()
-        
+        data_stmt = data_stmt.order_by(col(Player.steam_id)).offset(offset).limit(limit)
+        db_players = (await session.exec(data_stmt)).all()
+
         paginated_results: List[Dict[str, Any]] = []
         for p in db_players:
             paginated_results.append({
