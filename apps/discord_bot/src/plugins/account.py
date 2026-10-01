@@ -15,8 +15,26 @@ from wardogs_schemas.steam_token import create_steam_link_token
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 
 
+def _parse_steam_emoji(raw: Optional[str]) -> hikari.UnicodeEmoji | hikari.CustomEmoji:
+    val = (raw or "").strip().strip("\"'")
+    if not val:
+        return hikari.UnicodeEmoji("🎮")
+    if val.isdigit():
+        return hikari.CustomEmoji(id=hikari.Snowflake(val), name="steam", is_animated=False)
+    if (val.startswith(":") or val.startswith("a:")) and not (val.startswith("<") and val.endswith(">")):
+        try:
+            return hikari.CustomEmoji.parse(f"<{val}>")
+        except Exception:
+            pass
+    try:
+        return hikari.Emoji.parse(val)
+    except Exception as exc:
+        logger.warning("Invalid STEAM_LINK_EMOJI '%s', falling back to 🎮: %s", raw, exc)
+        return hikari.UnicodeEmoji("🎮")
+
+
 # UI / Theme Constants
-STEAM_LINK_EMOJI = hikari.Emoji.parse(os.environ.get("STEAM_LINK_EMOJI", "🎮"))
+STEAM_LINK_EMOJI = _parse_steam_emoji(os.environ.get("STEAM_LINK_EMOJI", "🎮"))
 COLOR_STEAM_DARK = 0x1B2838
 COLOR_PANEL_BLUE = 0x2B6CB0
 COLOR_PROFILE_DARK = 0x2B2D31

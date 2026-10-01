@@ -101,3 +101,33 @@ def test_link_length_does_not_depend_on_unicode_name_or_avatar(client):
     payload = verify_steam_link_token(parse_qs(urlparse(link).query)["token"][0], "test_key")
     assert payload["discord_id"] == str(A)
     assert "discord_avatar" not in payload
+
+
+def test_parse_steam_emoji_resilience():
+    # Empty or None fallback
+    assert account._parse_steam_emoji(None) == hikari.UnicodeEmoji("🎮")
+    assert account._parse_steam_emoji("") == hikari.UnicodeEmoji("🎮")
+    assert account._parse_steam_emoji("   ") == hikari.UnicodeEmoji("🎮")
+
+    # Standard Unicode
+    assert account._parse_steam_emoji("🎮") == hikari.UnicodeEmoji("🎮")
+
+    # Standard Custom Emoji
+    custom = account._parse_steam_emoji("<:steam:123456789012345678>")
+    assert isinstance(custom, hikari.CustomEmoji)
+    assert custom.id == 123456789012345678
+    assert custom.name == "steam"
+
+    # Unbracketed Custom Emoji
+    unbracketed = account._parse_steam_emoji(":steam:123456789012345678")
+    assert isinstance(unbracketed, hikari.CustomEmoji)
+    assert unbracketed.id == 123456789012345678
+
+    # Quoted Custom Emoji
+    quoted = account._parse_steam_emoji('"<:steam:123456789012345678>"')
+    assert isinstance(quoted, hikari.CustomEmoji)
+
+    # Malformed bracketed mentions (e.g. placeholder or invalid mention from env)
+    assert account._parse_steam_emoji("<EMOJI>") == hikari.UnicodeEmoji("🎮")
+    assert account._parse_steam_emoji("<:steam:>") == hikari.UnicodeEmoji("🎮")
+
