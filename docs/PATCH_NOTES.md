@@ -8,34 +8,31 @@
 
 ## 🚀 Resumen Ejecutivo v1.4.0
 
-La versión **v1.4.0** representa un salto de madurez operativa en la plataforma. Introduce el **Admin Dashboard oficial (SPA)** con autenticación Discord OAuth2 y gestión de sesiones HMAC, consolida el **motor Multi-RCON** con alcance granular por servidor y cerraduras concurrentes en `ServerSettings.ini`, añade el **sistema de puntos y recompensas**, blinda la **vinculación de Steam OpenID** con URLs limpias y tokens criptográficos efímeros, y unifica la documentación de entorno `.env` en secciones modulares (`API`, `BOT`, `AMBOS`).
+La versión **v1.4.0** representa un salto de madurez operativa y estabilidad en la plataforma. Consolida el **motor Multi-RCON** con alcance granular por servidor y cerraduras concurrentes en `ServerSettings.ini`, añade el **sistema de puntos y recompensas**, blinda la **vinculación de Steam OpenID** con URLs limpias y tokens criptográficos efímeros, y unifica la documentación de entorno `.env` en secciones modulares (`API`, `BOT`, `AMBOS`).
 
-La plataforma cuenta con **168 pruebas automatizadas pasando al 100%** (135 en `api_rcon` y 33 en `discord_bot`).
+La plataforma cuenta con **100% de pruebas automatizadas aprobadas** en `api_rcon` y `discord_bot`.
 
 ---
 
 ## 🛠️ Novedades Principales v1.4.0
 
-### 🖥️ 1. Admin Dashboard SPA
-- **Interfaz SPA Dark Mode**: Servida en `/admin` y `/api/v1/admin` con cabeceras HTTP de protección anti-clickjacking (`X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff`).
-- **Autenticación Discord OAuth2**: Verificación CSRF mediante cookie `oauth_state`, validación de roles administrativos de tipo `SYSTEM` o permisos nativos de Discord, emitiendo cookies de sesión seguras (`admin_session`) firmadas con HMAC-SHA256 con validez de 7 días.
-- **Steam OpenID 2.0 para Staff**: Vinculación y desvinculación segura de Steam ID con control de colisiones en base de datos y otorgamiento automático del rol `LINK_ROLE_ID`.
-- **Monitoreo y Operaciones**: Visualización de latencia de servidores RCON, prueba de conexión en tiempo real, gestión de cupos de membresías, administración de whitelist contra desincronización y control centralizado de sanciones/baneos.
-
-### 🌐 2. Motor Multi-RCON para Producción
+### 🌐 1. Motor Multi-RCON para Producción
 - **Arquitectura Multiserver**: Registro dinámico de servidores en `rcon_servers`.
 - **Scoping por Servidor**: Membresías con `server_id = NULL` sincronizan en todos los servidores activos del clúster; membresías con `server_id = N` sincronizan de forma exclusiva en el servidor indicado.
 - **Tolerancia a Fallos**: Si la base de datos no tiene servidores registrados, conmuta de forma automática a las credenciales configuradas en `.env`.
 - **Concurrencia Segura**: Bloqueo asíncrono con `asyncio.Lock` (`_config_lock`) por cada servidor para prevenir corrupción y condiciones de carrera al escribir slots reservados en `ServerSettings.ini`.
 
-### 🎁 3. Sistema de Puntos y Recompensas
+### 🎁 2. Sistema de Puntos y Recompensas
 - Nuevo servicio `RewardsService` con endpoints dedicados para otorgamiento de beneficios, consulta de saldo de puntos de fidelidad y sincronización inmediata de roles VIP.
 - Suite de pruebas de simulación transaccional con 50 iteraciones concurrentes garantizando integridad patrimonial.
 
-### 🔐 4. Vinculación Segura de Cuentas y Limpieza de URLs
+### 🔐 3. Vinculación Segura de Cuentas y Limpieza de URLs
 - Redirección post-callback de Steam hacia URLs limpias en el navegador.
 - Enlace al canal de asistencia (`DISCORD_REQUEST_HELP_CHANNEL_URL`) en páginas de error.
-- Guardia de seguridad `verify_api_key_guard` con soporte dual para `X-API-Key` y sesiones administrativas Bearer/Cookie.
+- Flujo de interacción segura desde Discord mediante tokens criptográficos efímeros.
+
+### ⚙️ 4. Configuración Modular (.env.example)
+- Segmentación clara y documentada entre variables exclusivas de la API, exclusivas del BOT y variables compartidas (`AMBOS`).
 
 ---
 
