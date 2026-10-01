@@ -18,6 +18,10 @@ async def register_role(req: RoleRegisterRequest, session: AsyncSession = Depend
 async def get_all_roles(session: AsyncSession = Depends(get_session)):
     return await RolesService.get_all_roles(session)
 
+@router.get("/db/roles/{role_id}/players", dependencies=[Depends(verify_api_key_guard)])
+async def get_players_by_role(role_id: str, session: AsyncSession = Depends(get_session)):
+    return await RolesService.get_players_by_role(role_id, session)
+
 @router.post("/db/players/{steam_id}/roles/{role_id}", dependencies=[Depends(verify_api_key_guard)], response_model=schemas.Ok)
 async def add_special_role(steam_id: str, role_id: str, session: AsyncSession = Depends(get_session)):
     return await RolesService.add_special_role(steam_id, role_id, session)
