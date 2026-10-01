@@ -18,5 +18,5 @@ WORKDIR /app/apps/api_rcon
 # Exponer puerto de la API
 EXPOSE 8000
 
-# Entrypoint usando UV
-CMD ["uv", "run", "--package", "api_rcon", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Entrypoint usando UV con migraciones automáticas al iniciar
+CMD ["sh", "-c", "uv run alembic upgrade head && uv run --package api_rcon uvicorn src.main:app --host 0.0.0.0 --port 8000"]
