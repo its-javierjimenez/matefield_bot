@@ -79,18 +79,23 @@ En este modelo, `link` y `unlink` se limitan unicamente a la verificacion de ide
 
 ---
 
-## 5. Protocolo Recomendado para el Staff
+## 5. Protocolo Adoptado: Modelo Diferido (Estilo Git)
 
-La implementacion optima combina la **automatizacion defensiva de la Opcion A** con el **uso deliberado de comandos administrativos**:
+Se adopta oficialmente el **Modelo Diferido**, donde las acciones operativas directas vía comandos son inmediatas y el resto opera mediante el ciclo de sincronización programada. En este esquema:
 
-1. **Flujo de Cambio de Cuenta Legítimo (Jugador perdio acceso a su Discord)**:
-   * El Administrador ejecuta: `/player unlink usuario:@CuentaVieja`
-   * Resultado: La cuenta vieja pierde el rol Verificado y roles VIP en Discord. El `steam_id` conserva sus dias restantes.
-   * El jugador procede a ejecutar `/player link` desde su `@CuentaNueva`.
-   * Resultado: La cuenta nueva recibe el rol Verificado y sus roles VIP de manera automatica.
+* **`/player link` y `/player unlink`**: Únicamente gestionan el rol de Verificado (`LINK_ROLE_ID`) de forma inmediata.
+* **Comandos de membresías y roles (`/membership add`, `/membership remove`, `/membership edit`, `/roles give`, `/roles remove`)**: Aplican sus efectos tanto en Base de Datos como en Discord de forma inmediata en tiempo real.
+* **`/roles remove_all @usuario`**: Retira inmediatamente todos los roles administrados en Discord.
+  * **Comportamiento clave**: Si el usuario continúa vinculado a su SteamID y posee membresías activas en la base de datos, el ciclo periódico de sincronización automática le volverá a entregar los roles correspondientes. Esto es correcto y deliberado: su propósito es limpiar la cuenta de Discord previa a una desvinculación o cambio de cuenta.
+* **`/roles sync @usuario`**: Reconcilia inmediatamente el estado del usuario contra la base de datos ("commit/pull" manual).
 
-2. **Flujo de Sancion / Expulsion (Revocacion total de beneficios)**:
-   * El Administrador ejecuta primero: `/roles remove_all usuario:@Infractor`
-   * Resultado: Se desactivan las membresias en la base de datos, se retiran los slots en los servidores de juego (RCON) y se eliminan todos los roles de Discord.
-   * El Administrador ejecuta luego: `/player unlink usuario:@Infractor`
-   * Resultado: Se libera el enlace entre Steam y Discord.
+### Protocolo Operativo para el Staff
+
+1. **Traspaso de Cuenta (Atención Personalizada)**:
+   * **Paso 1**: El administrador ejecuta `/roles remove_all usuario:@CuentaVieja` para retirar todos los roles cosméticos de Discord de la cuenta antigua.
+   * **Paso 2**: El administrador ejecuta `/player unlink usuario:@CuentaVieja` para liberar el SteamID en la BD y retirar el rol de Verificado.
+   * **Paso 3**: El jugador vincula su nueva cuenta ejecutando `/player link` desde `@CuentaNueva` (obtiene rol de Verificado de inmediato).
+   * **Paso 4**: El administrador ejecuta `/roles sync usuario:@CuentaNueva` para entregarle de inmediato sus roles VIP y especiales (o espera al siguiente ciclo de sincronización periódica).
+
+2. **Uso Habitual General**:
+   * Los jugadores se vinculan mediante `/player link`, reciben su rol de Verificado al instante y continúan normalmente mientras el bot sincroniza sus beneficios de fondo.

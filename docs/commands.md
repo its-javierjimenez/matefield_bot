@@ -9,7 +9,7 @@ Estos comandos pueden ser utilizados por cualquier usuario del servidor, ya sea 
 
 * **`/player link`**
   Genera un enlace único, privado y seguro para vincular la cuenta de Discord con la de Steam. Si ya estás vinculado, el bot te lo confirmará.
-  *(Nota: Al vincularte, recibirás automáticamente el rol de Discord asociado a usuarios vinculados, si el administrador configuró uno).*
+  *(Nota: Al vincularte, recibirás inmediatamente el rol de Discord de verificación ("LINK_ROLE_ID"). Si tu cuenta de Steam ya poseía membresías VIP o roles especiales en la BD, estos se aplicarán en el siguiente ciclo periódico de sincronización o de inmediato si un admin corre `/roles sync`).*
 
 * **`/player link_channel`** *(Solo Admin para configurar)*
   Genera un panel público (embed con botón verde) en el canal donde se ejecuta. Cualquier jugador puede clickear el botón para recibir el enlace de vinculación por mensaje directo.
@@ -32,8 +32,8 @@ Comandos exclusivos para el Staff del servidor. Permiten gestionar la base de da
 
 ### 🔗 Gestión de Cuentas de Jugadores
 * **`/player unlink [usuario]`** *(Solo Admin)*
-  Desvincula la cuenta de Discord especificada de su cuenta de Steam (o la del propio admin si no se pasa usuario), liberando el `discord_id` en la BD y retirando el rol de verificación (`LINK_ROLE_ID`) en Discord.
-  *(Nota: Las membresías VIP, estadísticas y roles en la Base de Datos siguen asociadas al `steam_id`. Si el admin desea además revocar por completo todos los beneficios VIP y roles cosméticos de Discord, debe usar `/roles remove_all @usuario`).*
+  Desvincula la cuenta de Discord especificada de su cuenta de Steam (o la del propio admin si no se pasa usuario), liberando el `discord_id` en la BD y retirando únicamente el rol de verificación (`LINK_ROLE_ID`) en Discord.
+  *(Nota: Las membresías VIP, estadísticas y roles en la Base de Datos permanecen intactas asociadas al `steam_id`. Si se desea limpiar los roles de Discord de una cuenta antigua antes de desvincularla, el Staff debe usar `/roles remove_all @usuario`).*
 
 ### 🎭 Gestión de Roles Especiales (Base de Datos)
 Estos comandos interactúan con la tabla de roles registrados en la Base de Datos.
@@ -42,7 +42,8 @@ Estos comandos interactúan con la tabla de roles registrados en la Base de Dato
 * **`/roles remove @usuario rol`**
   Le quita un rol especial registrado a un jugador vinculado en tiempo real.
 * **`/roles remove_all @usuario`**
-  Limpieza total. Le quita al usuario absolutamente todos los roles de Discord que sean administrados por el bot (roles vinculados, VIP y especiales) y desvincula las conexiones internas. Genera error si el usuario no tiene ninguna vinculación.
+  Limpieza de roles de Discord. Le retira al usuario en tiempo real absolutamente todos los roles administrados por el bot (roles vinculados, VIP y especiales).
+  *(Aviso de arquitectura: Si el usuario continúa vinculado a su SteamID y tiene membresías vigentes en la BD, la tarea de sincronización periódica del bot le volverá a entregar los roles correspondientes al cabo de su ciclo. Por ello, este comando está diseñado para usarse justo antes de `/player unlink` cuando se atiende un cambio o traspaso de cuenta).*
 * **`/roles register`**
   Registra un nuevo rol (Código, Nombre, Tipo y Rol de Discord asociado) en la base de datos para poder usarlo después.
 * **`/roles list`**
@@ -52,7 +53,7 @@ Estos comandos interactúan con la tabla de roles registrados en la Base de Dato
 * **`/roles set_link`**
   Configura cuál es el Rol de Discord que se otorga automáticamente cuando un jugador se vincula exitosamente a través de `/player link`.
 * **`/roles sync @usuario`**
-  Fuerza una sincronización en tiempo real. Revisa la base de datos y le asigna (o remueve) en Discord **exactamente** los roles que le corresponden por su estado de vinculación y membresías VIP o roles especiales. Sirve para corregir desincronizaciones manuales.
+  Fuerza una sincronización en tiempo real estilo manual ("commit/pull"). Revisa la base de datos y le asigna (o remueve) en Discord **exactamente** los roles que le corresponden por su estado de vinculación y membresías VIP o roles especiales. Ideal para aplicar roles de inmediato cuando se asiste a un usuario tras un cambio de cuenta.
 
 ### 💎 Gestión de Membresías (VIP)
 Administración de VIPs, duración y privilegios de slots en el servidor. Todas las asignaciones, ediciones y remociones aplican los cambios de roles en Discord en tiempo real y son tenidas en cuenta por el motor de sincronización de RCON en segundo plano (poll RCON).
