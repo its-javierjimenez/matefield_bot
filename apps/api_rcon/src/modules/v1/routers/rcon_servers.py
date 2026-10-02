@@ -7,7 +7,6 @@ from src.connections.databases.db import get_session
 from src.modules.v1.schemas.dtos import CreateRconServerRequest, UpdateRconServerRequest
 from src.modules.v1.services.rcon_servers_service import RconServersService
 from src.modules.v1.services.memberships_service import MembershipsService
-from src.modules.v1.services.bans_service import BansService
 
 router = APIRouter(prefix="/rcon-servers", tags=["Multi-RCON Servers"])
 

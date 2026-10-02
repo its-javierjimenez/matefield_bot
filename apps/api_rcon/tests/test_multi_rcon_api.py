@@ -70,20 +70,6 @@ async def test_rcon_servers_crud_flow(client: AsyncClient, session: AsyncSession
 
 
 @pytest.mark.asyncio
-async def test_rcon_servers_sync_all_endpoint(client: AsyncClient, session: AsyncSession, mocker):
-    mocker.patch.object(RCONClient, "sync_reserved_slots", return_value=None)
-    mocker.patch.object(RCONClient, "get_bans", return_value=[])
-    mocker.patch.object(RCONClient, "sync_banned_slots", return_value=None)
-
-    resp = await client.post("/api/v1/rcon-servers/sync-all")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["ok"] is True
-    assert len(data["results"]) >= 1
-    assert data["results"][0]["status"] == "SUCCESS"
-
-
-@pytest.mark.asyncio
 async def test_rcon_client_get_bans_empty_list_does_not_call_get_config(mocker):
     """Verifies that an empty ban list from /v1/bans returns immediately without unnecessary config fetch."""
     rcon = RCONClient(base_url="http://127.0.0.1:8000", password="test")

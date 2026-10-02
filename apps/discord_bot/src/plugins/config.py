@@ -4,7 +4,7 @@ import crescent
 import hikari
 from src.model import Model
 from src.hooks import admin_only
-from src.groups import config_group, roles_group, whitelist_group, ban_role_group, role_group
+from src.groups import config_group, roles_group, whitelist_group, role_group
 
 logger = logging.getLogger(__name__)
 
@@ -162,12 +162,12 @@ class GiveRole:
             
             discord_msg = ""
             if role_obj and role_obj.get("discord_role_id") and ctx.guild_id:
-                try:
-                    target_role_id = int(role_obj["discord_role_id"])
-                    await ctx.app.rest.add_role_to_member(ctx.guild_id, self.usuario.id, target_role_id)
-                    discord_msg = f" y rol de Discord <@&{target_role_id}> otorgado"
-                except Exception as d_err:
-                    discord_msg = f" (nota: no se pudo asignar rol en Discord inmediatamente: {d_err})"
+                from src.plugins.tasks import sync_single_user_roles
+                sync_res = await sync_single_user_roles(ctx.app, plugin.model, self.usuario.id, ctx.guild_id)
+                if sync_res.get("success"):
+                    discord_msg = " (y roles sincronizados en Discord)"
+                else:
+                    discord_msg = " (nota: error al sincronizar en Discord)"
                     
             await ctx.respond(f"✅ Rol `{role_code}` asignado a {self.usuario.mention} (`{steam_id}`){discord_msg}.")
         except Exception as e:
@@ -198,16 +198,78 @@ class RemoveRole:
             
             discord_msg = ""
             if role_obj and role_obj.get("discord_role_id") and ctx.guild_id:
-                try:
-                    target_role_id = int(role_obj["discord_role_id"])
-                    await ctx.app.rest.remove_role_from_member(ctx.guild_id, self.usuario.id, target_role_id)
-                    discord_msg = f" y rol de Discord <@&{target_role_id}> removido"
-                except Exception as d_err:
-                    discord_msg = f" (nota: no se pudo remover rol en Discord inmediatamente: {d_err})"
+                from src.plugins.tasks import sync_single_user_roles
+                sync_res = await sync_single_user_roles(ctx.app, plugin.model, self.usuario.id, ctx.guild_id)
+                if sync_res.get("success"):
+                    discord_msg = " (y roles sincronizados en Discord)"
+                else:
+                    discord_msg = " (nota: error al sincronizar en Discord)"
                     
             await ctx.respond(f"✅ Rol `{role_code}` removido de {self.usuario.mention} (`{steam_id}`){discord_msg}.")
         except Exception as e:
             await ctx.respond(f"❌ Error al remover rol: {e}")
+
+@plugin.include
+@crescent.hook(admin_only)
+@roles_group.child
+@crescent.command(name="remove_all", description="Remueve todos los roles administrados a los que un usuario está vinculado")
+class RolesRemoveAll:
+    usuario = crescent.option(hikari.User, "Usuario de Discord a limpiar roles")
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer(ephemeral=True)
+        try:
+            player_info = await plugin.model.api.get_player_by_discord(str(self.usuario.id))
+            if not player_info:
+                await ctx.respond(f"❌ El usuario {self.usuario.mention} no tiene cuenta vinculada.")
+                return
+
+            res = await plugin.model.api.sync_memberships()
+            role_maps = res.get("role_maps", {})
+            managed_special_roles = res.get("managed_special_roles", [])
+            all_managed_roles = set(role_maps.values()).union(set(managed_special_roles))
+
+            link_role_id = await plugin.model.api.get_bot_config("LINK_ROLE_ID")
+            if link_role_id and link_role_id.isdigit():
+                all_managed_roles.add(int(link_role_id))
+
+            removed_count = 0
+            if ctx.guild_id:
+                member = await ctx.app.rest.fetch_member(ctx.guild_id, self.usuario.id)
+                if member:
+                    current_roles = set(member.role_ids)
+                    for r_id in all_managed_roles:
+                        if r_id in current_roles:
+                            await ctx.app.rest.remove_role_from_member(ctx.guild_id, self.usuario.id, r_id)
+                            removed_count += 1
+
+            await ctx.respond(f"✅ Se han removido {removed_count} roles administrados de {self.usuario.mention}.")
+        except Exception as e:
+            await ctx.respond(f"❌ Error al remover roles: {e}")
+
+@plugin.include
+@crescent.hook(admin_only)
+@roles_group.child
+@crescent.command(name="sync", description="Sincroniza y verifica que el usuario tenga los roles correspondientes a su vinculación")
+class RolesSync:
+    usuario = crescent.option(hikari.User, "Usuario de Discord a sincronizar")
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.defer(ephemeral=True)
+        try:
+            player_info = await plugin.model.api.get_player_by_discord(str(self.usuario.id))
+            if not player_info:
+                await ctx.respond(f"❌ El usuario {self.usuario.mention} no tiene cuenta vinculada.")
+                return
+
+            from src.plugins.tasks import sync_single_user_roles
+            res = await sync_single_user_roles(ctx.app, plugin.model, self.usuario.id, ctx.guild_id)
+            if res.get("success"):
+                await ctx.respond(f"✅ Sincronización completada para {self.usuario.mention}: `{res.get('added', 0)}` roles añadidos, `{res.get('removed', 0)}` roles removidos.")
+            else:
+                await ctx.respond(f"❌ Error al sincronizar: {res.get('error')}")
+        except Exception as e:
+            await ctx.respond(f"❌ Error al sincronizar roles: {e}")
 
 @plugin.include
 @crescent.hook(admin_only)
@@ -314,57 +376,6 @@ class SetMatchChannel:
         await plugin.model.api.set_bot_config("MATCH_ANNOUNCE_CHANNEL_ID", str(self.canal.id))
         await ctx.respond(f"✅ Canal de resultados configurado exitosamente a <#{self.canal.id}>.")
 
-@plugin.include
-@ban_role_group.child
-@crescent.command(name="map", description="Mapea una duración de baneo a un rol de Discord")
-class MapBanRole:
-    dias = crescent.option(int, "Duración en días (0 para permanente)")
-    discord_role = crescent.option(hikari.Role, "Rol de Discord a asignar cuando el jugador es baneado")
-
-    async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
-        key = f"BAN_ROLE_{self.dias}"
-        val = str(self.discord_role.id)
-        
-        await plugin.model.api.set_bot_config(key, val)
-        dur_str = "Permanente" if self.dias == 0 else f"{self.dias} días"
-        await ctx.respond(f"? Los baneos de duración **{dur_str}** ahora asignarán el rol <@&{self.discord_role.id}>.")
-
-@plugin.include
-@ban_role_group.child
-@crescent.command(name="unmap", description="Elimina el mapeo de rol para una duración de baneo")
-class UnmapBanRole:
-    dias = crescent.option(int, "Duración en días a desmapear (0 para permanente)")
-
-    async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
-        key = f"BAN_ROLE_{self.dias}"
-        
-        await plugin.model.api.delete_bot_config(key)
-        dur_str = "Permanente" if self.dias == 0 else f"{self.dias} días"
-        await ctx.respond(f"? Se eliminó el mapeo de rol para los baneos de **{dur_str}**.")
-
-@plugin.include
-@ban_role_group.child
-@crescent.command(name="list", description="Lista los roles asociados a los baneos")
-class ListBanRoles:
-    async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
-        configs = await plugin.model.api.get_bot_configs()
-        
-        lines = []
-        for k, v in configs.items():
-            if k.startswith("BAN_ROLE_"):
-                dias = k.replace("BAN_ROLE_", "")
-                dur_str = "Permanente" if dias == "0" else f"{dias} días"
-                lines.append(f"- **{dur_str}**: <@&{v}>")
-                
-        if not lines:
-            await ctx.respond("No hay roles de baneos configurados.")
-            return
-            
-        await ctx.respond("**Roles de Baneos:\n" + "\n".join(lines))
-
 
 async def _sync_retroactive_link_role(ctx: crescent.Context, guild_id: int, role_id: int) -> tuple[int, int]:
     assigned_count = 0
@@ -469,21 +480,7 @@ class RolesSetLink:
         return await _execute_set_link(ctx, self.rol)
 
 
-@plugin.include
-@crescent.hook(admin_only)
-@role_group.child
-@crescent.command(name="set_ban", description="Configura el rol que se otorga automáticamente al banear a un usuario")
-class RoleSetBan:
-    rol = crescent.option(hikari.Role, "Rol a asignar al banear (opcional, omitir para desactivar)", default=None)
 
-    async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.defer(ephemeral=True)
-        if self.rol:
-            await plugin.model.api.set_bot_config("BAN_ROLE_DEFAULT", str(self.rol.id))
-            await ctx.respond(f"✅ Rol de baneo configurado a <@&{self.rol.id}>. Se otorgará automáticamente al banear con `/ban add`.")
-        else:
-            await plugin.model.api.set_bot_config("BAN_ROLE_DEFAULT", "")
-            await ctx.respond("✅ Rol de baneo desactivado.")
 
 
 @plugin.include

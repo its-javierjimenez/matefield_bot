@@ -173,21 +173,10 @@ class LinkAccount:
                         member = await ctx.app.rest.fetch_member(guild_id, int(target_id))
                     except Exception:
                         member = plugin.app.cache.get_member(guild_id, int(target_id))
-                    if member:
-                        # Verificar si el Steam ID posee un baneo activo en DB (incluyendo solo_discord)
-                        bans_resp = await plugin.model.api.get_db_bans(str(self.steam_id))
-                        active_bans = [b for b in (bans_resp.bans if bans_resp else []) if b.is_active]
-                        
-                        if active_bans:
-                            ban_role_id = await plugin.model.api.get_bot_config("BAN_ROLE_DEFAULT")
-                            if ban_role_id and ban_role_id.isdigit() and int(ban_role_id) not in member.role_ids:
-                                await member.add_role(int(ban_role_id), reason="Baneo activo detectado al vincular cuenta")
-                                link_msg += f"\n🔒 Rol de sanción <@&{ban_role_id}> asignado automáticamente."
-                        else:
-                            link_role_id = await plugin.model.api.get_bot_config("LINK_ROLE_ID")
-                            if link_role_id and link_role_id.isdigit() and int(link_role_id) not in member.role_ids:
-                                await member.add_role(int(link_role_id), reason="Rol asignado por vincular cuenta (/player link)")
-                                link_msg += f"\n🔗 Rol verificado <@&{link_role_id}> asignado automáticamente."
+                        link_role_id = await plugin.model.api.get_bot_config("LINK_ROLE_ID")
+                        if link_role_id and link_role_id.isdigit() and int(link_role_id) not in member.role_ids:
+                            await member.add_role(int(link_role_id), reason="Rol asignado por vincular cuenta (/player link)")
+                            link_msg += f"\n🔗 Rol verificado <@&{link_role_id}> asignado automáticamente."
                 except Exception as ex:
                     logger.warning(f"No se pudieron actualizar los roles al vincular {target_id}: {ex}")
             
@@ -286,30 +275,20 @@ class UnlinkAccount:
             guild_id = _resolve_guild_id(ctx.guild_id)
             if guild_id:
                 try:
-                    res = await plugin.model.api.sync_memberships()
-                    role_maps = res.get("role_maps", {})
-                    managed_special_roles = res.get("managed_special_roles", [])
-                    all_managed_roles = set(role_maps.values()).union(set(managed_special_roles))
-                    
                     link_role_id = await plugin.model.api.get_bot_config("LINK_ROLE_ID")
                     if link_role_id and link_role_id.isdigit():
-                        all_managed_roles.add(int(link_role_id))
-                    
-                    bot_app = getattr(ctx, "app", None) or plugin.app
-                    member = await bot_app.rest.fetch_member(guild_id, int(discord_id))
-                    if member:
-                        current_roles = set(member.role_ids)
-                        for r_id in all_managed_roles:
-                            if r_id in current_roles:
-                                await bot_app.rest.remove_role_from_member(guild_id, int(discord_id), r_id)
+                        bot_app = getattr(ctx, "app", None) or plugin.app
+                        member = await bot_app.rest.fetch_member(guild_id, int(discord_id))
+                        if member and int(link_role_id) in member.role_ids:
+                            await bot_app.rest.remove_role_from_member(guild_id, int(discord_id), int(link_role_id))
                 except Exception as e:
-                    logger.warning(f"Failed to remove roles during unlink for {discord_id}: {e}")
+                    logger.warning(f"Failed to remove link role during unlink for {discord_id}: {e}")
                     
             await plugin.model.api.unlink_account(discord_id)
             if self.usuario:
-                await ctx.respond(f"✅ La cuenta de {self.usuario.mention} ha sido desvinculada y sus roles revocados.")
+                await ctx.respond(f"✅ La cuenta de {self.usuario.mention} ha sido desvinculada.")
             else:
-                await ctx.respond("✅ Tu cuenta de Discord ha sido desvinculada y tus roles revocados.")
+                await ctx.respond("✅ Tu cuenta de Discord ha sido desvinculada.")
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
 

@@ -907,33 +907,6 @@
     </div>
   </div>
 
-  <!-- Modal Nuevo Baneo -->
-  <div id="modal-ban" class="modal-overlay">
-    <div class="modal-box">
-      <div class="modal-header">
-        <h3>Sancionar Jugador</h3>
-        <p>Registra una sanción por Steam ID con duración y motivo.</p>
-      </div>
-      <div class="modal-body">
-        <div class="form-group">
-          <label class="form-label">Steam ID 64</label>
-          <input type="text" id="m-ban-steam-id" class="form-input" placeholder="7656119...">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Motivo</label>
-          <input type="text" id="m-ban-reason" class="form-input" placeholder="Ej: Infracción de normas / Insultos">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Duración en Días (0 para permanente)</label>
-          <input type="number" id="m-ban-days" class="form-input" value="0" min="0">
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeModal('modal-ban')">Cancelar</button>
-        <button class="btn btn-danger" onclick="submitCreateBan()">Aplicar Baneo</button>
-      </div>
-    </div>
-  </div>
 
   <!-- Modal Perfil y Stats Jugador -->
   <div id="modal-player-stats" class="modal-overlay">

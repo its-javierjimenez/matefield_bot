@@ -151,12 +151,6 @@ async def kick_player(steam_id: str, req: schemas.ReasonRequest, auth: str = Dep
     mock_players = [p for p in mock_players if p["steamId"] != steam_id]
     return {"ok": True}
 
-@app.post("/v1/bans")
-async def ban_player(req: schemas.BanRequest, auth: str = Depends(verify_auth)):
-    add_audit_log("Ban", f"Banned {req.steamId}. Reason: {req.reason}")
-    global mock_players
-    mock_players = [p for p in mock_players if p["steamId"] != req.steamId]
-    return {"ok": True}
 
 @app.post("/v1/players/{steam_id}/faction")
 async def switch_faction(steam_id: str, req: schemas.FactionRequest, auth: str = Depends(verify_auth)):

@@ -21,16 +21,7 @@ class SecuritySettings(BaseSettings):
         validation_alias="API_KEY_NAME",
         description="Header name for the API Key",
     )
-    TEBEX_WEBHOOK_SECRET: Optional[str] = pydantic.Field(
-        default=None,
-        validation_alias="TEBEX_WEBHOOK_SECRET",
-        description="Secret key to verify Tebex webhook HMAC signatures",
-    )
-    TEBEX_SERVER_SECRET: Optional[str] = pydantic.Field(
-        default=None,
-        validation_alias="TEBEX_SERVER_SECRET",
-        description="Tebex Game Server Secret Key",
-    )
+
 
     # --- Discord integration ------------------------------------------------
     # Used by auth.py (immediate role assignment) and discord_oauth_service.py.

@@ -139,47 +139,6 @@ async def test_multiple_active_vip_memberships_same_role(session: AsyncSession, 
 
 
 @pytest.mark.asyncio
-async def test_dual_pricing_crud_and_display(session: AsyncSession, client: AsyncClient):
-    role = Role(code="VIP_GOLD", name="VIP Gold", role_type="VIP", discord_role_id="333333333")
-    session.add(role)
-    await session.commit()
-    await session.refresh(role)
-
-    # 1. Create type with base_price_usd and price_usd
-    create_payload = {
-        "code": "VIP_GOLD",
-        "name": "VIP Gold",
-        "price_usd": 12.0,
-        "base_price_usd": 10.0,
-        "default_days": 30,
-        "role_id": role.id,
-        "billing_type": "ONE_TIME"
-    }
-    resp = await client.post("/api/v1/membership-types", json=create_payload)
-    assert resp.status_code == 200
-    res_data = resp.json()["membership_type"]
-    assert res_data["price_usd"] == 12.0
-    assert res_data["base_price_usd"] == 10.0
-    assert res_data["role_id"] == role.id
-    type_id = res_data["id"]
-
-    # 2. List types
-    resp_list = await client.get("/api/v1/membership-types")
-    assert resp_list.status_code == 200
-    item = next(t for t in resp_list.json() if t["code"] == "VIP_GOLD")
-    assert item["price_usd"] == 12.0
-    assert item["base_price_usd"] == 10.0
-    assert item["role_name"] == "VIP Gold"
-
-    # 3. Update base_price_usd
-    update_payload = {"base_price_usd": 9.5}
-    resp_update = await client.put(f"/api/v1/membership-types/{type_id}", json=update_payload)
-    assert resp_update.status_code == 200
-    assert resp_update.json()["membership_type"]["base_price_usd"] == 9.5
-    assert resp_update.json()["membership_type"]["price_usd"] == 12.0
-
-
-@pytest.mark.asyncio
 async def test_player_profile_isolates_special_roles(session: AsyncSession):
     vip_role = Role(code="VIP_COMUN", name="VIP COMUN", role_type="VIP")
     fundador_role = Role(code="VIP_FUNDADOR", name="FUNDADOR", role_type="SPECIAL")

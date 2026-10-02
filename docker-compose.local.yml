@@ -18,13 +18,33 @@ services:
     networks:
       - matefield_local_net
 
-  mock_rcon:
+  mock_rcon_1:
     build:
       context: .
       dockerfile: apps/rcon_mock/Dockerfile
-    container_name: mock_rcon
+    container_name: mock_rcon_1
     ports:
       - "7776:7776"
+    networks:
+      - matefield_local_net
+
+  mock_rcon_2:
+    build:
+      context: .
+      dockerfile: apps/rcon_mock/Dockerfile
+    container_name: mock_rcon_2
+    ports:
+      - "7777:7776"
+    networks:
+      - matefield_local_net
+
+  mock_rcon_3:
+    build:
+      context: .
+      dockerfile: apps/rcon_mock/Dockerfile
+    container_name: mock_rcon_3
+    ports:
+      - "7778:7776"
     networks:
       - matefield_local_net
 

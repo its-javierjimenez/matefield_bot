@@ -36,8 +36,6 @@ class AddMembershipRequest(BaseModel):
     role_granted_id: Optional[int] = None
     is_booster: Optional[bool] = False
     server_id: Optional[int] = None
-    tebex_transaction_id: Optional[str] = None
-    tebex_subscription_id: Optional[str] = None
     payment_source: Optional[str] = "MANUAL"
 
 
@@ -70,17 +68,6 @@ class RoleRegisterRequest(BaseModel):
     discord_role_id: Optional[str] = None
 
 
-class PlayerBanRequest(BaseModel):
-    steam_id: str
-    reason: str
-    banned_by: str
-    duration_days: Optional[int] = None
-
-
-class UnbanRequest(BaseModel):
-    steam_id: str
-    reason: str
-
 
 class CreateRconServerRequest(BaseModel):
     ip: str
@@ -106,15 +93,13 @@ class CreateMembershipTypeRequest(BaseModel):
     code: str
     name: str
     description: Optional[str] = None
-    price_usd: float = 0.0          # Precio Tebex/Plataforma (con comisiones)
-    base_price_usd: float = 0.0     # Precio real neto
+    price_usd: float = 0.0          # Precio
     billing_type: str = "ONE_TIME"  # "ONE_TIME" or "RECURRING"
     default_days: int = 30          # 0 = permanente
     max_quota: Optional[int] = None # None = ilimitado
     discord_role_id: Optional[str] = None
     role_id: Optional[int] = None
     server_id: Optional[int] = None
-    tebex_package_id: Optional[int] = None
     is_active: bool = True
 
 
@@ -122,14 +107,12 @@ class UpdateMembershipTypeRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     price_usd: Optional[float] = None
-    base_price_usd: Optional[float] = None
     billing_type: Optional[str] = None
     default_days: Optional[int] = None
     max_quota: Optional[int] = None
     discord_role_id: Optional[str] = None
     role_id: Optional[int] = None
     server_id: Optional[int] = None
-    tebex_package_id: Optional[int] = None
     is_active: Optional[bool] = None
 
 
@@ -143,7 +126,6 @@ class MembershipTypeItem(BaseModel):
     name: str
     description: Optional[str] = None
     price_usd: float = 0.0
-    base_price_usd: float = 0.0
     billing_type: str = "ONE_TIME"
     default_days: int = 30
     max_quota: Optional[int] = None
@@ -153,7 +135,6 @@ class MembershipTypeItem(BaseModel):
     role_name: Optional[str] = None
     server_id: Optional[int] = None
     server_name: Optional[str] = None
-    tebex_package_id: Optional[int] = None
     is_active: bool = True
     created_at: Optional[str] = None
     updated_at: Optional[str] = None

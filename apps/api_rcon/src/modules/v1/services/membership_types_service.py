@@ -69,7 +69,6 @@ class MembershipTypesService:
                 "name": t.name,
                 "description": t.description,
                 "price_usd": t.price_usd,
-                "base_price_usd": t.base_price_usd if t.base_price_usd is not None else t.price_usd,
                 "billing_type": t.billing_type,
                 "default_days": t.default_days,
                 "max_quota": t.max_quota,
@@ -79,7 +78,6 @@ class MembershipTypesService:
                 "role_name": role_names.get(t.role_id),
                 "server_id": t.server_id,
                 "server_name": server_names.get(t.server_id) if t.server_id else "Global (Todos)",
-                "tebex_package_id": t.tebex_package_id,
                 "is_active": t.is_active,
                 "created_at": t.created_at.isoformat() if t.created_at else None,
                 "updated_at": t.updated_at.isoformat() if t.updated_at else None,
@@ -138,7 +136,6 @@ class MembershipTypesService:
             raise HTTPException(status_code=400, detail="billing_type debe ser 'ONE_TIME' o 'RECURRING'")
 
         price_usd = max(0.0, float(req.price_usd))
-        base_price_usd = max(0.0, float(req.base_price_usd)) if req.base_price_usd is not None else price_usd
 
         now = datetime.now(timezone.utc)
         m_type = MembershipType(
@@ -152,7 +149,6 @@ class MembershipTypesService:
             max_quota=req.max_quota,
             role_id=role_to_link_id,
             server_id=req.server_id,
-            tebex_package_id=req.tebex_package_id,
             is_active=req.is_active,
             created_at=now,
             updated_at=now,
@@ -170,7 +166,6 @@ class MembershipTypesService:
                 "name": m_type.name,
                 "description": m_type.description,
                 "price_usd": m_type.price_usd,
-                "base_price_usd": m_type.base_price_usd,
                 "billing_type": m_type.billing_type,
                 "default_days": m_type.default_days,
                 "max_quota": m_type.max_quota,
@@ -179,7 +174,6 @@ class MembershipTypesService:
                 "role_id": m_type.role_id,
                 "role_name": role_obj.name if role_obj else None,
                 "server_id": m_type.server_id,
-                "tebex_package_id": m_type.tebex_package_id,
                 "is_active": m_type.is_active,
                 "created_at": m_type.created_at.isoformat() if m_type.created_at else None,
                 "updated_at": m_type.updated_at.isoformat() if m_type.updated_at else None,
@@ -232,8 +226,6 @@ class MembershipTypesService:
             m_type.description = req.description
         if req.price_usd is not None:
             m_type.price_usd = max(0.0, float(req.price_usd))
-        if req.base_price_usd is not None:
-            m_type.base_price_usd = max(0.0, float(req.base_price_usd))
         if req.billing_type is not None:
             b_type = req.billing_type.upper()
             if b_type not in ("ONE_TIME", "RECURRING"):
@@ -243,8 +235,6 @@ class MembershipTypesService:
             m_type.default_days = req.default_days
         if "max_quota" in req.model_fields_set:
             m_type.max_quota = req.max_quota
-        if "tebex_package_id" in req.model_fields_set:
-            m_type.tebex_package_id = req.tebex_package_id
         if req.is_active is not None:
             m_type.is_active = req.is_active
 
@@ -264,7 +254,6 @@ class MembershipTypesService:
                 "name": m_type.name,
                 "description": m_type.description,
                 "price_usd": m_type.price_usd,
-                "base_price_usd": m_type.base_price_usd,
                 "billing_type": m_type.billing_type,
                 "default_days": m_type.default_days,
                 "max_quota": m_type.max_quota,
@@ -272,7 +261,6 @@ class MembershipTypesService:
                 "role_id": m_type.role_id,
                 "role_name": linked_role.name if linked_role else None,
                 "server_id": m_type.server_id,
-                "tebex_package_id": m_type.tebex_package_id,
                 "is_active": m_type.is_active,
                 "created_at": m_type.created_at.isoformat() if m_type.created_at else None,
                 "updated_at": m_type.updated_at.isoformat() if m_type.updated_at else None,
@@ -302,25 +290,23 @@ class MembershipTypesService:
 
         if count == 0:
             defaults = [
-                ("VIP_COMUN", "VIP Común", "Membresía estándar mensual con slot reservado", 6.0, 5.0, 30, 7682027, roles_by_code.get("VIP_COMUN") or roles_by_code.get("VIP")),
-                ("VIP_EXPRESS", "VIP Express", "Pase rápido quincenal con slot reservado", 4.0, 3.0, 15, 7682061, roles_by_code.get("VIP_EXPRESS")),
-                ("VIP_PERMANENTE", "VIP Permanente", "Membresía vitalicia sin expiración", 0.0, 0.0, 0, None, roles_by_code.get("VIP_PERMANENTE")),
+                ("VIP_COMUN", "VIP Común", "Membresía estándar mensual con slot reservado", 6.0, 30, roles_by_code.get("VIP_COMUN") or roles_by_code.get("VIP")),
+                ("VIP_EXPRESS", "VIP Express", "Pase rápido quincenal con slot reservado", 4.0, 15, roles_by_code.get("VIP_EXPRESS")),
+                ("VIP_PERMANENTE", "VIP Permanente", "Membresía vitalicia sin expiración", 0.0, 0, roles_by_code.get("VIP_PERMANENTE")),
             ]
 
             now = datetime.now(timezone.utc)
-            for code, name, desc, price, base_price, days, tebex_id, r_id in defaults:
+            for code, name, desc, price, days, r_id in defaults:
                 session.add(MembershipType(
                     code=code,
                     name=name,
                     description=desc,
                     price_usd=price,
-                    base_price_usd=base_price,
                     billing_type="ONE_TIME",
                     default_days=days,
                     max_quota=None,
                     role_id=r_id,
                     server_id=None,
-                    tebex_package_id=tebex_id,
                     is_active=True,
                     created_at=now,
                     updated_at=now,
@@ -331,22 +317,10 @@ class MembershipTypesService:
             updated = False
             for m in all_types:
                 if m.code == "VIP_COMUN":
-                    if not m.tebex_package_id:
-                        m.tebex_package_id = 7682027
-                        updated = True
-                    if m.base_price_usd is None or m.base_price_usd == 0.0:
-                        m.base_price_usd = 5.0
-                        updated = True
                     if not m.role_id and (roles_by_code.get("VIP_COMUN") or roles_by_code.get("VIP")):
                         m.role_id = roles_by_code.get("VIP_COMUN") or roles_by_code.get("VIP")
                         updated = True
                 elif m.code == "VIP_EXPRESS":
-                    if not m.tebex_package_id:
-                        m.tebex_package_id = 7682061
-                        updated = True
-                    if m.base_price_usd is None or m.base_price_usd == 0.0:
-                        m.base_price_usd = 3.0
-                        updated = True
                     if not m.role_id and roles_by_code.get("VIP_EXPRESS"):
                         m.role_id = roles_by_code.get("VIP_EXPRESS")
                         updated = True

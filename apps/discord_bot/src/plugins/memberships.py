@@ -126,6 +126,12 @@ class DbAddMembership:
             msg = f"✅ Membresía {self.tipo} añadida a <@{self.usuario.id}> ({steam_id})\n⏳ **Duración:** {dias_str} | {booster_tag} | {server_tag}"
             if special_role:
                 msg += f"\n(Rol especial <@&{special_role}> asignado en base de datos)"
+                
+            from src.plugins.tasks import sync_single_user_roles
+            sync_res = await sync_single_user_roles(ctx.app, plugin.model, self.usuario.id, ctx.guild_id)
+            if sync_res.get("success"):
+                msg += "\n🔄 Roles de Discord sincronizados."
+                
             await ctx.respond(msg)
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
@@ -414,7 +420,9 @@ class DbEditMembership:
                 is_active=self.activa,
                 is_booster=self.booster
             )
-            await ctx.respond(f"✅ Membresía ID {self.id_membresia} actualizada exitosamente.")
+            from src.plugins.tasks import execute_membership_sync
+            asyncio.create_task(execute_membership_sync(ctx.app, plugin.model, target_guild_id=ctx.guild_id))
+            await ctx.respond(f"✅ Membresía ID {self.id_membresia} actualizada exitosamente. 🔄 Sincronizando en segundo plano...")
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
 
@@ -430,7 +438,9 @@ class DbRemoveMembership:
         await ctx.defer()
         try:
             await plugin.model.api.delete_membership(self.id_membresia)
-            await ctx.respond(f"✅ Membresía ID {self.id_membresia} eliminada exitosamente.")
+            from src.plugins.tasks import execute_membership_sync
+            asyncio.create_task(execute_membership_sync(ctx.app, plugin.model, target_guild_id=ctx.guild_id))
+            await ctx.respond(f"✅ Membresía ID {self.id_membresia} eliminada exitosamente. 🔄 Sincronizando en segundo plano...")
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
 
@@ -574,7 +584,9 @@ class ExtenderMembresia:
         await ctx.defer()
         try:
             await plugin.model.api.edit_membership(membership_id=self.membership_id, add_days=self.dias)
-            await ctx.respond(f"✅ Membresía #{self.membership_id} extendida por {self.dias} días exitosamente.")
+            from src.plugins.tasks import execute_membership_sync
+            asyncio.create_task(execute_membership_sync(ctx.app, plugin.model, target_guild_id=ctx.guild_id))
+            await ctx.respond(f"✅ Membresía #{self.membership_id} extendida por {self.dias} días exitosamente. 🔄 Sincronizando en segundo plano...")
         except Exception as e:
             await ctx.respond(f"❌ Error al extender membresía: {e}")
 

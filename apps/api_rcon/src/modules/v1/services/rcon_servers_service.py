@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlmodel import select, col, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.connections.databases.db import RconServer, Membership, Ban
+from src.connections.databases.db import RconServer, Membership
 from src.connections.apis.rcon import RCONManager, RCONClient
 from src.modules.v1.schemas.dtos import CreateRconServerRequest, UpdateRconServerRequest
 
