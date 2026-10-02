@@ -14,7 +14,7 @@ from src.hooks import admin_only
 from src.model import Model
 
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
-from src.groups import reserved_group, server_group, quota_group, hacker_group, ban_group
+from src.groups import reserved_group, server_group, quota_group, hacker_group
 
 # UI Theme Colors and Message Limits
 COLOR_BLUE = 0x3498DB
