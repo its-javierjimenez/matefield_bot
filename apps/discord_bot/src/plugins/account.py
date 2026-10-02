@@ -254,24 +254,19 @@ async def on_steam_link_button_click(event: hikari.InteractionCreateEvent) -> No
 
 
 @plugin.include
+@crescent.hook(admin_only)
 @player_group.child
-@crescent.command(name="unlink", description="Desvincula tu cuenta de Discord de Steam")
+@crescent.command(name="unlink", description="Desvincula una cuenta de Discord de Steam (Solo Administrador)")
 class UnlinkAccount:
-    usuario = crescent.option(hikari.User, "Usuario a desvincular (Solo admin)", default=None)
+    usuario = crescent.option(hikari.User, "Usuario de Discord a desvincular", default=None)
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
         
-        discord_id = str(ctx.user.id)
-        if self.usuario:
-            is_admin = await check_is_admin(ctx)
-            if not is_admin:
-                await ctx.respond("❌ Solo los administradores pueden desvincular a otros usuarios.")
-                return
-            discord_id = str(self.usuario.id)
+        discord_id = str(self.usuario.id) if self.usuario else str(ctx.user.id)
 
         try:
-            # Remove managed roles first to prevent role leak (Bug 6)
+            # Remove link role first to prevent role leak
             guild_id = _resolve_guild_id(ctx.guild_id)
             if guild_id:
                 try:

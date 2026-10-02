@@ -19,10 +19,6 @@ Estos comandos pueden ser utilizados por cualquier usuario del servidor, ya sea 
 ## 🔗 Comandos para Usuarios Vinculados
 Exclusivos para aquellos jugadores que ya completaron el proceso de vinculación de Steam a través del bot.
 
-* **`/player unlink`**
-  Desvincula tu cuenta de Steam de tu cuenta de Discord.
-  *(Nota: Al desvincularte, el bot te quitará automáticamente todos los roles de membresía VIP, roles especiales y el rol de vinculación que tenías).*
-
 * **`/player info`** *(Generalmente público, pero centrado en stats)*
   Muestra la información de un jugador (Puntos de seeding, kills, deaths).
 
@@ -33,6 +29,11 @@ Exclusivos para aquellos jugadores que ya completaron el proceso de vinculación
 
 ## 🛡️ Comandos de Administrador
 Comandos exclusivos para el Staff del servidor. Permiten gestionar la base de datos, configurar el bot, asignar membresías VIP y administrar roles en tiempo real de forma manual e interna.
+
+### 🔗 Gestión de Cuentas de Jugadores
+* **`/player unlink [usuario]`** *(Solo Admin)*
+  Desvincula la cuenta de Discord especificada de su cuenta de Steam (o la del propio admin si no se pasa usuario), liberando el `discord_id` en la BD y retirando el rol de verificación (`LINK_ROLE_ID`) en Discord.
+  *(Nota: Las membresías VIP, estadísticas y roles en la Base de Datos siguen asociadas al `steam_id`. Si el admin desea además revocar por completo todos los beneficios VIP y roles cosméticos de Discord, debe usar `/roles remove_all @usuario`).*
 
 ### 🎭 Gestión de Roles Especiales (Base de Datos)
 Estos comandos interactúan con la tabla de roles registrados en la Base de Datos.

@@ -157,48 +157,15 @@ async def test_roles_set_link_plural_command_alias():
 
 
 @pytest.mark.asyncio
-async def test_unlink_account_permissions(monkeypatch):
+async def test_unlink_account_permissions():
     from src.plugins.account import UnlinkAccount, plugin
+    from src.hooks import admin_only
 
     cmd_cls = getattr(UnlinkAccount, "metadata").owner
+    hooks = getattr(UnlinkAccount, "metadata").hooks
+    assert admin_only in hooks, "UnlinkAccount must have admin_only hook"
 
-    # 1. Non-admin trying to unlink someone else -> blocked
-    cmd = cmd_cls()
-    other_user = MagicMock()
-    other_user.id = 9999
-    cmd.usuario = other_user
-
-    ctx = MagicMock()
-    ctx.user.id = 1234
-    ctx.defer = AsyncMock()
-    ctx.respond = AsyncMock()
-
-    async def mock_is_admin_false(c):
-        return False
-
-    monkeypatch.setattr("src.plugins.account.check_is_admin", mock_is_admin_false)
-
-    await cmd.callback(ctx)
-    ctx.respond.assert_called_once_with("❌ Solo los administradores pueden desvincular a otros usuarios.")
-
-    # 2. Regular user unlinking themselves (no usuario) -> success
-    cmd_self = cmd_cls()
-    cmd_self.usuario = None
-
-    ctx_self = MagicMock()
-    ctx_self.guild_id = None
-    ctx_self.user.id = 1234
-    ctx_self.defer = AsyncMock()
-    ctx_self.respond = AsyncMock()
-
-    plugin._client = MagicMock()
-    plugin._client.model.api.unlink_account = AsyncMock()
-
-    await cmd_self.callback(ctx_self)
-    plugin._client.model.api.unlink_account.assert_called_once_with("1234")
-    assert "Tu cuenta de Discord ha sido desvinculada" in ctx_self.respond.call_args[0][0]
-
-    # 3. Admin unlinking someone else -> success
+    # 1. Admin unlinking someone else -> success
     cmd_admin = cmd_cls()
     target_user = MagicMock()
     target_user.id = 8888
@@ -211,15 +178,28 @@ async def test_unlink_account_permissions(monkeypatch):
     ctx_admin.defer = AsyncMock()
     ctx_admin.respond = AsyncMock()
 
-    async def mock_is_admin_true(c):
-        return True
-
-    monkeypatch.setattr("src.plugins.account.check_is_admin", mock_is_admin_true)
+    plugin._client = MagicMock()
     plugin._client.model.api.unlink_account = AsyncMock()
 
     await cmd_admin.callback(ctx_admin)
     plugin._client.model.api.unlink_account.assert_called_once_with("8888")
     assert "ha sido desvinculada" in ctx_admin.respond.call_args[0][0]
+
+    # 2. Admin unlinking themselves (no usuario) -> success
+    cmd_self = cmd_cls()
+    cmd_self.usuario = None
+
+    ctx_self = MagicMock()
+    ctx_self.guild_id = None
+    ctx_self.user.id = 1234
+    ctx_self.defer = AsyncMock()
+    ctx_self.respond = AsyncMock()
+
+    plugin._client.model.api.unlink_account = AsyncMock()
+
+    await cmd_self.callback(ctx_self)
+    plugin._client.model.api.unlink_account.assert_called_once_with("1234")
+    assert "Tu cuenta de Discord ha sido desvinculada" in ctx_self.respond.call_args[0][0]
 
 
 @pytest.mark.asyncio
