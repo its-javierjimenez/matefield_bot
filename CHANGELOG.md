@@ -7,8 +7,17 @@ y este proyecto se adhiere a [Semantic Versioning (SemVer 2.0.0)](https://semver
 
 ---
 
-## [1.4.1] - 2026-10-01
+## [1.4.2] - 2026-10-02
 
+### Corregido
+- **Demora en Asignación de Rol Verificado**:
+  - Se solucionó un problema donde la vinculación vía web fallaba silenciosamente al intentar asignar el rol de Discord de forma instantánea. Esto forzaba al usuario a esperar el ciclo de sincronización en segundo plano (hasta 1 minuto) para recibir el rol.
+  - Se agregó un `json={}` explícito en la llamada de `httpx.put` para forzar las cabeceras `Content-Type` y `Content-Length`, satisfaciendo las estrictas reglas de Cloudflare frente a la API de Discord.
+  - Se añadieron alertas claras en logs si `api_rcon` arranca sin acceso al token del bot (`DISCORD_TOKEN`), lo cual también inhibiría la inmediatez.
+
+---
+
+## [1.4.1] - 2026-10-01
 ### Agregado
 - **Comando `/roles player_list`**:
   - Nuevo endpoint en `api_rcon` (`GET /api/v1/db/roles/{role_id}/players`) y comando en Discord para listar los jugadores que poseen un rol determinado. Esto facilita la auditoría de roles cruzados y depuración.

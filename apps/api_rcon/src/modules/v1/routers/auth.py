@@ -236,6 +236,8 @@ async def steam_callback(request: Request, token: str = "", session: AsyncSessio
 
     # Asignar roles en Discord de forma inmediata si se dispone de token y guild
     discord_token = _security.DISCORD_TOKEN
+    if not discord_token:
+        logger.warning("DISCORD_TOKEN no configurado en api_rcon. La asignación del rol deberá esperar a la sincronización en segundo plano del bot.")
     if discord_token and guild_id:
         try:
             # Consultar si el Steam ID tiene bans activos
@@ -253,7 +255,7 @@ async def steam_callback(request: Request, token: str = "", session: AsyncSessio
                 reason = "Baneo activo detectado al vincular cuenta vía Steam"
             elif cfg_link and cfg_link.config_value and cfg_link.config_value.isdigit():
                 target_role = cfg_link.config_value
-                reason = "Rol verificado asignado inmediatamente por vincular cuenta (/roles set_link)"
+                reason = "Rol verificado asignado inmediatamente por vincular cuenta"
 
             if target_role:
                 async with httpx.AsyncClient(timeout=5.0) as discord_client:
@@ -261,13 +263,14 @@ async def steam_callback(request: Request, token: str = "", session: AsyncSessio
                         "Authorization": f"Bot {discord_token}",
                         "X-Audit-Log-Reason": urllib.parse.quote(reason),
                     }
-                    role_url = f"https://discord.com/api/v10/guilds/{guild_id}/members/{discord_id}/roles/{target_role}"
-                    resp = await discord_client.put(role_url, headers=headers)
+                    role_url = f"https://discord.com/api/v10/guilds/{guild_id}/members/{discord_id_str}/roles/{target_role}"
+                    # Se incluye json={} para garantizar cabeceras Content-Type y Content-Length requeridas por Discord / Cloudflare
+                    resp = await discord_client.put(role_url, headers=headers, json={})
                     if resp.status_code in (200, 204):
-                        logger.info(f"Rol {target_role} asignado exitosamente a Discord {discord_id} en guild {guild_id}")
+                        logger.info(f"Rol {target_role} asignado exitosamente a Discord {discord_id_str} en guild {guild_id}")
                     else:
                         logger.warning(
-                            f"No se pudo asignar rol {target_role} a Discord {discord_id} en guild {guild_id}: "
+                            f"No se pudo asignar rol {target_role} a Discord {discord_id_str} en guild {guild_id}: "
                             f"HTTP {resp.status_code} - {resp.text}"
                         )
         except Exception as e:
