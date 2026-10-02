@@ -13,6 +13,7 @@ from src.security.guard import (
     get_current_admin_session,
 )
 from src.modules.v1.services.discord_oauth_service import DiscordOAuthService
+from src.connections.databases.db import get_session
 
 
 def test_admin_session_token_lifecycle():
@@ -46,10 +47,15 @@ def test_admin_session_token_lifecycle():
 
 
 @pytest.mark.asyncio
-async def test_admin_guard_with_real_validation():
+async def test_admin_guard_with_real_validation(session):
     """Prueba que verify_api_key_guard acepte API Key o Admin Session válida."""
     # Retirar override temporal de conftest
     override = app.dependency_overrides.pop(verify_api_key_guard, None)
+
+    async def override_get_session():
+        yield session
+
+    app.dependency_overrides[get_session] = override_get_session
 
     expected_api_key = ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.API_KEY
     admin_token = create_admin_session_token({
