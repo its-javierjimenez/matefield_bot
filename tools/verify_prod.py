@@ -54,7 +54,7 @@ async def post_migration_prod():
 
         # 4. Total rows count
         print("\n4. Conteo de filas post-migración:")
-        for t in ["players", "memberships", "player_roles", "roles", "membership_types", "bans"]:
+        for t in ["players", "memberships", "player_roles", "roles", "membership_types"]:
             cnt = (await conn.execute(text(f"SELECT count(*) FROM {t};"))).scalar()
             print(f"   - {t:<18}: {cnt}")
 

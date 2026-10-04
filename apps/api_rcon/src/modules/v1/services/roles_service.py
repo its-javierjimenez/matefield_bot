@@ -46,7 +46,7 @@ class RolesService:
 
     @staticmethod
     async def get_all_roles(session: AsyncSession) -> List[Dict[str, Any]]:
-        roles = (await session.exec(select(Role))).all()
+        roles = (await session.exec(select(Role).order_by(Role.id))).all()
         return [
             {
                 "code": r.code,
@@ -92,7 +92,12 @@ class RolesService:
         assert role.id is not None
         player_role = PlayerRole(steam_id=steam_id, role_id=role.id)
         session.add(player_role)
-        await session.commit()
+        from sqlalchemy.exc import IntegrityError
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            return {"ok": True, "message": "Player already has this role"}
         return {"ok": True, "message": f"Role '{role.code}' added to player"}
 
     @staticmethod

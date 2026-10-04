@@ -139,47 +139,6 @@ async def test_multiple_active_vip_memberships_same_role(session: AsyncSession, 
 
 
 @pytest.mark.asyncio
-async def test_dual_pricing_crud_and_display(session: AsyncSession, client: AsyncClient):
-    role = Role(code="VIP_GOLD", name="VIP Gold", role_type="VIP", discord_role_id="333333333")
-    session.add(role)
-    await session.commit()
-    await session.refresh(role)
-
-    # 1. Create type with base_price_usd and price_usd
-    create_payload = {
-        "code": "VIP_GOLD",
-        "name": "VIP Gold",
-        "price_usd": 12.0,
-        "base_price_usd": 10.0,
-        "default_days": 30,
-        "role_id": role.id,
-        "billing_type": "ONE_TIME"
-    }
-    resp = await client.post("/api/v1/membership-types", json=create_payload)
-    assert resp.status_code == 200
-    res_data = resp.json()["membership_type"]
-    assert res_data["price_usd"] == 12.0
-    assert res_data["base_price_usd"] == 10.0
-    assert res_data["role_id"] == role.id
-    type_id = res_data["id"]
-
-    # 2. List types
-    resp_list = await client.get("/api/v1/membership-types")
-    assert resp_list.status_code == 200
-    item = next(t for t in resp_list.json() if t["code"] == "VIP_GOLD")
-    assert item["price_usd"] == 12.0
-    assert item["base_price_usd"] == 10.0
-    assert item["role_name"] == "VIP Gold"
-
-    # 3. Update base_price_usd
-    update_payload = {"base_price_usd": 9.5}
-    resp_update = await client.put(f"/api/v1/membership-types/{type_id}", json=update_payload)
-    assert resp_update.status_code == 200
-    assert resp_update.json()["membership_type"]["base_price_usd"] == 9.5
-    assert resp_update.json()["membership_type"]["price_usd"] == 12.0
-
-
-@pytest.mark.asyncio
 async def test_player_profile_isolates_special_roles(session: AsyncSession):
     vip_role = Role(code="VIP_COMUN", name="VIP COMUN", role_type="VIP")
     fundador_role = Role(code="VIP_FUNDADOR", name="FUNDADOR", role_type="SPECIAL")
@@ -370,4 +329,73 @@ async def test_membership_edit_type_updates_granted_role(session: AsyncSession, 
     pr_ids = {pr.role_id for pr in prs}
     assert r2.id in pr_ids
     assert r1.id not in pr_ids
+
+
+@pytest.mark.asyncio
+async def test_membership_negative_days_rejected(client: AsyncClient, session: AsyncSession):
+    p = Player(steam_id="STEAM_NEG_DAYS")
+    session.add(p)
+    await session.commit()
+
+    resp = await client.post("/api/v1/db/players/membership", json={
+        "steam_id": "STEAM_NEG_DAYS",
+        "membership_type": "VIP_COMUN",
+        "days": -5
+    })
+    assert resp.status_code == 400
+    assert "positivo" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_membership_extend_reactivates_expired_membership(client: AsyncClient, session: AsyncSession):
+    vip_role = Role(code="VIP_EXT_REACT", name="VIP Reactivate", role_type="VIP")
+    session.add(vip_role)
+    p = Player(steam_id="STEAM_EXT_REACT")
+    session.add(p)
+    await session.commit()
+    await session.refresh(vip_role)
+
+    now = datetime.now(timezone.utc)
+    expired_m = Membership(
+        steam_id="STEAM_EXT_REACT",
+        membership_type="VIP_EXT_REACT",
+        role_granted_id=vip_role.id,
+        is_active=False,
+        start_time=now - timedelta(days=40),
+        end_time=now - timedelta(days=10)
+    )
+    session.add(expired_m)
+    await session.commit()
+    await session.refresh(expired_m)
+
+    # Extend expired membership by 15 days
+    resp = await client.put(f"/api/v1/db/memberships/{expired_m.id}", json={
+        "add_days": 15
+    })
+    assert resp.status_code == 200
+
+    await session.refresh(expired_m)
+    assert expired_m.is_active is True
+    # The end_time should be extended from now (+15 days), not from the expired past date
+    m_end = expired_m.end_time
+    if m_end.tzinfo is None:
+        m_end = m_end.replace(tzinfo=timezone.utc)
+    assert m_end > now + timedelta(days=14)
+
+    # Role in PlayerRole should be restored
+    pr = (await session.exec(select(PlayerRole).where(
+        PlayerRole.steam_id == "STEAM_EXT_REACT",
+        PlayerRole.role_id == vip_role.id
+    ))).first()
+    assert pr is not None
+
+
+@pytest.mark.asyncio
+async def test_compensate_memberships_validation(client: AsyncClient):
+    resp_zero = await client.post("/api/v1/db/memberships/compensate", json={"days": 0})
+    assert resp_zero.status_code == 400
+
+    resp_neg = await client.post("/api/v1/db/memberships/compensate", json={"days": -10})
+    assert resp_neg.status_code == 400
+
 

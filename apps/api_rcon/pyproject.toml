@@ -15,11 +15,13 @@ dependencies = [
     "aiohttp",
     "python-dotenv",
     "wardogs-schemas",
+    "wardogs-config",
     "alembic>=1.20.0",
 ]
 
 [tool.uv.sources]
 wardogs-schemas = { workspace = true }
+wardogs-config = { workspace = true }
 
 [dependency-groups]
 dev = [

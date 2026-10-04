@@ -70,20 +70,6 @@ async def test_rcon_servers_crud_flow(client: AsyncClient, session: AsyncSession
 
 
 @pytest.mark.asyncio
-async def test_rcon_servers_sync_all_endpoint(client: AsyncClient, session: AsyncSession, mocker):
-    mocker.patch.object(RCONClient, "sync_reserved_slots", return_value=None)
-    mocker.patch.object(RCONClient, "get_bans", return_value=[])
-    mocker.patch.object(RCONClient, "sync_banned_slots", return_value=None)
-
-    resp = await client.post("/api/v1/rcon-servers/sync-all")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["ok"] is True
-    assert len(data["results"]) >= 1
-    assert data["results"][0]["status"] == "SUCCESS"
-
-
-@pytest.mark.asyncio
 async def test_rcon_client_get_bans_empty_list_does_not_call_get_config(mocker):
     """Verifies that an empty ban list from /v1/bans returns immediately without unnecessary config fetch."""
     rcon = RCONClient(base_url="http://127.0.0.1:8000", password="test")
@@ -108,3 +94,48 @@ async def test_rcon_manager_fallback_server_parses_url_safely():
     assert fallback.port > 0
     assert fallback.is_active is True
     assert fallback.is_default is True
+
+
+@pytest.mark.asyncio
+async def test_delete_rcon_server_detaches_memberships_and_reassigns_default(session: AsyncSession):
+    from src.modules.v1.services.rcon_servers_service import RconServersService
+    from src.connections.databases.db import Membership, MembershipType, Player
+
+    # 1. Create two servers
+    s1 = RconServer(name="Server 1", ip="127.0.0.1", port=1111, password="p1", is_default=True, is_active=True)
+    s2 = RconServer(name="Server 2", ip="127.0.0.1", port=2222, password="p2", is_default=False, is_active=True)
+    session.add(s1)
+    session.add(s2)
+    await session.commit()
+    await session.refresh(s1)
+    await session.refresh(s2)
+
+    # 2. Attach a player, membership, and membership type to Server 1
+    player = Player(steam_id="76561198000000099")
+    session.add(player)
+    await session.commit()
+
+    m = Membership(steam_id="76561198000000099", membership_type="VIP_PRO", server_id=s1.id, is_active=True)
+    mt = MembershipType(code="VIP_SERVER1", name="VIP Server 1", server_id=s1.id)
+    session.add(m)
+    session.add(mt)
+    await session.commit()
+    await session.refresh(m)
+    await session.refresh(mt)
+    assert m.server_id == s1.id
+    assert mt.server_id == s1.id
+
+    # 3. Delete Server 1
+    res = await RconServersService.delete_server(s1.id, session)
+    assert res["ok"] is True
+
+    # 4. Check memberships & membership_types detached without FK errors
+    await session.refresh(m)
+    await session.refresh(mt)
+    assert m.server_id is None
+    assert mt.server_id is None
+
+    # 5. Check Server 2 was promoted to default
+    await session.refresh(s2)
+    assert s2.is_default is True
+

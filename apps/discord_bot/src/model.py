@@ -1,5 +1,5 @@
-import hikari
-import os
+from typing import Optional
+from wardogs_config import BOT_SETTINGS, DiscordBotSettings
 from src.api_client import APIClient
 
 class Model:
@@ -8,12 +8,13 @@ class Model:
     players_cache: dict
     initial_scan_done: bool
     
-    def __init__(self):
+    def __init__(self, settings: Optional[DiscordBotSettings] = None):
+        cfg = settings or BOT_SETTINGS
         self.api = APIClient(
-            base_url=os.environ.get("API_BASE_URL", "http://127.0.0.1:8000"),
-            api_key=os.environ.get("API_KEY", "default_secret_key")
+            base_url=cfg.API_BASE_URL,
+            api_key=cfg.API_KEY,
         )
-        self.public_api_url = os.environ.get("PUBLIC_API_URL", "http://localhost:8000")
+        self.public_api_url = cfg.PUBLIC_API_URL
         self.active_match_id = ""
         self.players_cache = {}
         self.hacker_monitors = {}

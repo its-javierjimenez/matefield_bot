@@ -18,7 +18,7 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
-from src.config import ENVIRONMENT_SETTINGS
+from wardogs_config import ENVIRONMENT_SETTINGS
 
 logger = logging.getLogger("wardogs.security.tokens")
 

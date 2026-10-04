@@ -411,16 +411,10 @@ class DbAddSpecialRole:
             role_code = str(role_obj["code"])
             await plugin.model.api.add_special_role(str(steam_id), role_code)
 
-            discord_msg = ""
-            if role_obj.get("discord_role_id") and ctx.guild_id:
-                try:
-                    target_role_id = int(role_obj["discord_role_id"])
-                    await ctx.app.rest.add_role_to_member(ctx.guild_id, self.usuario.id, target_role_id)
-                    discord_msg = f" y rol de Discord <@&{target_role_id}> otorgado"
-                except Exception as d_err:
-                    discord_msg = f" (nota: no se pudo asignar rol en Discord inmediatamente: {d_err})"
+            from src.plugins.tasks import sync_single_user_roles
+            await sync_single_user_roles(ctx.app, plugin.model, self.usuario.id, ctx.guild_id)
 
-            await ctx.respond(f"✅ Rol especial `{role_obj['name']}` (`{role_code}`) añadido al jugador {self.usuario.mention} (`{steam_id}`){discord_msg}.")
+            await ctx.respond(f"✅ Rol especial `{role_obj['name']}` (`{role_code}`) añadido al jugador {self.usuario.mention} (`{steam_id}`).")
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
 
@@ -444,19 +438,12 @@ class DbRemoveSpecialRole:
             roles = await plugin.model.api.get_all_roles()
             role_obj = next((r for r in roles if r.get("code", "").upper() == self.rol_especial.strip().upper()), None)
             role_code = str(role_obj["code"]) if (role_obj and "code" in role_obj) else self.rol_especial.strip().upper()
-
             await plugin.model.api.remove_special_role(str(steam_id), role_code)
 
-            discord_msg = ""
-            if role_obj and role_obj.get("discord_role_id") and ctx.guild_id:
-                try:
-                    target_role_id = int(role_obj["discord_role_id"])
-                    await ctx.app.rest.remove_role_from_member(ctx.guild_id, self.usuario.id, target_role_id)
-                    discord_msg = f" y rol de Discord <@&{target_role_id}> removido"
-                except Exception as d_err:
-                    discord_msg = f" (nota: no se pudo remover rol en Discord inmediatamente: {d_err})"
+            from src.plugins.tasks import sync_single_user_roles
+            await sync_single_user_roles(ctx.app, plugin.model, self.usuario.id, ctx.guild_id)
 
-            await ctx.respond(f"✅ Rol especial `{role_code}` removido del jugador {self.usuario.mention} (`{steam_id}`){discord_msg}.")
+            await ctx.respond(f"✅ Rol especial `{role_code}` removido del jugador {self.usuario.mention} (`{steam_id}`).")
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
 
@@ -480,19 +467,12 @@ class PlayerSetRole:
             roles = await plugin.model.api.get_all_roles()
             role_obj = next((r for r in roles if r.get("code", "").upper() == self.rol.strip().upper()), None)
             role_code = str(role_obj["code"]) if (role_obj and "code" in role_obj) else self.rol.strip().upper()
-
             await plugin.model.api.add_special_role(str(steam_id), role_code)
 
-            discord_msg = ""
-            if role_obj and role_obj.get("discord_role_id") and ctx.guild_id:
-                try:
-                    target_role_id = int(role_obj["discord_role_id"])
-                    await ctx.app.rest.add_role_to_member(ctx.guild_id, self.usuario.id, target_role_id)
-                    discord_msg = f" y rol de Discord <@&{target_role_id}> otorgado"
-                except Exception as d_err:
-                    discord_msg = f" (nota: no se pudo asignar rol en Discord inmediatamente: {d_err})"
+            from src.plugins.tasks import sync_single_user_roles
+            await sync_single_user_roles(ctx.app, plugin.model, self.usuario.id, ctx.guild_id)
 
-            await ctx.respond(f"✅ Rol `{role_code}` asignado a {self.usuario.mention} (`{steam_id}`){discord_msg}.")
+            await ctx.respond(f"✅ Rol `{role_code}` asignado a {self.usuario.mention} (`{steam_id}`).")
         except Exception as e:
             await ctx.respond(f"❌ Error al asignar rol: {e}")
 
@@ -516,19 +496,12 @@ class PlayerRemoveRole:
             roles = await plugin.model.api.get_all_roles()
             role_obj = next((r for r in roles if r.get("code", "").upper() == self.rol.strip().upper()), None)
             role_code = str(role_obj["code"]) if (role_obj and "code" in role_obj) else self.rol.strip().upper()
-
             await plugin.model.api.remove_special_role(str(steam_id), role_code)
 
-            discord_msg = ""
-            if role_obj and role_obj.get("discord_role_id") and ctx.guild_id:
-                try:
-                    target_role_id = int(role_obj["discord_role_id"])
-                    await ctx.app.rest.remove_role_from_member(ctx.guild_id, self.usuario.id, target_role_id)
-                    discord_msg = f" y rol de Discord <@&{target_role_id}> removido"
-                except Exception as d_err:
-                    discord_msg = f" (nota: no se pudo remover rol en Discord inmediatamente: {d_err})"
+            from src.plugins.tasks import sync_single_user_roles
+            await sync_single_user_roles(ctx.app, plugin.model, self.usuario.id, ctx.guild_id)
 
-            await ctx.respond(f"✅ Rol `{role_code}` removido de {self.usuario.mention} (`{steam_id}`){discord_msg}.")
+            await ctx.respond(f"✅ Rol `{role_code}` removido de {self.usuario.mention} (`{steam_id}`).")
         except Exception as e:
             await ctx.respond(f"❌ Error al remover rol: {e}")
 
@@ -546,7 +519,7 @@ class DbEditPlayer:
         try:
             player_info = await plugin.model.api.get_player_by_discord(str(self.usuario_discord.id))
             if not player_info:
-                await ctx.respond(f"❌ El usuario {self.usuario_discord.mention} no está vinculado a ningún Steam ID. Usa `/db link_player` primero.")
+                await ctx.respond(f"❌ El usuario {self.usuario_discord.mention} no está vinculado a ningún Steam ID. Usa `/player link` primero.")
                 return
                 
             steam_id = player_info.get("steam_id")

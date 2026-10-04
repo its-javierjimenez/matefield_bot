@@ -50,6 +50,10 @@ async def test_process_session_seeding_points_accumulation(session: AsyncSession
         is_seeding=True,
         minutes_per_point=30,
     )
+    session.add(player)
+    await session.flush()
+    await session.refresh(player)
+
     assert awarded == 1
     assert sess.seeding_seconds == 1800
     assert sess.rewarded_seeding_seconds == 1800
@@ -63,6 +67,10 @@ async def test_process_session_seeding_points_accumulation(session: AsyncSession
         is_seeding=True,
         minutes_per_point=30,
     )
+    session.add(player)
+    await session.flush()
+    await session.refresh(player)
+
     assert awarded == 2
     assert sess.seeding_seconds == 5400
     assert sess.rewarded_seeding_seconds == 5400
@@ -337,27 +345,5 @@ async def test_rewards_requires_linked_account(client: AsyncClient, session: Asy
     resp_claim_after = await client.post("/api/v1/rewards/claim", json=claim_payload)
     assert resp_claim_after.status_code == 200
     assert resp_claim_after.json()["ok"] is True
-
-
-@pytest.mark.asyncio
-async def test_banned_player_cannot_claim_rewards(client: AsyncClient, session: AsyncSession):
-    from src.connections.databases.db import Ban
-
-    await RewardsService._ensure_defaults(session)
-
-    banned_player = Player(steam_id="76561198000088888", discord_id="discord_banned_reward", reward_points=200)
-    ban = Ban(steam_id="76561198000088888", reason="Cheating", is_active=True)
-    session.add_all([banned_player, ban])
-    await session.commit()
-
-    resp = await client.post("/api/v1/rewards/claim", json={
-        "player_identifier": "76561198000088888",
-        "reward_code": "VIP_MONTH"
-    })
-    assert resp.status_code == 403
-    assert "sanción o baneo activo" in resp.json()["detail"].lower()
-    # Points balance remains unchanged
-    await session.refresh(banned_player)
-    assert banned_player.reward_points == 200
 
 

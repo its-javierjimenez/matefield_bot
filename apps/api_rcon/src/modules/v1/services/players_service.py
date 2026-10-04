@@ -7,7 +7,7 @@ from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.connections.databases.db import Player, SteamLinkRedemption, Membership, Role, PlayerRole, MatchPlayerStats, PlayerSession, Ban
+from src.connections.databases.db import Player, SteamLinkRedemption, Membership, Role, PlayerRole, MatchPlayerStats, PlayerSession
 from src.connections.apis.steam import get_player_summary, get_player_summaries
 from src.modules.v1.schemas.dtos import LinkAccountRequest, UnlinkAccountRequest, EditPlayerRequest
 
@@ -102,11 +102,11 @@ class PlayersService:
         stmt = select(Membership).where(
             Membership.steam_id == steam_id,
             Membership.is_active == True
-        )
+        ).order_by(col(Membership.id))
         memberships = (await session.exec(stmt)).all()
         
         # Fetch special roles (DDD)
-        stmt_roles = select(Role).join(PlayerRole).where(PlayerRole.steam_id == steam_id)
+        stmt_roles = select(Role).join(PlayerRole).where(PlayerRole.steam_id == steam_id).order_by(col(Role.id))
         special_roles = (await session.exec(stmt_roles)).all()
         
         active_roles = []
@@ -130,15 +130,10 @@ class PlayersService:
             else:
                 active_roles.append(sr.code)
                 
-        stmt_ban = select(Ban).where(Ban.steam_id == steam_id, Ban.is_active == True)
-        active_ban = (await session.exec(stmt_ban)).first()
-        is_banned = active_ban is not None
+        is_banned = False
 
         primary_role = None
-        if is_banned:
-            primary_role = "BANNED"
-            active_memberships = []
-        elif any(r in ("ADMIN", "OWNER", "SUPERVISOR") for r in active_roles):
+        if any(r in ("ADMIN", "OWNER", "SUPERVISOR") for r in active_roles):
             primary_role = "ADMIN"
         elif any("VIP" in r or "FUNDADOR" in r for r in active_roles):
             primary_role = "VIP"
@@ -260,7 +255,7 @@ class PlayersService:
                 if summary and "personaname" in summary:
                     p["name"] = summary["personaname"]
                     
-            stmt = select(Membership).where(col(Membership.steam_id).in_(steam_ids), Membership.is_active == True)
+            stmt = select(Membership).where(col(Membership.steam_id).in_(steam_ids), Membership.is_active == True).order_by(col(Membership.id))
             memberships = (await session.exec(stmt)).all()
             mem_map: Dict[str, List[str]] = {}
             for m in memberships:

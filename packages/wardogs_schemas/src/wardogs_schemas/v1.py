@@ -84,16 +84,6 @@ class Capabilities(BaseModel):
     config: Config | None = None
 
 
-class Ban(BaseModel):
-    steamId: str | None = None
-    bannedAtUtc: str | None = None
-    bannedBy: str | None = None
-    reason: str | None = None
-
-
-class Bans(BaseModel):
-    bans: list[Ban] | None = None
-
 
 class ReservedSlots(BaseModel):
     reservedSlots: list[str] | None = None
@@ -164,10 +154,6 @@ class ReasonRequest(BaseModel):
     solo_discord: bool = False
 
 
-class BanRequest(BaseModel):
-    steamId: str
-    reason: str | None = None
-
 
 class SteamIdRequest(BaseModel):
     steamId: str
@@ -203,16 +189,7 @@ class SettingsPatch(BaseModel):
 class SponsorRequest(BaseModel):
     imageUrl: str
 
-class DbBan(BaseModel):
-    id: int
-    steam_id: str
-    reason: str
-    is_active: bool
-    banned_at: str
-    expires_at: str | None = None
 
-class DbBansResponse(BaseModel):
-    bans: list[DbBan]
 
 from wardogs_schemas.dtos import (
     ConfigUpdateRequest,
@@ -225,8 +202,6 @@ from wardogs_schemas.dtos import (
     SetBotConfigRequest,
     QuotaUpdateRequest,
     RoleRegisterRequest,
-    PlayerBanRequest,
-    UnbanRequest,
     CreateRconServerRequest,
     UpdateRconServerRequest,
     CreateMembershipTypeRequest,

@@ -8,14 +8,11 @@ from src.modules.v1.routers import (
     memberships_router,
     roles_router,
     matches_router,
-    bans_router,
     config_router,
     rcon_servers_router,
     membership_types_router,
-    webhooks_router,
     auth_router,
     rewards_router,
-    admin_dashboard_router,
 )
 
 router = APIRouter(prefix="/v1", tags=["v1"])
@@ -26,14 +23,11 @@ router.include_router(players_router)
 router.include_router(memberships_router)
 router.include_router(roles_router)
 router.include_router(matches_router)
-router.include_router(bans_router)
 router.include_router(config_router)
 router.include_router(rcon_servers_router)
 router.include_router(membership_types_router)
-router.include_router(webhooks_router)
 router.include_router(auth_router)
 router.include_router(rewards_router)
-router.include_router(admin_dashboard_router)
 
 
 # Compatibility exports for background maintenance tasks and external callers

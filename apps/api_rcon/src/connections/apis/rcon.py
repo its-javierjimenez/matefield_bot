@@ -14,10 +14,10 @@ import json
 import time
 import asyncio
 from typing import Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 from sqlmodel import select, col
 from wardogs_schemas import v1 as schemas
-from src.config import ENVIRONMENT_SETTINGS
+from wardogs_config import ENVIRONMENT_SETTINGS
 
 # Networking and Cache Constants
 DEFAULT_RCON_CACHE_TTL = 3.0
@@ -161,11 +161,19 @@ class RCONClient:
 
     async def sync_reserved_slots(self, steam_ids: list[str]) -> None:
         async with self._config_lock:
-            config = await self.get_config()
-            text = config.text or ""
-            revision = config.revision or ""
-            new_text = _update_ini_array(text, '[/Script/WDGame.WDGameSession]', 'DefaultReservedPlayerIds', steam_ids)
-            await self.update_config(revision, new_text)
+            for attempt in range(3):
+                try:
+                    config = await self.get_config()
+                    text = config.text or ""
+                    revision = config.revision or ""
+                    new_text = _update_ini_array(text, '[/Script/WDGame.WDGameSession]', 'DefaultReservedPlayerIds', steam_ids)
+                    await self.update_config(revision, new_text)
+                    return
+                except aiohttp.ClientResponseError as e:
+                    if e.status == 412 and attempt < 2:
+                        await asyncio.sleep(0.5 * (attempt + 1))
+                        continue
+                    raise
 
     async def get_bans(self) -> list[str]:
         # Try live route /v1/bans first (build CL-499480 & CL-501228 serve this)
@@ -195,17 +203,26 @@ class RCONClient:
 
     async def sync_banned_slots(self, steam_ids: list[str]) -> None:
         async with self._config_lock:
-            config = await self.get_config()
-            text = config.text or ""
-            revision = config.revision or ""
-            new_text = _update_ini_array(text, '[/Script/WDGame.WDGameSession]', 'DefaultBannedPlayerIds', steam_ids)
-            await self.update_config(revision, new_text)
+            for attempt in range(3):
+                try:
+                    config = await self.get_config()
+                    text = config.text or ""
+                    revision = config.revision or ""
+                    new_text = _update_ini_array(text, '[/Script/WDGame.WDGameSession]', 'DefaultBannedPlayerIds', steam_ids)
+                    await self.update_config(revision, new_text)
+                    return
+                except aiohttp.ClientResponseError as e:
+                    if e.status == 412 and attempt < 2:
+                        await asyncio.sleep(0.5 * (attempt + 1))
+                        continue
+                    raise
 
     async def broadcast(self, message: str) -> None:
         await self._request("POST", "/v1/broadcast", json={"message": message})
 
     async def send_player_message(self, steam_id: str, message: str) -> None:
-        await self._request("POST", f"/v1/players/{steam_id}/message", json={"message": message})
+        safe_id = quote(str(steam_id))
+        await self._request("POST", f"/v1/players/{safe_id}/message", json={"message": message})
 
     async def get_config(self) -> schemas.Config1:
         data = await self._request("GET", "/v1/config")
@@ -225,23 +242,26 @@ class RCONClient:
             return schemas.ConfigResult.model_validate(data)
         
     async def kick_player(self, steam_id: str, reason: str) -> None:
+        safe_id = quote(str(steam_id))
         payload = {"reason": reason}
-        await self._request("POST", f"/v1/players/{steam_id}/kick", json=payload)
+        await self._request("POST", f"/v1/players/{safe_id}/kick", json=payload)
 
     async def ban_player(self, steam_id: str, reason: str) -> None:
-        payload = {"steamId": steam_id, "reason": reason}
+        payload = {"steamId": str(steam_id), "reason": reason}
         await self._request("POST", "/v1/bans", json=payload)
 
     async def unban_player(self, steam_id: str) -> None:
+        safe_id = quote(str(steam_id))
         try:
-            await self._request("DELETE", f"/v1/bans/{steam_id}")
+            await self._request("DELETE", f"/v1/bans/{safe_id}")
         except Exception:
             # Server returns 404 if player is already unbanned
             pass
 
     async def switch_faction(self, steam_id: str, faction: str) -> None:
+        safe_id = quote(str(steam_id))
         payload = {"faction": faction}
-        await self._request("POST", f"/v1/players/{steam_id}/faction", json=payload)
+        await self._request("POST", f"/v1/players/{safe_id}/faction", json=payload)
 
 # Instance to be imported by legacy callers
 rcon_client = RCONClient(

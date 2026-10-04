@@ -1,28 +1,10 @@
-import pydantic
-from pydantic_settings import BaseSettings
+"""
+Environment settings re-exported from centralized wardogs_config package.
+"""
+from wardogs_config.environment import (
+    EnvironmentSettings,
+    ENVIRONMENT_SETTINGS,
+    is_prod,
+)
 
-from src.config.connections import ConnectionSettings
-from src.config.security import SecuritySettings
-
-class EnvironmentSettings(BaseSettings):
-    APP_ENV: str = pydantic.Field(
-        default="development",
-        validation_alias="APP_ENV",
-        description="Application runtime environment"
-    )
-
-    SECURITY_SETTINGS: SecuritySettings = pydantic.Field(
-        default_factory=SecuritySettings,
-        description="Security configuration"
-    )
-
-    CONNECTIONS_SETTINGS: ConnectionSettings = pydantic.Field(
-        default_factory=ConnectionSettings,
-        description="Database and API connection configuration"
-    )
-
-ENVIRONMENT_SETTINGS = EnvironmentSettings()
-
-
-def is_prod() -> bool:
-    return ENVIRONMENT_SETTINGS.APP_ENV.strip().lower() == "production"
+__all__ = ["EnvironmentSettings", "ENVIRONMENT_SETTINGS", "is_prod"]

@@ -39,7 +39,6 @@ async def clone_data(target_name: str, target_url: str, prod_url: str):
     players = await fetch_table_rows(prod_engine, "players")
     player_roles = await fetch_table_rows(prod_engine, "player_roles")
     memberships_raw = await fetch_table_rows(prod_engine, "memberships")
-    bans = await fetch_table_rows(prod_engine, "bans")
     bot_config = await fetch_table_rows(prod_engine, "bot_config")
     membership_types = await fetch_table_rows(prod_engine, "membership_types")
     membership_type_configs = await fetch_table_rows(prod_engine, "membership_type_configs")
@@ -47,7 +46,6 @@ async def clone_data(target_name: str, target_url: str, prod_url: str):
     match_team_stats = await fetch_table_rows(prod_engine, "match_team_stats")
     match_player_stats = await fetch_table_rows(prod_engine, "match_player_stats")
     player_sessions = await fetch_table_rows(prod_engine, "player_sessions")
-    payment_records = await fetch_table_rows(prod_engine, "payment_records")
     rcon_servers = await fetch_table_rows(prod_engine, "rcon_servers")
 
     await prod_engine.dispose()
@@ -94,15 +92,15 @@ async def clone_data(target_name: str, target_url: str, prod_url: str):
         try:
             t_configs = await conn.execute(text("SELECT config_key, config_value FROM bot_config;"))
             for k, v in t_configs.fetchall():
-                if k in ("LINK_ROLE_ID", "BAN_ROLE_DEFAULT", "ANNOUNCEMENT_CHANNEL_ID") or k.startswith("BAN_ROLE_"):
+                if k in ("LINK_ROLE_ID", "ANNOUNCEMENT_CHANNEL_ID"):
                     target_custom_configs[k] = v
         except Exception:
             pass
 
         logger.info(f"Limpiando tablas existentes en {target_name}...")
         tables_to_truncate = [
-            "payment_records", "match_player_stats", "match_team_stats", "player_sessions", "matches",
-            "bans", "memberships", "player_roles", "membership_types", "rcon_servers",
+            "match_player_stats", "match_team_stats", "player_sessions", "matches",
+            "memberships", "player_roles", "membership_types", "rcon_servers",
             "roles", "players", "teams", "bot_config", "membership_type_configs"
         ]
         for t in tables_to_truncate:
@@ -203,101 +201,3 @@ async def clone_data(target_name: str, target_url: str, prod_url: str):
             ), memberships_adapted)
             await conn.execute(text("SELECT setval('memberships_id_seq', (SELECT COALESCE(MAX(id), 1) FROM memberships));"))
 
-        # Insertar Bans
-        if bans:
-            logger.info(f"Insertando {len(bans)} bans...")
-            await conn.execute(text(
-                "INSERT INTO bans (id, steam_id, reason, is_active, rcon_sync_status, banned_at, expires_at) "
-                "VALUES (:id, :steam_id, :reason, :is_active, :rcon_sync_status, :banned_at, :expires_at)"
-            ), bans)
-            await conn.execute(text("SELECT setval('bans_id_seq', (SELECT COALESCE(MAX(id), 1) FROM bans));"))
-
-        # Insertar Bot Config
-        merged_config = {r["config_key"]: r["config_value"] for r in bot_config} if bot_config else {}
-        merged_config.update(target_custom_configs)
-        if merged_config:
-            logger.info(f"Insertando {len(merged_config)} bot_config...")
-            config_rows = [{"config_key": k, "config_value": v} for k, v in merged_config.items()]
-            await conn.execute(text("INSERT INTO bot_config (config_key, config_value) VALUES (:config_key, :config_value)"), config_rows)
-
-        # Insertar Membership Type Configs
-        if membership_type_configs:
-            logger.info(f"Insertando {len(membership_type_configs)} membership_type_configs...")
-            await conn.execute(text("INSERT INTO membership_type_configs (membership_type, max_quota) VALUES (:membership_type, :max_quota)"), membership_type_configs)
-
-        # Insertar Matches
-        if matches:
-            logger.info(f"Insertando {len(matches)} matches...")
-            await conn.execute(text(
-                "INSERT INTO matches (id, map_name, start_time, end_time, winning_team_id) "
-                "VALUES (:id, :map_name, :start_time, :end_time, :winning_team_id)"
-            ), matches)
-
-        # Insertar Match Team Stats
-        if match_team_stats:
-            logger.info(f"Insertando {len(match_team_stats)} match_team_stats...")
-            await conn.execute(text(
-                "INSERT INTO match_team_stats (match_id, team_id, score) "
-                "VALUES (:match_id, :team_id, :score)"
-            ), match_team_stats)
-
-        # Insertar Match Player Stats (por lotes de 5000)
-        if match_player_stats:
-            logger.info(f"Insertando {len(match_player_stats)} match_player_stats en lotes...")
-            chunk_size = 5000
-            for i in range(0, len(match_player_stats), chunk_size):
-                chunk = match_player_stats[i:i + chunk_size]
-                await conn.execute(text(
-                    "INSERT INTO match_player_stats (steam_id, match_id, team_id, kills, deaths, cash_earned) "
-                    "VALUES (:steam_id, :match_id, :team_id, :kills, :deaths, :cash_earned)"
-                ), chunk)
-
-        # Insertar Player Sessions (por lotes de 5000)
-        if player_sessions:
-            logger.info(f"Insertando {len(player_sessions)} player_sessions en lotes...")
-            chunk_size = 5000
-            for i in range(0, len(player_sessions), chunk_size):
-                chunk = player_sessions[i:i + chunk_size]
-                await conn.execute(text(
-                    "INSERT INTO player_sessions (id, steam_id, start_time, end_time, total_seconds, seeding_seconds) "
-                    "VALUES (:id, :steam_id, :start_time, :end_time, :total_seconds, :seeding_seconds)"
-                ), chunk)
-
-        # Asegurar alembic_version en HEAD (i5e6a7b8c9d0)
-        await conn.execute(text("DELETE FROM alembic_version;"))
-        await conn.execute(text("INSERT INTO alembic_version (version_num) VALUES ('i5e6a7b8c9d0');"))
-
-    await target_engine.dispose()
-    logger.info(f"✅ ¡Clonación a '{target_name.upper()}' completada con éxito sin errores!")
-
-
-async def main():
-    parser = argparse.ArgumentParser(description="Clonar datos de PROD a DEV o LOCAL")
-    parser.add_argument("--target", choices=["dev", "local", "both"], default="both", help="Destino de los datos")
-    args = parser.parse_args()
-
-    prod_env = dotenv_values(".env.prod")
-    dev_env = dotenv_values(".env.dev")
-    local_env = dotenv_values(".env.local")
-
-    prod_url = prod_env.get("DATABASE_URL")
-    dev_url = dev_env.get("DATABASE_URL")
-    local_raw = local_env.get("DATABASE_URL")
-
-    if not prod_url:
-        raise ValueError("DATABASE_URL no encontrada en .env.prod")
-
-    if args.target in ["dev", "both"]:
-        if not dev_url:
-            raise ValueError("DATABASE_URL no encontrada en .env.dev")
-        await clone_data("dev", dev_url, prod_url)
-
-    if args.target in ["local", "both"]:
-        if not local_raw:
-            raise ValueError("DATABASE_URL no encontrada en .env.local")
-        local_url = local_raw.replace("@postgres:", "@127.0.0.1:")
-        await clone_data("local", local_url, prod_url)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

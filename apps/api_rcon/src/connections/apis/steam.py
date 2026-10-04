@@ -25,8 +25,9 @@ _session: Optional[aiohttp.ClientSession] = None
 
 
 def _get_api_key() -> Optional[str]:
-    """Reads STEAM_WEB_API_KEY at call-time so load_dotenv() has already run."""
-    return os.environ.get("STEAM_WEB_API_KEY")
+    """Reads STEAM_WEB_API_KEY from centralized config or environment."""
+    from wardogs_config import ENVIRONMENT_SETTINGS
+    return ENVIRONMENT_SETTINGS.SECURITY_SETTINGS.STEAM_WEB_API_KEY or os.environ.get("STEAM_WEB_API_KEY")
 
 
 async def _get_session() -> aiohttp.ClientSession:

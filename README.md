@@ -7,10 +7,9 @@ Este proyecto es una solución integral para automatizar la gestión y monitoreo
 El sistema está construido con un enfoque de microservicios usando **Docker Compose**, lo que facilita el despliegue tanto en entornos locales (desarrollo) como en producción.
 
 - **`api_rcon`** (FastAPI + SQLModel + AsyncPG): Es el núcleo del sistema. Se encarga de:
-  - Comunicarse con uno o múltiples servidores de juego mediante RCON (`aiohttp`).
-  - Polling periódico del estado del servidor para detectar cambios de mapas y resultados de partidas (`sync_engine`).
+  - Comunicarse con uno o múltiples servidores de juego concurrentemente mediante RCON (`aiohttp`).
+  - Polling periódico global (Multi-Server) del estado del servidor para detectar cambios de mapas y resultados de partidas (`sync_engine`).
   - Proveer una API REST modularizada (`/api/v1`) para lectura y manipulación de la base de datos (jugadores, roles, membresías, estadísticas).
-  - Gestionar pasarela de pagos y suscripciones vía **Tebex Webhooks** (`/api/v1/webhooks/tebex`).
   - Gestionar las migraciones de base de datos a través de **Alembic**.
 
 - **`discord_bot`** (Hikari + Crescent): Un bot de Discord robusto que interactúa únicamente con la `api_rcon`.
@@ -28,7 +27,7 @@ El sistema está construido con un enfoque de microservicios usando **Docker Com
 │   ├── api_rcon/       # Backend FastAPI, motor de sincronización y webhooks Tebex.
 │   ├── discord_bot/    # Bot de Discord (Hikari + Crescent).
 │   └── rcon_mock/      # Servidor mock de RCON para desarrollo.
-├── packages/           # Dependencias internas compartidas (wardogs_schemas).
+├── packages/           # Dependencias internas compartidas (wardogs_schemas, wardogs_config).
 ├── docs/               # Documentación técnica, manual de comandos y planes de migración.
 ├── backups/            # Backups de base de datos en SQL y CSV (ignorado por Git).
 ├── .env.local          # Variables de entorno para pruebas locales en Docker.
@@ -52,15 +51,13 @@ Crea o edita los archivos `.env.local`, `.env.dev` o `.env.prod`. Utiliza `.env.
 
 ```env
 DISCORD_TOKEN=tu_token_de_discord
-RCON_URL=http://rcon-mock:7776        # En prod: http://rcon-real:puerto
+RCON_URL=http://rcon-mock:7776        # Opcional, el sistema usa la base de datos para registrar multiples RCONs.
 RCON_PASSWORD=tu_password_rcon
 DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/dbname
 API_KEY=tu_api_key_secreta
 API_BASE_URL=http://api_rcon:8000
 PUBLIC_API_URL=http://localhost:8000
 STEAM_WEB_API_KEY=tu_steam_api_key
-TEBEX_WEBHOOK_SECRET=tu_tebex_secret
-TEBEX_API_KEY=tu_tebex_key
 ```
 
 El panel de `/player link_channel` usa un botón verde de interacción: Discord identifica a quien lo pulsa.
@@ -107,8 +104,9 @@ uv run pytest
 
 Esto ejecuta las 54 pruebas unitarias e integrales (CRUD, roles de dominio DDD, RCON INI, Tebex Webhooks, comandos de Discord y clientes HTTP).
 
-## Motor de Sincronización Automática (Polling)
-La aplicación incluye un motor en segundo plano (`sync_engine.py`) embebido en FastAPI que:
-1. Consulta continuamente (polling) los endpoints RCON.
-2. Compara el estado actual (ej. mapa) con el anterior para detectar transiciones (ej. partidas finalizadas).
-3. Escribe eventos directamente en la base de datos (PostgreSQL), los cuales luego son leídos por los "Monitores" asíncronos programados en el bot de Discord.
+## Motor de Sincronización Automática (Multi-Server Polling)
+La aplicación incluye un motor en segundo plano (`sync_engine.py`) embebido en FastAPI diseñado para entornos multi-servidor:
+1. **Concurrencia Multi-Server:** Consulta continuamente (polling) los endpoints RCON de todos los servidores registrados en la tabla `rcon_servers` que estén activos.
+2. **Ciclo de Partidas:** Compara el estado actual (ej. mapa) con el anterior de manera aislada para cada servidor detectando las transiciones y finales de partidas.
+3. **Session Tracking Global:** Consolida el tiempo de juego de los jugadores sin importar a qué servidor del clúster estén conectados. Si un jugador está en el Servidor 1, no se considerará desconectado por el Servidor 2, eliminando posibles condiciones de carrera.
+4. **Sincronización en Tiempo Real:** Las inyecciones de slots reservados RCON y las asignaciones de roles VIP en Discord ocurren **en tiempo real** al utilizar los comandos del bot (`/membership add`, `/roles give`, `/membership remove`, etc), usando el loop del engine en segundo plano solo para mantenimiento y caducidad de membresías (cada 5 minutos).

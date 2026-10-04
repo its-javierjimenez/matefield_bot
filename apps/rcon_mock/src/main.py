@@ -113,6 +113,32 @@ async def get_audit(limit: int = 50, auth: str = Depends(verify_auth)):
     }
 
 reserved_slots_state = ["76561198000000001"]
+banned_players_state = []
+
+@app.get("/v1/bans")
+async def get_bans(auth: str = Depends(verify_auth)):
+    return {"bans": banned_players_state}
+
+@app.post("/v1/bans")
+async def ban_player(req: Request, auth: str = Depends(verify_auth)):
+    data = await req.json()
+    steam_id = data.get("steamId")
+    add_audit_log("Ban", f"Banned {steam_id}")
+    if steam_id not in [b.get("steamId") for b in banned_players_state]:
+        banned_players_state.append({"steamId": steam_id, "reason": data.get("reason", "")})
+    global mock_players
+    mock_players = [p for p in mock_players if p["steamId"] != steam_id]
+    return {"ok": True}
+
+@app.delete("/v1/bans/{steam_id}")
+async def unban_player(steam_id: str, auth: str = Depends(verify_auth)):
+    add_audit_log("Unban", f"Unbanned {steam_id}")
+    global banned_players_state
+    original_len = len(banned_players_state)
+    banned_players_state = [b for b in banned_players_state if b.get("steamId") != steam_id]
+    if len(banned_players_state) == original_len:
+        raise HTTPException(status_code=404, detail="Ban not found")
+    return {"ok": True}
 
 @app.get("/v1/reserved-slots", response_model=schemas.ReservedSlots)
 async def get_reserved_slots(auth: str = Depends(verify_auth)):
@@ -151,12 +177,6 @@ async def kick_player(steam_id: str, req: schemas.ReasonRequest, auth: str = Dep
     mock_players = [p for p in mock_players if p["steamId"] != steam_id]
     return {"ok": True}
 
-@app.post("/v1/bans")
-async def ban_player(req: schemas.BanRequest, auth: str = Depends(verify_auth)):
-    add_audit_log("Ban", f"Banned {req.steamId}. Reason: {req.reason}")
-    global mock_players
-    mock_players = [p for p in mock_players if p["steamId"] != req.steamId]
-    return {"ok": True}
 
 @app.post("/v1/players/{steam_id}/faction")
 async def switch_faction(steam_id: str, req: schemas.FactionRequest, auth: str = Depends(verify_auth)):
@@ -175,10 +195,14 @@ async def get_config(auth: str = Depends(verify_auth)):
 
 @app.put("/v1/config", response_model=schemas.ConfigResult)
 async def update_config(req: Request, force: bool = False, fullApply: bool = False, auth: str = Depends(verify_auth)):
+    # Simular 412 ocasionalmente (Chaos Engineering para el retry de concurrencia)
+    if random.random() < 0.2:
+        raise HTTPException(status_code=412, detail="Precondition Failed: Revision mismatch")
+        
     add_audit_log("ConfigUpdate", "Configuration was updated")
     return {
         "success": True,
-        "newRevision": "rev124"
+        "newRevision": f"rev{random.randint(1000, 9999)}"
     }
 
 @app.post("/v1/mock/populate")
