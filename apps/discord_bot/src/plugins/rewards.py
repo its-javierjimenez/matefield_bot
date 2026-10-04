@@ -75,6 +75,8 @@ class RewardsBalance:
 
         points = data.get("reward_points", 0)
         seeding_mins = data.get("total_seeding_minutes", 0)
+        next_point_mins = data.get("next_point_minutes_left", 30)
+        
         hours = seeding_mins // 60
         mins = seeding_mins % 60
         time_str = f"{hours}h {mins}m" if hours > 0 else f"{mins} minutos"
@@ -88,7 +90,8 @@ class RewardsBalance:
         )
         embed.add_field(name="🎮 Jugador", value=f"**{in_game}**\n`{steam_id}`", inline=True)
         embed.add_field(name="⭐ Puntos Disponibles", value=f"**{points:,}** pts", inline=True)
-        embed.add_field(name="⏱️ Tiempo en Seeding", value=f"**{time_str}**", inline=True)
+        embed.add_field(name="⏱️ Tiempo Total de Seeding", value=f"**{time_str}**", inline=True)
+        embed.add_field(name="⏳ Siguiente Punto En", value=f"**{next_point_mins} mins**", inline=True)
 
         claims = data.get("claims", [])
         pending_claims = [c for c in claims if c.get("status") == "PENDING"]
