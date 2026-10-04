@@ -11,7 +11,7 @@ from typing import Optional, Tuple
 from sqlmodel import select, col
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.config import ENVIRONMENT_SETTINGS
+from wardogs_config import ENVIRONMENT_SETTINGS
 from src.connections.databases.db import Player, Membership, Role, PlayerRole
 
 logger = logging.getLogger("wardogs.export")

@@ -1,5 +1,4 @@
 import aiohttp
-import os
 from typing import Dict, Any, Optional, List, Union
 
 from wardogs_schemas import v1 as schemas
@@ -55,12 +54,6 @@ class APIClient:
         data = await self._request("GET", "/api/v1/players")
         return schemas.Players1.model_validate(data)
 
-    async def get_db_bans(self, steam_id: Optional[str] = None) -> schemas.DbBansResponse:
-        url = "/api/v1/db/bans"
-        if steam_id:
-            url += f"?steam_id={steam_id}"
-        data = await self._request("GET", url)
-        return schemas.DbBansResponse.model_validate(data)
 
     async def get_audit_logs(self, limit: int = 50) -> schemas.Audit:
         data = await self._request("GET", f"/api/v1/audit?limit={limit}")

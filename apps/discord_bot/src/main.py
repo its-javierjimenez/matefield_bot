@@ -1,9 +1,8 @@
-import hikari
-import crescent
-from dotenv import load_dotenv
-import os
 import logging
 import colorlog
+import hikari
+import crescent
+from wardogs_config import BOT_SETTINGS
 from src.model import Model
 
 # Configurar logs coloridos
@@ -26,11 +25,9 @@ logger.setLevel(logging.INFO)
 # Hikari ya tiene sus propios logs, los dejamos en INFO o WARNING si queremos menos ruido
 logging.getLogger("hikari").setLevel(logging.WARNING)
 
-load_dotenv()
-
 bot = hikari.GatewayBot(
-    os.environ["DISCORD_TOKEN"],
-    intents=hikari.Intents.ALL_UNPRIVILEGED
+    BOT_SETTINGS.DISCORD_TOKEN,
+    intents=hikari.Intents.ALL_UNPRIVILEGED | hikari.Intents.GUILD_MEMBERS | hikari.Intents.GUILD_PRESENCES
 )
 model = Model()
 client = crescent.Client(bot, model)
@@ -39,7 +36,7 @@ client = crescent.Client(bot, model)
 client.plugins.load_folder("src.plugins")
 
 if __name__ == "__main__":
-    if os.environ.get("DISCORD_TOKEN") == "tu_token_aqui":
+    if BOT_SETTINGS.DISCORD_TOKEN in ("tu_token_aqui", "", None):
         print("Error: Por favor configura el DISCORD_TOKEN en el archivo .env")
     else:
         bot.run()

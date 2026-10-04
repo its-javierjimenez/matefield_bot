@@ -193,45 +193,7 @@ async def process_sync_tick(
                     stats.cash_earned = current_cash
             session.add(stats)
 
-    # 3. Session Tracking & Seeding Rewards (Runs EVEN if 0 players online to properly close sessions)
-    seeding_threshold = await _get_int_config(session, "SEEDING_MIN_PLAYERS", DEFAULT_SEEDING_MIN_PLAYERS)
-    minutes_per_point = await _get_int_config(session, "SEEDING_MINUTES_PER_POINT", DEFAULT_SEEDING_MINUTES_PER_POINT)
-
-    current_players_count = (status.players.current or 0) if (status and status.players) else len(current_players_list)
-    is_seeding = current_players_count < seeding_threshold
-    current_steam_ids = {p.steamId for p in current_players_list if p.steamId}
-
-    active_sessions_stmt = select(PlayerSession).where(PlayerSession.end_time == None)
-    active_sessions = (await session.exec(active_sessions_stmt)).all()
-    active_session_dict = {s.steam_id: s for s in active_sessions}
-
-    for s in active_sessions:
-        if s.steam_id in current_steam_ids:
-            db_p = await session.get(Player, s.steam_id)
-            if db_p:
-                RewardsService.process_session_seeding(
-                    session_obj=s,
-                    player_obj=db_p,
-                    delta_seconds=delta_seconds,
-                    is_seeding=is_seeding,
-                    minutes_per_point=minutes_per_point,
-                )
-                session.add(db_p)
-            else:
-                s.total_seconds += delta_seconds
-                if is_seeding:
-                    s.seeding_seconds += delta_seconds
-            session.add(s)
-        else:
-            # Player disconnected: Close session using accumulated total_seconds
-            s.end_time = s.start_time + datetime.timedelta(seconds=s.total_seconds)
-            session.add(s)
-
-    for sid in current_steam_ids:
-        if sid not in active_session_dict:
-            new_sess = PlayerSession(steam_id=sid, start_time=now)
-            session.add(new_sess)
-            asyncio.create_task(_fetch_avatar_background(sid))
+    # 3. Session Tracking is now moved out to be processed globally
 
     # 4. Match Team Stats & End Detection
     match_ended = False
@@ -278,8 +240,8 @@ async def process_sync_tick(
         "match_id": state.current_match_id,
         "match_transitioned": match_transitioned,
         "match_ended": match_ended,
-        "active_players_count": len(current_steam_ids),
-        "is_seeding": is_seeding,
+        "active_players_count": len(current_players_list),
+        "is_seeding": False,
     }
 
 
@@ -296,8 +258,11 @@ async def poll_rcon(state: Optional[SyncEngineState] = None):
             now = datetime.datetime.now(datetime.timezone.utc)
             delta_seconds = int((now - last_poll_time).total_seconds())
             
-            # Prevent time leaps if the polling loop was blocked or delayed
-            if delta_seconds > MAX_TIME_GAP_SECONDS:
+            if delta_seconds < 0:
+                logger.warning("[Match Engine] Negative time gap detected (%ds). Clock drift? Resetting.", delta_seconds)
+                delta_seconds = 0
+                last_poll_time = now
+            elif delta_seconds > MAX_TIME_GAP_SECONDS:
                 logger.warning(
                     "[Match Engine] Large time gap detected (%ds). Capping to %ds.",
                     delta_seconds,
@@ -307,22 +272,96 @@ async def poll_rcon(state: Optional[SyncEngineState] = None):
                 
             last_poll_time = now
             
-            # Resolve the active RCON server from DB (falls back to .env if no rows)
-            async with AsyncSession(engine) as session:
-                _, client = await RCONManager.get_default_server(session)
-                status = await client.get_status()
-                players = await client.get_players()
-                await process_sync_tick(session, status, players, now, delta_seconds, state=state)
+            global_current_steam_ids = set()
+            global_is_seeding = False # If any server is seeding, player gets seeding points? Or we evaluate per player?
+            # We will evaluate if player is seeding based on if ANY of their servers are seeding.
+            seeding_servers_steam_ids = set()
+            
+            async with AsyncSession(engine, expire_on_commit=False) as session:
+                seeding_threshold = await _get_int_config(session, "SEEDING_MIN_PLAYERS", DEFAULT_SEEDING_MIN_PLAYERS)
+                minutes_per_point = await _get_int_config(session, "SEEDING_MINUTES_PER_POINT", DEFAULT_SEEDING_MINUTES_PER_POINT)
+                
+                active_servers = await RCONManager.get_all_active_servers(session)
+                
+                # Check states dict (it acts per server)
+                if not hasattr(poll_rcon, "states"):
+                    poll_rcon.states = {}
+                states = poll_rcon.states
 
-            # Dynamic polling rate: poll faster near match end
-            sleep_time = DEFAULT_POLL_INTERVAL_SECONDS
-            if status and status.scoreTick and status.scoreCap:
-                tick_current = status.scoreTick.current or 0
-                if tick_current >= (status.scoreCap - FAST_POLL_TICKS_REMAINING):
-                    sleep_time = FAST_POLL_INTERVAL_SECONDS
+                sleep_time = DEFAULT_POLL_INTERVAL_SECONDS
+
+                for server, client in active_servers:
+                    s_id = server.id or 0
+                    if s_id not in states:
+                        states[s_id] = SyncEngineState()
+                    state = states[s_id]
                     
+                    try:
+                        status = await client.get_status()
+                        players = await client.get_players()
+                        
+                        await process_sync_tick(session, status, players, now, delta_seconds, state=state)
+                        
+                        # Collect global sessions data
+                        current_players_list = players.players if (players and players.players) else []
+                        current_players_count = (status.players.current or 0) if (status and status.players) else len(current_players_list)
+                        is_seeding = current_players_count < seeding_threshold
+                        
+                        for p in current_players_list:
+                            if p.steamId:
+                                global_current_steam_ids.add(p.steamId)
+                                if is_seeding:
+                                    seeding_servers_steam_ids.add(p.steamId)
+
+                        if status and status.scoreTick and status.scoreCap:
+                            tick_current = status.scoreTick.current or 0
+                            if tick_current >= (status.scoreCap - FAST_POLL_TICKS_REMAINING):
+                                sleep_time = FAST_POLL_INTERVAL_SECONDS
+                                
+                    except Exception as e:
+                        logger.error(f"[Match Engine] Error polling server {server.name}: {e}")
+                
+                # Global Session Tracking
+                active_sessions_stmt = select(PlayerSession).where(PlayerSession.end_time == None).order_by(col(PlayerSession.id))
+                active_sessions = (await session.exec(active_sessions_stmt)).all()
+                active_session_dict = {s.steam_id: s for s in active_sessions}
+
+                for s in active_sessions:
+                    if s.steam_id in global_current_steam_ids:
+                        db_p = await session.get(Player, s.steam_id)
+                        player_is_seeding = s.steam_id in seeding_servers_steam_ids
+                        if db_p:
+                            RewardsService.process_session_seeding(
+                                session_obj=s,
+                                player_obj=db_p,
+                                delta_seconds=delta_seconds,
+                                is_seeding=player_is_seeding,
+                                minutes_per_point=minutes_per_point,
+                            )
+                            session.add(db_p)
+                        else:
+                            s.total_seconds += delta_seconds
+                            if player_is_seeding:
+                                s.seeding_seconds += delta_seconds
+                        session.add(s)
+                    else:
+                        s.end_time = s.start_time + datetime.timedelta(seconds=s.total_seconds)
+                        session.add(s)
+
+                for sid in global_current_steam_ids:
+                    if sid not in active_session_dict:
+                        p_exists = await session.get(Player, sid)
+                        if not p_exists:
+                            session.add(Player(steam_id=sid))
+                            await session.flush()
+                        new_sess = PlayerSession(steam_id=sid, start_time=now)
+                        session.add(new_sess)
+                        asyncio.create_task(_fetch_avatar_background(sid))
+                
+                await session.commit()
+
             await asyncio.sleep(sleep_time)
 
         except Exception as e:
-            logger.error("[Match Engine] Error polling RCON in sync_engine: %s", e)
+            logger.error("[Match Engine] Error polling RCON in sync_engine: %s", e, exc_info=True)
             await asyncio.sleep(DEFAULT_POLL_INTERVAL_SECONDS)

@@ -1,7 +1,6 @@
 import crescent
 import hikari
 import logging
-import os
 import re
 from typing import Optional
 from src.model import Model
@@ -11,6 +10,9 @@ logger = logging.getLogger(__name__)
 
 from src.groups import player_group
 from wardogs_schemas.steam_token import create_steam_link_token
+from wardogs_config import BOT_SETTINGS
+from src.trace import get_tracer
+from src.plugins.tasks import sync_single_user_roles
 
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 
@@ -34,7 +36,7 @@ def _parse_steam_emoji(raw: Optional[str]) -> hikari.UnicodeEmoji | hikari.Custo
 
 
 # UI / Theme Constants
-STEAM_LINK_EMOJI = _parse_steam_emoji(os.environ.get("STEAM_LINK_EMOJI", "🎮"))
+STEAM_LINK_EMOJI = _parse_steam_emoji(BOT_SETTINGS.STEAM_LINK_EMOJI)
 COLOR_STEAM_DARK = 0x1B2838
 COLOR_PANEL_BLUE = 0x2B6CB0
 COLOR_PROFILE_DARK = 0x2B2D31
@@ -164,37 +166,12 @@ class LinkAccount:
             
         try:
             await plugin.model.api.link_account(target_id, str(self.steam_id))
-            
-            link_msg = ""
-            guild_id = _resolve_guild_id(ctx.guild_id)
-            if guild_id:
-                try:
-                    try:
-                        member = await ctx.app.rest.fetch_member(guild_id, int(target_id))
-                    except Exception:
-                        member = plugin.app.cache.get_member(guild_id, int(target_id))
-                    if member:
-                        # Verificar si el Steam ID posee un baneo activo en DB (incluyendo solo_discord)
-                        bans_resp = await plugin.model.api.get_db_bans(str(self.steam_id))
-                        active_bans = [b for b in (bans_resp.bans if bans_resp else []) if b.is_active]
-                        
-                        if active_bans:
-                            ban_role_id = await plugin.model.api.get_bot_config("BAN_ROLE_DEFAULT")
-                            if ban_role_id and ban_role_id.isdigit() and int(ban_role_id) not in member.role_ids:
-                                await member.add_role(int(ban_role_id), reason="Baneo activo detectado al vincular cuenta")
-                                link_msg += f"\n🔒 Rol de sanción <@&{ban_role_id}> asignado automáticamente."
-                        else:
-                            link_role_id = await plugin.model.api.get_bot_config("LINK_ROLE_ID")
-                            if link_role_id and link_role_id.isdigit() and int(link_role_id) not in member.role_ids:
-                                await member.add_role(int(link_role_id), reason="Rol asignado por vincular cuenta (/player link)")
-                                link_msg += f"\n🔗 Rol verificado <@&{link_role_id}> asignado automáticamente."
-                except Exception as ex:
-                    logger.warning(f"No se pudieron actualizar los roles al vincular {target_id}: {ex}")
+            await sync_single_user_roles(ctx.app, plugin.model, int(target_id), ctx.guild_id)
             
             if self.usuario:
-                await ctx.respond(f"✅ Has vinculado a {self.usuario.mention} con el Steam ID `{self.steam_id}`{link_msg}")
+                await ctx.respond(f"✅ Has vinculado a {self.usuario.mention} con el Steam ID `{self.steam_id}`.")
             else:
-                await ctx.respond(f"✅ Tu cuenta ha sido vinculada exitosamente con el Steam ID `{self.steam_id}`{link_msg}")
+                await ctx.respond(f"✅ Tu cuenta ha sido vinculada exitosamente con el Steam ID `{self.steam_id}`.")
         except Exception as e:
             await ctx.respond(f"❌ Error al vincular: {e}")
 
@@ -265,53 +242,34 @@ async def on_steam_link_button_click(event: hikari.InteractionCreateEvent) -> No
 
 
 @plugin.include
+@crescent.hook(admin_only)
 @player_group.child
-@crescent.command(name="unlink", description="Desvincula tu cuenta de Discord de Steam")
+@crescent.command(name="unlink", description="Desvincula una cuenta de Discord de Steam (Solo Administrador)")
 class UnlinkAccount:
-    usuario = crescent.option(hikari.User, "Usuario a desvincular (Solo admin)", default=None)
+    usuario = crescent.option(hikari.User, "Usuario de Discord a desvincular", default=None)
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
-        
-        discord_id = str(ctx.user.id)
-        if self.usuario:
-            is_admin = await check_is_admin(ctx)
-            if not is_admin:
-                await ctx.respond("❌ Solo los administradores pueden desvincular a otros usuarios.")
-                return
-            discord_id = str(self.usuario.id)
+        tracer = get_tracer()
+        discord_id = str(self.usuario.id) if self.usuario else str(ctx.user.id)
 
         try:
-            # Remove managed roles first to prevent role leak (Bug 6)
-            guild_id = _resolve_guild_id(ctx.guild_id)
-            if guild_id:
-                try:
-                    res = await plugin.model.api.sync_memberships()
-                    role_maps = res.get("role_maps", {})
-                    managed_special_roles = res.get("managed_special_roles", [])
-                    all_managed_roles = set(role_maps.values()).union(set(managed_special_roles))
-                    
-                    link_role_id = await plugin.model.api.get_bot_config("LINK_ROLE_ID")
-                    if link_role_id and link_role_id.isdigit():
-                        all_managed_roles.add(int(link_role_id))
-                    
-                    bot_app = getattr(ctx, "app", None) or plugin.app
-                    member = await bot_app.rest.fetch_member(guild_id, int(discord_id))
-                    if member:
-                        current_roles = set(member.role_ids)
-                        for r_id in all_managed_roles:
-                            if r_id in current_roles:
-                                await bot_app.rest.remove_role_from_member(guild_id, int(discord_id), r_id)
-                except Exception as e:
-                    logger.warning(f"Failed to remove roles during unlink for {discord_id}: {e}")
-                    
-            await plugin.model.api.unlink_account(discord_id)
+            with tracer.measure("Desvincular cuenta en API", category="DB", action="DELETE", target=f"Discord {discord_id}") as t:
+                await plugin.model.api.unlink_account(discord_id)
+                t["details"] = "Vínculo Steam eliminado en BD"
+
+            with tracer.measure("Sincronizar roles Discord", category="DISCORD", action="SYNC", target=f"Discord {discord_id}") as t:
+                sync_res = await sync_single_user_roles(ctx.app, plugin.model, int(discord_id), ctx.guild_id)
+                t["details"] = f"Roles removidos: {sync_res.get('removed', 0)}"
+
             if self.usuario:
-                await ctx.respond(f"✅ La cuenta de {self.usuario.mention} ha sido desvinculada y sus roles revocados.")
+                base_msg = f"✅ La cuenta de {self.usuario.mention} ha sido desvinculada."
             else:
-                await ctx.respond("✅ Tu cuenta de Discord ha sido desvinculada y tus roles revocados.")
+                base_msg = "✅ Tu cuenta de Discord ha sido desvinculada."
+
+            await ctx.respond(tracer.append_to_message(base_msg))
         except Exception as e:
-            await ctx.respond(f"❌ Error: {e}")
+            await ctx.respond(tracer.append_to_message(f"❌ Error al desvincular: {e}"))
 
 @plugin.include
 @crescent.hook(admin_only)

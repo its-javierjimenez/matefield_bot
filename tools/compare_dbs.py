@@ -11,7 +11,7 @@ async def compare_dbs():
     
     tables = [
         "players", "memberships", "player_roles", "roles", "membership_types",
-        "bans", "payment_records", "matches", "match_player_stats", "match_team_stats",
+        "matches", "match_player_stats", "match_team_stats",
         "player_sessions", "rcon_servers", "teams", "bot_config"
     ]
     

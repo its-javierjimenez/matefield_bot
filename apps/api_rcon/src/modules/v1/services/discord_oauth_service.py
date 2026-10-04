@@ -5,7 +5,7 @@ import httpx
 from sqlmodel import select, func
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.config import ENVIRONMENT_SETTINGS
+from wardogs_config import ENVIRONMENT_SETTINGS
 from src.connections.databases.db import Role, BotConfig, Player
 
 logger = logging.getLogger("wardogs.discord_oauth")

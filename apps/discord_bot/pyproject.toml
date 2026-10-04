@@ -9,7 +9,9 @@ dependencies = [
     "python-dotenv",
     "aiohttp",
     "wardogs-schemas",
+    "wardogs-config",
 ]
 
 [tool.uv.sources]
 wardogs-schemas = { workspace = true }
+wardogs-config = { workspace = true }

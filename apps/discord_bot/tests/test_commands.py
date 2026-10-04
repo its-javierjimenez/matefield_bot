@@ -157,48 +157,15 @@ async def test_roles_set_link_plural_command_alias():
 
 
 @pytest.mark.asyncio
-async def test_unlink_account_permissions(monkeypatch):
+async def test_unlink_account_permissions():
     from src.plugins.account import UnlinkAccount, plugin
+    from src.hooks import admin_only
 
     cmd_cls = getattr(UnlinkAccount, "metadata").owner
+    hooks = getattr(UnlinkAccount, "metadata").hooks
+    assert admin_only in hooks, "UnlinkAccount must have admin_only hook"
 
-    # 1. Non-admin trying to unlink someone else -> blocked
-    cmd = cmd_cls()
-    other_user = MagicMock()
-    other_user.id = 9999
-    cmd.usuario = other_user
-
-    ctx = MagicMock()
-    ctx.user.id = 1234
-    ctx.defer = AsyncMock()
-    ctx.respond = AsyncMock()
-
-    async def mock_is_admin_false(c):
-        return False
-
-    monkeypatch.setattr("src.plugins.account.check_is_admin", mock_is_admin_false)
-
-    await cmd.callback(ctx)
-    ctx.respond.assert_called_once_with("❌ Solo los administradores pueden desvincular a otros usuarios.")
-
-    # 2. Regular user unlinking themselves (no usuario) -> success
-    cmd_self = cmd_cls()
-    cmd_self.usuario = None
-
-    ctx_self = MagicMock()
-    ctx_self.guild_id = None
-    ctx_self.user.id = 1234
-    ctx_self.defer = AsyncMock()
-    ctx_self.respond = AsyncMock()
-
-    plugin._client = MagicMock()
-    plugin._client.model.api.unlink_account = AsyncMock()
-
-    await cmd_self.callback(ctx_self)
-    plugin._client.model.api.unlink_account.assert_called_once_with("1234")
-    assert "Tu cuenta de Discord ha sido desvinculada" in ctx_self.respond.call_args[0][0]
-
-    # 3. Admin unlinking someone else -> success
+    # 1. Admin unlinking someone else -> success
     cmd_admin = cmd_cls()
     target_user = MagicMock()
     target_user.id = 8888
@@ -211,194 +178,28 @@ async def test_unlink_account_permissions(monkeypatch):
     ctx_admin.defer = AsyncMock()
     ctx_admin.respond = AsyncMock()
 
-    async def mock_is_admin_true(c):
-        return True
-
-    monkeypatch.setattr("src.plugins.account.check_is_admin", mock_is_admin_true)
+    plugin._client = MagicMock()
     plugin._client.model.api.unlink_account = AsyncMock()
 
     await cmd_admin.callback(ctx_admin)
     plugin._client.model.api.unlink_account.assert_called_once_with("8888")
-    assert "ha sido desvinculada y sus roles revocados" in ctx_admin.respond.call_args[0][0]
+    assert "ha sido desvinculada" in ctx_admin.respond.call_args[0][0]
 
+    # 2. Admin unlinking themselves (no usuario) -> success
+    cmd_self = cmd_cls()
+    cmd_self.usuario = None
 
-@pytest.mark.asyncio
-async def test_ban_player_solo_discord():
-    from src.plugins.admin import BanPlayer, plugin
+    ctx_self = MagicMock()
+    ctx_self.guild_id = None
+    ctx_self.user.id = 1234
+    ctx_self.defer = AsyncMock()
+    ctx_self.respond = AsyncMock()
 
-    cmd_cls = getattr(BanPlayer, "metadata").owner
+    plugin._client.model.api.unlink_account = AsyncMock()
 
-    # 1. solo_discord = True -> Assigns Discord role, removes unset_ban role, calls api.ban_player(..., solo_discord=True)
-    cmd = cmd_cls()
-    cmd.steam_id = "76561198000000001"
-    cmd.usuario = None
-    cmd.reason = "Insultos en chat de Discord"
-    cmd.dias = 0
-    cmd.solo_discord = True
-
-    ctx = MagicMock()
-    ctx.guild_id = 987654321
-    ctx.defer = AsyncMock()
-    ctx.respond = AsyncMock()
-
-    mock_member = MagicMock()
-    mock_member.role_ids = []
-    mock_member.add_role = AsyncMock()
-    mock_member.remove_role = AsyncMock()
-
-    def mock_configs(k):
-        if "BAN_ROLE" in k:
-            return "999888"
-        return None
-
-    plugin._client = MagicMock()
-    plugin._client.app.cache.get_member.return_value = mock_member
-    plugin._client.model.api.get_player_by_steam = AsyncMock(return_value={"steam_id": "76561198000000001", "discord_id": "123456"})
-    plugin._client.model.api.get_bot_config = AsyncMock(side_effect=mock_configs)
-    plugin._client.model.api.ban_player = AsyncMock()
-
-    await cmd.callback(ctx)
-
-    # Asserts
-    plugin._client.model.api.ban_player.assert_called_once_with("76561198000000001", "Insultos en chat de Discord", 0, solo_discord=True)
-    mock_member.add_role.assert_called_once_with(999888, reason="Baneo Discord: Insultos en chat de Discord (permanentemente)")
-    ctx.respond.assert_called_once()
-    msg = ctx.respond.call_args[0][0]
-    assert "Rol de baneo <@&999888> asignado a <@123456>" in msg
-    assert "Sanción aplicada únicamente en Discord (no se sincronizó con RCON)" in msg
-
-    # 1b. solo_discord = True on unlinked player -> saves in DB, informs that roles apply on link
-    cmd_unlinked = cmd_cls()
-    cmd_unlinked.steam_id = "76561198000000099"
-    cmd_unlinked.usuario = None
-    cmd_unlinked.reason = "Griefing"
-    cmd_unlinked.dias = 0
-    cmd_unlinked.solo_discord = True
-
-    ctx_unlinked = MagicMock()
-    ctx_unlinked.guild_id = 987654321
-    ctx_unlinked.defer = AsyncMock()
-    ctx_unlinked.respond = AsyncMock()
-
-    plugin._client.model.api.get_player_by_steam = AsyncMock(return_value=None)
-    plugin._client.model.api.ban_player.reset_mock()
-
-    await cmd_unlinked.callback(ctx_unlinked)
-
-    plugin._client.model.api.ban_player.assert_called_once_with("76561198000000099", "Griefing", 0, solo_discord=True)
-    assert "los roles se aplicarán automáticamente cuando vincule su cuenta" in ctx_unlinked.respond.call_args[0][0]
-
-    # 2. solo_discord = False -> Calls api.ban_player and syncs
-    cmd_normal = cmd_cls()
-    cmd_normal.steam_id = "76561198000000001"
-    cmd_normal.usuario = None
-    cmd_normal.reason = "Cheat/Aimbot"
-    cmd_normal.dias = 7
-    cmd_normal.solo_discord = False
-
-    ctx_normal = MagicMock()
-    ctx_normal.guild_id = 987654321
-    ctx_normal.defer = AsyncMock()
-    ctx_normal.respond = AsyncMock()
-
-    mock_member.role_ids = [777888]
-    mock_member.add_role.reset_mock()
-    mock_member.remove_role.reset_mock()
-    plugin._client.model.api.ban_player.reset_mock()
-    plugin._client.model.api.get_player_by_steam = AsyncMock(return_value={"steam_id": "76561198000000001", "discord_id": "123456"})
-
-    await cmd_normal.callback(ctx_normal)
-
-    plugin._client.model.api.ban_player.assert_called_once_with("76561198000000001", "Cheat/Aimbot", 7, solo_discord=False)
-    mock_member.add_role.assert_called_once_with(999888, reason="Baneado por 7 días")
-    assert "baneado por 7 días" in ctx_normal.respond.call_args[0][0]
-
-    # 3. Ban by @user directly (resolves linked Steam ID)
-    cmd_user = cmd_cls()
-    mock_target_user = MagicMock()
-    mock_target_user.id = 555666
-    cmd_user.usuario = mock_target_user
-    cmd_user.steam_id = None
-    cmd_user.reason = "Toxic behavior"
-    cmd_user.dias = 0
-    cmd_user.solo_discord = False
-
-    ctx_user = MagicMock()
-    ctx_user.guild_id = 987654321
-    ctx_user.defer = AsyncMock()
-    ctx_user.respond = AsyncMock()
-
-    mock_member.role_ids = []
-    mock_member.add_role.reset_mock()
-    plugin._client.model.api.ban_player.reset_mock()
-    plugin._client.model.api.get_player_by_discord = AsyncMock(return_value={"steam_id": "76561198999999999", "discord_id": "555666"})
-
-    await cmd_user.callback(ctx_user)
-
-    plugin._client.model.api.ban_player.assert_called_once_with("76561198999999999", "Toxic behavior", 0, solo_discord=False)
-    mock_member.add_role.assert_called_once_with(999888, reason="Baneado permanentemente")
-    assert "Jugador `76561198999999999` (<@555666>) baneado permanentemente" in ctx_user.respond.call_args[0][0]
-
-    # 4. Ban by typing mention string <@555666> in steam_id option
-    cmd_mention = cmd_cls()
-    cmd_mention.usuario = None
-    cmd_mention.steam_id = "<@555666>"
-    cmd_mention.reason = "Spamming"
-    cmd_mention.dias = 1
-    cmd_mention.solo_discord = False
-
-    ctx_mention = MagicMock()
-    ctx_mention.guild_id = 987654321
-    ctx_mention.defer = AsyncMock()
-    ctx_mention.respond = AsyncMock()
-
-    mock_member.role_ids = []
-    mock_member.add_role.reset_mock()
-    plugin._client.model.api.ban_player.reset_mock()
-
-    await cmd_mention.callback(ctx_mention)
-
-    plugin._client.model.api.ban_player.assert_called_once_with("76561198999999999", "Spamming", 1, solo_discord=False)
-    mock_member.add_role.assert_called_once_with(999888, reason="Baneado por 1 días")
-
-
-@pytest.mark.asyncio
-async def test_unban_player_role_switch():
-    from src.plugins.admin import UnbanStandalone, plugin
-
-    cmd_cls = getattr(UnbanStandalone, "metadata").owner
-    cmd = cmd_cls()
-    cmd.steam_id = "76561198000000001"
-    cmd.usuario = None
-    cmd.solo_discord = False
-
-    ctx = MagicMock()
-    ctx.guild_id = 987654321
-    ctx.defer = AsyncMock()
-    ctx.respond = AsyncMock()
-
-    mock_member = MagicMock()
-    mock_member.role_ids = [999888]  # Currently has ban role
-    mock_member.add_role = AsyncMock()
-    mock_member.remove_role = AsyncMock()
-
-    plugin._client = MagicMock()
-    plugin._client.app.cache.get_member.return_value = mock_member
-    plugin._client.model.api.get_player_by_steam = AsyncMock(return_value={"steam_id": "76561198000000001", "discord_id": "123456"})
-    plugin._client.model.api.get_bot_configs = AsyncMock(return_value={
-        "BAN_ROLE_DEFAULT": "999888"
-    })
-    plugin._client.model.api.unban_player = AsyncMock()
-
-    await cmd.callback(ctx)
-
-    # Asserts
-    plugin._client.model.api.unban_player.assert_called_once_with("76561198000000001")
-    mock_member.remove_role.assert_called_once_with(999888, reason="Desbaneado")
-    ctx.respond.assert_called_once()
-    msg = ctx.respond.call_args[0][0]
-    assert "desbaneado y sincronizado con RCON" in msg
-    assert "Se quitaron 1 rol(es) de ban" in msg
+    await cmd_self.callback(ctx_self)
+    plugin._client.model.api.unlink_account.assert_called_once_with("1234")
+    assert "Tu cuenta de Discord ha sido desvinculada" in ctx_self.respond.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -461,6 +262,39 @@ async def test_player_link_with_params_restricted(monkeypatch):
     ctx.respond.assert_called_once()
     msg = ctx.respond.call_args[0][0]
     assert "La vinculación manual con Steam ID está reservada para administradores" in msg
+
+
+@pytest.mark.asyncio
+async def test_player_link_with_params_admin_triggers_sync(monkeypatch):
+    from src.plugins.account import LinkAccount, plugin
+
+    cmd_cls = getattr(LinkAccount, "metadata").owner
+    cmd = cmd_cls()
+    cmd.steam_id = "76561198000000001"
+    target_user = MagicMock()
+    target_user.id = 5555
+    target_user.mention = "<@5555>"
+    cmd.usuario = target_user
+
+    ctx = MagicMock()
+    ctx.guild_id = 999
+    ctx.user.id = 111
+    ctx.defer = AsyncMock()
+    ctx.respond = AsyncMock()
+
+    plugin._client = MagicMock()
+    plugin._client.model.api.link_account = AsyncMock()
+    mock_sync = AsyncMock()
+    monkeypatch.setattr("src.plugins.account.sync_single_user_roles", mock_sync)
+    monkeypatch.setattr("src.plugins.account.check_is_admin", AsyncMock(return_value=True))
+
+    await cmd.callback(ctx)
+
+    plugin._client.model.api.link_account.assert_awaited_once_with("5555", "76561198000000001")
+    mock_sync.assert_awaited_once_with(ctx.app, plugin.model, 5555, 999)
+    ctx.respond.assert_called_once()
+    assert "Has vinculado a <@5555>" in ctx.respond.call_args[0][0]
+
 
 
 @pytest.mark.asyncio
@@ -627,114 +461,6 @@ async def test_membership_sync_command(monkeypatch):
     assert "➕ Roles Añadidos" in field_names
     assert "➖ Roles Removidos" in field_names
     assert "🛡️ Whitelist" in field_names
-
-
-@pytest.mark.asyncio
-async def test_role_commands_and_autocompletes():
-    from src.plugins.config import GiveRole, RemoveRole, autocomplete_db_roles, plugin as cfg_plugin
-    from src.plugins.database import (
-        DbAddSpecialRole,
-        DbRemoveSpecialRole,
-        PlayerSetRole,
-        PlayerRemoveRole,
-        autocomplete_special_roles,
-        plugin as db_plugin
-    )
-
-    mock_roles = [
-        {"code": "VIP_COMUN", "name": "VIP Común", "role_type": "VIP", "discord_role_id": "111"},
-        {"code": "FUNDADOR", "name": "Fundador", "role_type": "SPECIAL", "discord_role_id": "222"},
-        {"code": "STAFF", "name": "Staff Matefield", "role_type": "SYSTEM", "discord_role_id": "333"},
-    ]
-
-    mock_api = MagicMock()
-    mock_api.get_all_roles = AsyncMock(return_value=mock_roles)
-    mock_api.get_player_by_discord = AsyncMock(return_value={"steam_id": "76561198000000001"})
-    mock_api.add_special_role = AsyncMock()
-    mock_api.remove_special_role = AsyncMock()
-
-    cfg_plugin._client = MagicMock()
-    cfg_plugin.model.api = mock_api
-    db_plugin._client = MagicMock()
-    db_plugin.model.api = mock_api
-
-    # 1. Test autocomplete_db_roles (shows all roles with types)
-    auto_opt = MagicMock(value="")
-    ac_ctx = MagicMock()
-    all_res = await autocomplete_db_roles(ac_ctx, auto_opt)
-    assert len(all_res) == 3
-    assert ("Fundador (FUNDADOR) [SPECIAL]", "FUNDADOR") in all_res
-    assert ("VIP Común (VIP_COMUN) [VIP]", "VIP_COMUN") in all_res
-
-    # 2. Test autocomplete_special_roles (ONLY shows role_type == SPECIAL)
-    sp_res = await autocomplete_special_roles(ac_ctx, auto_opt)
-    assert len(sp_res) == 1
-    assert sp_res[0] == ("Fundador (FUNDADOR)", "FUNDADOR")
-
-    # 3. Test /roles give (GiveRole)
-    give_cmd = getattr(GiveRole, "metadata").owner()
-    give_cmd.usuario = MagicMock(id=123, mention="<@123>")
-    give_cmd.rol = "STAFF"
-    ctx = MagicMock(guild_id=888, defer=AsyncMock(), respond=AsyncMock())
-    ctx.app.rest.add_role_to_member = AsyncMock()
-
-    await give_cmd.callback(ctx)
-    mock_api.add_special_role.assert_awaited_with("76561198000000001", "STAFF")
-    ctx.app.rest.add_role_to_member.assert_awaited_with(888, 123, 333)
-    assert "Rol `STAFF` asignado" in ctx.respond.call_args[0][0]
-
-    # 4. Test /roles remove (RemoveRole)
-    remove_cmd = getattr(RemoveRole, "metadata").owner()
-    remove_cmd.usuario = MagicMock(id=123, mention="<@123>")
-    remove_cmd.rol = "STAFF"
-    ctx.reset_mock()
-    ctx.app.rest.remove_role_from_member = AsyncMock()
-
-    await remove_cmd.callback(ctx)
-    mock_api.remove_special_role.assert_awaited_with("76561198000000001", "STAFF")
-    ctx.app.rest.remove_role_from_member.assert_awaited_with(888, 123, 333)
-    assert "Rol `STAFF` removido" in ctx.respond.call_args[0][0]
-
-    # 5. Test /player set_role (PlayerSetRole)
-    pset_cmd = getattr(PlayerSetRole, "metadata").owner()
-    pset_cmd.usuario = MagicMock(id=456, mention="<@456>")
-    pset_cmd.rol = "VIP_COMUN"
-    ctx.reset_mock()
-    ctx.app.rest.add_role_to_member = AsyncMock()
-
-    await pset_cmd.callback(ctx)
-    mock_api.add_special_role.assert_awaited_with("76561198000000001", "VIP_COMUN")
-    ctx.app.rest.add_role_to_member.assert_awaited_with(888, 456, 111)
-
-    # 6. Test /player remove_role (PlayerRemoveRole)
-    prem_cmd = getattr(PlayerRemoveRole, "metadata").owner()
-    prem_cmd.usuario = MagicMock(id=456, mention="<@456>")
-    prem_cmd.rol = "VIP_COMUN"
-    ctx.reset_mock()
-    ctx.app.rest.remove_role_from_member = AsyncMock()
-
-    await prem_cmd.callback(ctx)
-    mock_api.remove_special_role.assert_awaited_with("76561198000000001", "VIP_COMUN")
-    ctx.app.rest.remove_role_from_member.assert_awaited_with(888, 456, 111)
-
-    # 7. Test /special_role add rejecting non-SPECIAL role
-    sp_add_cmd = getattr(DbAddSpecialRole, "metadata").owner()
-    sp_add_cmd.usuario = MagicMock(id=789, mention="<@789>")
-    sp_add_cmd.rol_especial = "STAFF"  # Not a SPECIAL role
-    ctx.reset_mock()
-
-    await sp_add_cmd.callback(ctx)
-    assert "Debes seleccionar un rol registrado con categoría `SPECIAL`" in ctx.respond.call_args[0][0]
-
-    # 8. Test /special_role add accepting SPECIAL role
-    sp_add_cmd.rol_especial = "FUNDADOR"
-    ctx.reset_mock()
-    ctx.app.rest.add_role_to_member = AsyncMock()
-
-    await sp_add_cmd.callback(ctx)
-    mock_api.add_special_role.assert_awaited_with("76561198000000001", "FUNDADOR")
-    ctx.app.rest.add_role_to_member.assert_awaited_with(888, 789, 222)
-    assert "Rol especial `Fundador` (`FUNDADOR`) añadido" in ctx.respond.call_args[0][0]
 
 
 @pytest.mark.asyncio

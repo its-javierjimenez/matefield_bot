@@ -6,7 +6,7 @@ from sqlmodel import select, func, col, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.connections.databases.db import (
-    Player, PlayerSession, RewardItem, RewardClaim, BotConfig, Ban
+    Player, PlayerSession, RewardItem, RewardClaim, BotConfig
 )
 from src.modules.v1.schemas.dtos import (
     CreateRewardItemRequest,
@@ -78,9 +78,11 @@ class RewardsService:
             await session.commit()
 
     @staticmethod
-    async def find_player(identifier: str, session: AsyncSession) -> Optional[Player]:
+    async def find_player(identifier: str, session: AsyncSession, for_update: bool = False) -> Optional[Player]:
         clean_id = identifier.strip()
         stmt = select(Player).where(or_(Player.steam_id == clean_id, Player.discord_id == clean_id))
+        if for_update:
+            stmt = stmt.with_for_update()
         return (await session.exec(stmt)).first()
 
     @staticmethod
@@ -113,7 +115,7 @@ class RewardsService:
 
         if unrewarded_seconds >= required_seconds:
             points = unrewarded_seconds // required_seconds
-            player_obj.reward_points += points
+            player_obj.reward_points = Player.reward_points + points
             session_obj.rewarded_seeding_seconds += points * required_seconds
             return points
 
@@ -147,6 +149,11 @@ class RewardsService:
     async def create_or_update_reward_item(
         req: CreateRewardItemRequest, session: AsyncSession
     ) -> Dict[str, Any]:
+        if req.cost_points <= 0:
+            raise HTTPException(status_code=400, detail="El costo en puntos debe ser mayor a 0.")
+        if req.duration_days is not None and req.duration_days < 0:
+            raise HTTPException(status_code=400, detail="La duración en días no puede ser negativa.")
+
         normalized_code = req.code.strip().upper()
         existing = (await session.exec(select(RewardItem).where(RewardItem.code == normalized_code))).first()
         if existing:
@@ -244,7 +251,7 @@ class RewardsService:
 
     @staticmethod
     async def claim_reward(req: ClaimRewardRequest, session: AsyncSession) -> Dict[str, Any]:
-        player = await RewardsService.find_player(req.player_identifier, session)
+        player = await RewardsService.find_player(req.player_identifier, session, for_update=True)
         if not player:
             raise HTTPException(
                 status_code=404,
@@ -254,15 +261,6 @@ class RewardsService:
             raise HTTPException(
                 status_code=400,
                 detail="Es obligatorio tener tu cuenta de Discord vinculada con Steam para poder canjear recompensas. Usa /player link primero.",
-            )
-
-        # Validar si el jugador tiene una sanción o baneo activo
-        ban_stmt = select(Ban).where(Ban.steam_id == player.steam_id, Ban.is_active == True)
-        active_ban = (await session.exec(ban_stmt)).first()
-        if active_ban:
-            raise HTTPException(
-                status_code=403,
-                detail="No puedes canjear recompensas mientras tengas una sanción o baneo activo.",
             )
 
         norm_code = req.reward_code.strip().upper()
@@ -393,7 +391,7 @@ class RewardsService:
         claim_code: str, req: DeliverClaimRequest, session: AsyncSession
     ) -> Dict[str, Any]:
         clean_code = claim_code.strip().upper()
-        claim = (await session.exec(select(RewardClaim).where(RewardClaim.claim_code == clean_code))).first()
+        claim = (await session.exec(select(RewardClaim).where(RewardClaim.claim_code == clean_code).with_for_update())).first()
         if not claim:
             raise HTTPException(status_code=404, detail=f"Código de canje '{clean_code}' no existe.")
 
@@ -427,7 +425,7 @@ class RewardsService:
         claim_code: str, req: RefundClaimRequest, session: AsyncSession
     ) -> Dict[str, Any]:
         clean_code = claim_code.strip().upper()
-        claim = (await session.exec(select(RewardClaim).where(RewardClaim.claim_code == clean_code))).first()
+        claim = (await session.exec(select(RewardClaim).where(RewardClaim.claim_code == clean_code).with_for_update())).first()
         if not claim:
             raise HTTPException(status_code=404, detail=f"Código de canje '{clean_code}' no existe.")
 
@@ -458,7 +456,7 @@ class RewardsService:
 
     @staticmethod
     async def give_points(req: GiveRewardPointsRequest, session: AsyncSession) -> Dict[str, Any]:
-        player = await RewardsService.find_player(req.player_identifier, session)
+        player = await RewardsService.find_player(req.player_identifier, session, for_update=True)
         if not player:
             # If identifier is a 17-digit SteamID, create the player record
             clean_id = req.player_identifier.strip()

@@ -1,3 +1,18 @@
+import sys
+from pathlib import Path
+
+api_rcon_root = Path(__file__).resolve().parent.parent
+api_rcon_src = api_rcon_root / "src"
+if str(api_rcon_root) not in sys.path:
+    sys.path.insert(0, str(api_rcon_root))
+
+try:
+    import src
+    if hasattr(src, "__path__") and str(api_rcon_src) not in src.__path__:
+        src.__path__.insert(0, str(api_rcon_src))
+except ImportError:
+    pass
+
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
@@ -5,6 +20,10 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
+
+# Ensure we import the FastAPI app from api_rcon
+if "src.main" in sys.modules and not hasattr(sys.modules["src.main"], "app"):
+    del sys.modules["src.main"]
 
 from src.main import app
 from src.connections.databases.db import get_session

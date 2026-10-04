@@ -14,16 +14,18 @@ from typing import Dict, Any
 # Ensure proper PYTHONPATH
 sys.path.insert(0, os.path.abspath("."))
 sys.path.insert(0, os.path.abspath("packages/wardogs_schemas/src"))
+sys.path.insert(0, os.path.abspath("packages/wardogs_config/src"))
 
 import httpx
 from apps.discord_bot.src.api_client import APIClient
 from wardogs_schemas.steam_token import create_steam_link_token
+from wardogs_config import BOT_SETTINGS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("sim_suite")
 
-BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
-API_KEY = os.environ.get("API_KEY", "local-api-key")
+BASE_URL = BOT_SETTINGS.API_BASE_URL
+API_KEY = BOT_SETTINGS.API_KEY
 
 class SimulationRunner:
     def __init__(self):

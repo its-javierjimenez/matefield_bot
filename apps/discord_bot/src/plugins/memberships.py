@@ -9,22 +9,28 @@ import hikari
 from src.model import Model
 from src.hooks import admin_only
 from src.groups import membership_group, membership_type_group, player_group
+from src.trace import get_tracer
 
 logger = logging.getLogger(__name__)
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 
 _cached_types: list[dict] = []
 _last_types_fetch: float = 0.0
+_types_lock = asyncio.Lock()
 
 async def get_cached_membership_types() -> list[dict]:
     global _cached_types, _last_types_fetch
     now = time.time()
     if now - _last_types_fetch > 30 or not _cached_types:
-        try:
-            _cached_types = await plugin.model.api.get_membership_types(active_only=True)
-            _last_types_fetch = now
-        except Exception:
-            pass
+        async with _types_lock:
+            # Re-check condition after acquiring lock to prevent stampede
+            now = time.time()
+            if now - _last_types_fetch > 30 or not _cached_types:
+                try:
+                    _cached_types = await plugin.model.api.get_membership_types(active_only=True)
+                    _last_types_fetch = now
+                except Exception:
+                    pass
     return _cached_types
 
 async def autocomplete_tipo(
@@ -83,17 +89,24 @@ class DbAddMembership:
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
+        tracer = get_tracer()
         try:
-            player_info = await plugin.model.api.get_player_by_discord(str(self.usuario.id))
-            if not player_info:
-                await ctx.respond("❌ Este usuario no tiene una cuenta de Steam enlazada en la base de datos.")
-                return
+            with tracer.measure("Buscar cuenta de Steam", category="DB", action="FETCH", target=str(self.usuario.id)) as t:
+                player_info = await plugin.model.api.get_player_by_discord(str(self.usuario.id))
+                if not player_info:
+                    t["status"] = "WARN"
+                    t["details"] = "Usuario sin cuenta vinculada"
+                    await ctx.respond(tracer.append_to_message("❌ Este usuario no tiene una cuenta de Steam enlazada en la base de datos."))
+                    return
                 
-            steam_id = player_info.get("steam_id")
-            if not steam_id:
-                await ctx.respond("❌ La cuenta no tiene Steam ID asociado.")
-                return
-                
+                steam_id = player_info.get("steam_id")
+                if not steam_id:
+                    t["status"] = "ERROR"
+                    t["details"] = "Sin Steam ID"
+                    await ctx.respond(tracer.append_to_message("❌ La cuenta no tiene Steam ID asociado."))
+                    return
+                t["details"] = f"Steam ID: {steam_id}"
+
             is_booster_val = self.booster
             if is_booster_val is None:
                 try:
@@ -106,15 +119,17 @@ class DbAddMembership:
                     is_booster_val = False
 
             special_role = str(self.rol_especial.id) if self.rol_especial else None
-            await plugin.model.api.add_membership(
-                str(steam_id),
-                str(self.tipo),
-                self.dias,
-                special_role,
-                is_booster=is_booster_val,
-                server_id=self.servidor
-            )
-            
+            with tracer.measure("Registrar membresía en BD", category="DB", action="CREATE", target=f"Steam {steam_id}") as t:
+                await plugin.model.api.add_membership(
+                    str(steam_id),
+                    str(self.tipo),
+                    self.dias,
+                    special_role,
+                    is_booster=is_booster_val,
+                    server_id=self.servidor
+                )
+                t["details"] = f"Tipo: {self.tipo}, Días: {self.dias or 'Default'}, Servidor: {self.servidor or 'Global'}"
+
             if self.dias is None:
                 dias_str = "Predeterminado (paquete)"
             elif self.dias == 0:
@@ -126,9 +141,18 @@ class DbAddMembership:
             msg = f"✅ Membresía {self.tipo} añadida a <@{self.usuario.id}> ({steam_id})\n⏳ **Duración:** {dias_str} | {booster_tag} | {server_tag}"
             if special_role:
                 msg += f"\n(Rol especial <@&{special_role}> asignado en base de datos)"
-            await ctx.respond(msg)
+
+            with tracer.measure("Sincronizar roles Discord", category="DISCORD", action="SYNC", target=str(self.usuario.id)) as t:
+                from src.plugins.tasks import sync_single_user_roles
+                sync_res = await sync_single_user_roles(ctx.app, plugin.model, self.usuario.id, ctx.guild_id)
+                t["details"] = f"Roles: +{sync_res.get('added', 0)} / -{sync_res.get('removed', 0)}"
+
+            if sync_res.get("success"):
+                msg += "\n🔄 Roles de Discord sincronizados."
+
+            await ctx.respond(tracer.append_to_message(msg))
         except Exception as e:
-            await ctx.respond(f"❌ Error: {e}")
+            await ctx.respond(tracer.append_to_message(f"❌ Error: {e}"))
 
 
 @plugin.include
@@ -414,7 +438,9 @@ class DbEditMembership:
                 is_active=self.activa,
                 is_booster=self.booster
             )
-            await ctx.respond(f"✅ Membresía ID {self.id_membresia} actualizada exitosamente.")
+            from src.plugins.tasks import execute_membership_sync
+            asyncio.create_task(execute_membership_sync(ctx.app, plugin.model, target_guild_id=ctx.guild_id))
+            await ctx.respond(f"✅ Membresía ID {self.id_membresia} actualizada exitosamente. 🔄 Sincronizando en segundo plano...")
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
 
@@ -430,7 +456,9 @@ class DbRemoveMembership:
         await ctx.defer()
         try:
             await plugin.model.api.delete_membership(self.id_membresia)
-            await ctx.respond(f"✅ Membresía ID {self.id_membresia} eliminada exitosamente.")
+            from src.plugins.tasks import execute_membership_sync
+            asyncio.create_task(execute_membership_sync(ctx.app, plugin.model, target_guild_id=ctx.guild_id))
+            await ctx.respond(f"✅ Membresía ID {self.id_membresia} eliminada exitosamente. 🔄 Sincronizando en segundo plano...")
         except Exception as e:
             await ctx.respond(f"❌ Error: {e}")
 
@@ -574,7 +602,9 @@ class ExtenderMembresia:
         await ctx.defer()
         try:
             await plugin.model.api.edit_membership(membership_id=self.membership_id, add_days=self.dias)
-            await ctx.respond(f"✅ Membresía #{self.membership_id} extendida por {self.dias} días exitosamente.")
+            from src.plugins.tasks import execute_membership_sync
+            asyncio.create_task(execute_membership_sync(ctx.app, plugin.model, target_guild_id=ctx.guild_id))
+            await ctx.respond(f"✅ Membresía #{self.membership_id} extendida por {self.dias} días exitosamente. 🔄 Sincronizando en segundo plano...")
         except Exception as e:
             await ctx.respond(f"❌ Error al extender membresía: {e}")
 

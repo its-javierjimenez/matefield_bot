@@ -8,8 +8,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.config import ENVIRONMENT_SETTINGS, is_prod
-from src.connections.databases.db import get_session, Player, BotConfig, Ban, SteamLinkRedemption
+from wardogs_config import ENVIRONMENT_SETTINGS, is_prod
+from src.connections.databases.db import get_session, Player, BotConfig, SteamLinkRedemption
 from src.connections.apis.steam import get_player_summary
 from src.modules.v1.schemas.dtos import LinkAccountRequest
 from src.modules.v1.services import PlayersService, AuthPageService
@@ -240,20 +240,10 @@ async def steam_callback(request: Request, token: str = "", session: AsyncSessio
         logger.warning("DISCORD_TOKEN no configurado en api_rcon. La asignación del rol deberá esperar a la sincronización en segundo plano del bot.")
     if discord_token and guild_id:
         try:
-            # Consultar si el Steam ID tiene bans activos
-            active_ban = (await session.exec(
-                select(Ban).where(Ban.steam_id == steam_id, Ban.is_active == True)
-            )).first()
-
             cfg_link = await session.get(BotConfig, "LINK_ROLE_ID")
-            cfg_ban = await session.get(BotConfig, "BAN_ROLE_DEFAULT")
-
             target_role = None
             reason = ""
-            if active_ban and cfg_ban and cfg_ban.config_value and cfg_ban.config_value.isdigit():
-                target_role = cfg_ban.config_value
-                reason = "Baneo activo detectado al vincular cuenta vía Steam"
-            elif cfg_link and cfg_link.config_value and cfg_link.config_value.isdigit():
+            if cfg_link and cfg_link.config_value and cfg_link.config_value.isdigit():
                 target_role = cfg_link.config_value
                 reason = "Rol verificado asignado inmediatamente por vincular cuenta"
 

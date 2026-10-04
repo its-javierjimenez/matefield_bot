@@ -1,190 +1,8 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from datetime import datetime, timezone, timedelta
-from src.plugins.tasks import check_expired_bans, sync_ban_roles, membership_monitor, plugin, execute_membership_sync
+from src.plugins.tasks import membership_monitor, plugin, execute_membership_sync
 from wardogs_schemas import v1 as schemas
-
-@pytest.mark.asyncio
-async def test_check_expired_bans_multi_guild():
-    # Setup mocks
-    mock_api = AsyncMock()
-    mock_app = MagicMock()
-    mock_app.cache = MagicMock()
-    mock_app.rest = AsyncMock()
-
-    # Expired ban
-    expired_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-    mock_ban = schemas.DbBan(
-        id=1,
-        steam_id="76561198000000001",
-        reason="Test expired ban",
-        is_active=True,
-        banned_at=datetime.now(timezone.utc).isoformat(),
-        expires_at=expired_time
-    )
-    
-    mock_bans_resp = MagicMock()
-    mock_bans_resp.bans = [mock_ban]
-    mock_api.get_db_bans.return_value = mock_bans_resp
-    mock_api.get_bot_configs.return_value = {
-        "BAN_ROLE_DEFAULT": "1001"
-    }
-    mock_api.get_player_by_steam.return_value = {
-        "steam_id": "76561198000000001",
-        "discord_id": "999888777"
-    }
-
-    # Two guilds: guild 10 has the ban role, guild 20 does not, guild 30 has the ban role
-    mock_app.cache.get_guilds_view.return_value = {10: MagicMock(), 20: MagicMock(), 30: MagicMock()}
-    mock_app.cache.get_roles_view_for_guild.side_effect = lambda g_id: {
-        10: {1001: MagicMock()},
-        20: {5555: MagicMock()}, # Doesn't have ban role
-        30: {1001: MagicMock(), 2001: MagicMock()}
-    }.get(g_id, {})
-
-    # Members in guilds 10 and 30
-    member_g10 = MagicMock()
-    member_g10.role_ids = [1001]
-    member_g10.remove_role = AsyncMock()
-    member_g10.add_role = AsyncMock()
-
-    member_g30 = MagicMock()
-    member_g30.role_ids = [1001]
-    member_g30.remove_role = AsyncMock()
-    member_g30.add_role = AsyncMock()
-
-    async def fetch_member(g_id, d_id):
-        if g_id == 10:
-            return member_g10
-        if g_id == 30:
-            return member_g30
-        return None
-
-    mock_app.rest.fetch_member.side_effect = fetch_member
-
-    mock_client = MagicMock()
-    mock_client.model = MagicMock()
-    mock_client.model.api = mock_api
-    mock_client.app = mock_app
-
-    orig_client = getattr(plugin, "_client", None)
-    try:
-        plugin._client = mock_client
-
-        await check_expired_bans.metadata.callback()
-
-        # Check API unban called
-        mock_api.unban_player.assert_called_once_with("76561198000000001")
-        
-        # Check roles stripped in guild 10 and 30
-        member_g10.remove_role.assert_called_once_with(1001, reason="Ban Expirado")
-        member_g30.remove_role.assert_called_once_with(1001, reason="Ban Expirado")
-    finally:
-        plugin._client = orig_client
-
-
-@pytest.mark.asyncio
-async def test_sync_ban_roles_assigns_ban_role():
-    mock_api = AsyncMock()
-    mock_app = MagicMock()
-    mock_app.cache = MagicMock()
-    mock_app.rest = AsyncMock()
-
-    mock_ban = schemas.DbBan(
-        id=2,
-        steam_id="76561198000000002",
-        reason="Active ban",
-        is_active=True,
-        banned_at=datetime.now(timezone.utc).isoformat(),
-        expires_at=None
-    )
-    mock_bans_resp = MagicMock()
-    mock_bans_resp.bans = [mock_ban]
-    mock_api.get_db_bans.return_value = mock_bans_resp
-    mock_api.get_bot_configs.return_value = {
-        "BAN_ROLE_DEFAULT": "1001"
-    }
-    mock_api.get_paginated_players.return_value = {
-        "players": [{"steam_id": "76561198000000002", "discord_id": "999888777"}]
-    }
-
-    mock_app.cache.get_guilds_view.return_value = {10: MagicMock()}
-    mock_app.cache.get_roles_view_for_guild.return_value = {1001: MagicMock()}
-
-    member = MagicMock()
-    member.role_ids = [] # Missing ban role
-    member.add_role = AsyncMock()
-    member.remove_role = AsyncMock()
-    mock_app.rest.fetch_member.return_value = member
-
-    mock_client = MagicMock()
-    mock_client.model = MagicMock()
-    mock_client.model.api = mock_api
-    mock_client.app = mock_app
-
-    orig_client = getattr(plugin, "_client", None)
-    try:
-        plugin._client = mock_client
-
-        await sync_ban_roles.metadata.callback()
-
-        mock_api.sync_bans.assert_called_once()
-        member.add_role.assert_called_once_with(1001, reason="Ban sincronizado desde RCON/DB")
-    finally:
-        plugin._client = orig_client
-
-
-@pytest.mark.asyncio
-async def test_sync_ban_roles_assigns_duration_specific_role():
-    mock_api = AsyncMock()
-    mock_app = MagicMock()
-    mock_app.cache = MagicMock()
-    mock_app.rest = AsyncMock()
-
-    seven_days_future = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
-    mock_ban = schemas.DbBan(
-        id=3,
-        steam_id="76561198000000003",
-        reason="7 days temporary ban",
-        is_active=True,
-        banned_at=datetime.now(timezone.utc).isoformat(),
-        expires_at=seven_days_future
-    )
-    mock_bans_resp = MagicMock()
-    mock_bans_resp.bans = [mock_ban]
-    mock_api.get_db_bans.return_value = mock_bans_resp
-    mock_api.get_bot_configs.return_value = {
-        "BAN_ROLE_DEFAULT": "1001",
-        "BAN_ROLE_7": "7007"
-    }
-    # Test multi-page pagination handling
-    mock_api.get_paginated_players.side_effect = [
-        {"players": [{"steam_id": "76561198000000003", "discord_id": "888777666"}], "total": 1}
-    ]
-
-    mock_app.cache.get_guilds_view.return_value = {10: MagicMock()}
-    mock_app.cache.get_roles_view_for_guild.return_value = {7007: MagicMock()}
-
-    member = MagicMock()
-    member.role_ids = []
-    member.add_role = AsyncMock()
-    mock_app.rest.fetch_member.return_value = member
-
-    mock_client = MagicMock()
-    mock_client.model = MagicMock()
-    mock_client.model.api = mock_api
-    mock_client.app = mock_app
-
-    orig_client = getattr(plugin, "_client", None)
-    try:
-        plugin._client = mock_client
-        await sync_ban_roles.metadata.callback()
-
-        mock_api.sync_bans.assert_called_once()
-        member.add_role.assert_called_once_with(7007, reason="Ban sincronizado desde RCON/DB")
-    finally:
-        plugin._client = orig_client
-
 
 @pytest.mark.asyncio
 async def test_membership_monitor_syncs_roles_and_respects_whitelist():
@@ -405,76 +223,107 @@ async def test_execute_membership_sync_grants_link_role_to_linked_users():
 
 
 @pytest.mark.asyncio
-async def test_execute_membership_sync_reconciles_banned_user_roles():
+async def test_sync_single_user_roles_linked():
+    from src.plugins.tasks import sync_single_user_roles
+
     app = MagicMock()
     app.cache = MagicMock()
     app.rest = AsyncMock()
 
-    guild_id = 999
-    banned_discord_id = 12345
-    unbanned_discord_id = 67890
+    guild_id = 100
+    discord_id = 5555
+    link_role_id = 9001
+    vip_role_id = 9002
+    old_role_id = 9003
 
-    link_role_id = 7788
-    ban_role_id = 8899
-    vip_role_id = 5566
-
-    app.cache.get_guilds_view.return_value = {guild_id: MagicMock()}
-    app.cache.get_roles_view_for_guild.return_value = {
-        link_role_id: MagicMock(),
-        ban_role_id: MagicMock(),
-        vip_role_id: MagicMock()
-    }
-
-    # Banned member currently has VIP and Link roles, but missing Ban role
-    banned_member = MagicMock()
-    banned_member.role_ids = [vip_role_id, link_role_id]
-
-    # Unbanned member currently has lingering Ban role, but missing Link and VIP roles
-    unbanned_member = MagicMock()
-    unbanned_member.role_ids = [ban_role_id]
-
-    async def fetch_member(g_id, d_id):
-        if d_id == banned_discord_id:
-            return banned_member
-        if d_id == unbanned_discord_id:
-            return unbanned_member
-        return None
-
-    app.cache.get_member.side_effect = lambda g_id, d_id: None
-    app.rest.fetch_member.side_effect = fetch_member
+    member = MagicMock()
+    member.role_ids = [old_role_id]  # Has old managed role, lacks link and vip roles
+    app.cache.get_member.return_value = member
 
     model = MagicMock()
     model.api = AsyncMock()
-    model.api.sync_memberships.return_value = {
-        "sync_data": [
-            {"discord_id": str(banned_discord_id), "active_memberships": [], "special_roles": []},
-            {"discord_id": str(unbanned_discord_id), "active_memberships": ["VIP_PRO"], "special_roles": []},
-        ],
-        "role_maps": {"VIP_PRO": vip_role_id},
-        "managed_special_roles": [],
-        "banned_discord_ids": {str(banned_discord_id): None},  # User 12345 is banned
-        "expired_count": 0,
-        "active_rcon_slots": 0,
-    }
     model.api.get_bot_configs.return_value = {
         "LINK_ROLE_ID": str(link_role_id),
-        "BAN_ROLE_DEFAULT": str(ban_role_id)
+        "SYNC_WHITELIST": ""
+    }
+    model.api.sync_memberships.return_value = {
+        "sync_data": [
+            {
+                "discord_id": str(discord_id),
+                "active_memberships": ["VIP_PRO"],
+                "special_roles": []
+            }
+        ],
+        "role_maps": {"VIP_PRO": vip_role_id},
+        "managed_special_roles": [old_role_id]
     }
 
-    stats = await execute_membership_sync(app, model, target_guild_id=guild_id)
+    res = await sync_single_user_roles(app, model, discord_id, target_guild_id=guild_id)
 
-    assert stats["success"] is True
+    assert res["success"] is True
+    assert res["added"] == 2  # Link role + VIP role
+    assert res["removed"] == 1  # Old role removed
+    app.rest.remove_role_from_member.assert_called_once_with(guild_id, discord_id, old_role_id)
+    assert app.rest.add_role_to_member.call_count == 2
+    added_roles = {call[0][2] for call in app.rest.add_role_to_member.call_args_list}
+    assert added_roles == {link_role_id, vip_role_id}
 
-    # 1. Banned user: VIP role and link role removed; Ban role added
-    app.rest.remove_role_from_member.assert_any_call(guild_id, banned_discord_id, vip_role_id)
-    app.rest.remove_role_from_member.assert_any_call(guild_id, banned_discord_id, link_role_id)
-    app.rest.add_role_to_member.assert_any_call(guild_id, banned_discord_id, ban_role_id)
 
-    # 2. Unbanned user: Lingering ban role removed; Link role and VIP role added
-    app.rest.remove_role_from_member.assert_any_call(guild_id, unbanned_discord_id, ban_role_id)
-    app.rest.add_role_to_member.assert_any_call(guild_id, unbanned_discord_id, link_role_id)
-    app.rest.add_role_to_member.assert_any_call(guild_id, unbanned_discord_id, vip_role_id)
+@pytest.mark.asyncio
+async def test_sync_single_user_roles_unlinked_revokes_all():
+    from src.plugins.tasks import sync_single_user_roles
 
+    app = MagicMock()
+    app.cache = MagicMock()
+    app.rest = AsyncMock()
+
+    guild_id = 100
+    discord_id = 7777
+    link_role_id = 9001
+    vip_role_id = 9002
+
+    member = MagicMock()
+    member.role_ids = [link_role_id, vip_role_id]  # Currently has both roles
+    app.cache.get_member.return_value = member
+
+    model = MagicMock()
+    model.api = AsyncMock()
+    model.api.get_bot_configs.return_value = {
+        "LINK_ROLE_ID": str(link_role_id),
+        "SYNC_WHITELIST": ""
+    }
+    # User 7777 is not in sync_data (unlinked)
+    model.api.sync_memberships.return_value = {
+        "sync_data": [],
+        "role_maps": {"VIP_PRO": vip_role_id},
+        "managed_special_roles": []
+    }
+
+    res = await sync_single_user_roles(app, model, discord_id, target_guild_id=guild_id)
+
+    assert res["success"] is True
+    assert res["added"] == 0
+    assert res["removed"] == 2
+    removed_roles = {call[0][2] for call in app.rest.remove_role_from_member.call_args_list}
+    assert removed_roles == {link_role_id, vip_role_id}
+
+
+@pytest.mark.asyncio
+async def test_sync_single_user_roles_respects_whitelist():
+    from src.plugins.tasks import sync_single_user_roles
+
+    app = MagicMock()
+    model = MagicMock()
+    model.api = AsyncMock()
+    model.api.get_bot_configs.return_value = {
+        "SYNC_WHITELIST": "9999"
+    }
+
+    res = await sync_single_user_roles(app, model, 9999, target_guild_id=100)
+
+    assert res["success"] is True
+    assert res.get("whitelist_skipped") is True
+    model.api.sync_memberships.assert_not_called()
 
 
 
