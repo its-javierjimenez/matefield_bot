@@ -7,6 +7,13 @@ y este proyecto se adhiere a [Semantic Versioning (SemVer 2.0.0)](https://semver
 
 ---
 
+## [1.5.3] - 2026-10-04
+
+### Añadido
+- **UI de Seeding**: Se agregó al comando `/rewards balance` en Discord el tiempo restante estimado ("Siguiente Punto En") calculado dinámicamente usando los minutos residuales de la sesión actual del jugador.
+
+---
+
 ## [1.5.2] - 2026-10-04
 
 ### Mejorado

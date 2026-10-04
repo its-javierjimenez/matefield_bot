@@ -205,6 +205,22 @@ class RewardsService:
         )
         total_seeding_seconds = (await session.exec(seeding_seconds_stmt)).one()
         total_seeding_minutes = int(total_seeding_seconds) // 60
+        
+        # Calculate unrewarded seconds from current session
+        current_session_stmt = select(PlayerSession).where(
+            PlayerSession.steam_id == player.steam_id,
+            PlayerSession.end_time == None
+        )
+        current_session = (await session.exec(current_session_stmt)).first()
+        unrewarded_seconds = 0
+        if current_session:
+            unrewarded_seconds = current_session.seeding_seconds - current_session.rewarded_seeding_seconds
+            
+        cfg = await session.get(BotConfig, "SEEDING_MINUTES_PER_POINT")
+        minutes_per_point = int(cfg.config_value) if (cfg and cfg.config_value and cfg.config_value.isdigit()) else 30
+        
+        seconds_until_next = (minutes_per_point * 60) - unrewarded_seconds
+        next_point_minutes_left = max(0, seconds_until_next) // 60
 
         # Fetch claims
         claims_stmt = (
@@ -246,6 +262,7 @@ class RewardsService:
             "in_game_name": player.in_game_name,
             "reward_points": player.reward_points,
             "total_seeding_minutes": total_seeding_minutes,
+            "next_point_minutes_left": next_point_minutes_left,
             "claims": claims_data,
         }
 
