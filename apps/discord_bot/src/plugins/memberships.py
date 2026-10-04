@@ -636,7 +636,6 @@ class DbMembershipTypeList:
                 code = t.get("code", "")
                 name = t.get("name", code)
                 price = t.get("price_usd", 0.0)
-                base_price = t.get("base_price_usd")
                 billing = "Mensualidad" if t.get("billing_type") == "RECURRING" else "Pago Único"
                 days = t.get("default_days", 30)
                 days_str = "Permanente" if days == 0 else f"{days} días"
@@ -656,10 +655,7 @@ class DbMembershipTypeList:
 
                 status_icon = "🟢" if t.get("is_active", True) else "🔴 (Inactivo)"
 
-                if base_price is not None and base_price > 0 and base_price != price:
-                    price_line = f"💵 **Precio:** ${base_price:.2f} USD *(Tebex: ${price:.2f} USD c/comisiones)* ({billing})\n"
-                else:
-                    price_line = f"💵 **Precio:** ${price:.2f} USD ({billing})\n"
+                price_line = f"💵 **Precio:** ${price:.2f} USD ({billing})\n"
 
                 field_value = (
                     price_line +
@@ -683,8 +679,7 @@ class DbMembershipTypeList:
 class DbMembershipTypeCreate:
     codigo = crescent.option(str, "Código único (ej: VIP_GOLD, VIP_SERVER1)")
     nombre = crescent.option(str, "Nombre amigable (ej: VIP Oro Global)")
-    precio = crescent.option(float, "Precio de venta/Tebex en USD (ej: 6.00)", default=0.0)
-    precio_base = crescent.option(float, "Precio neto real sin comisiones en USD (ej: 5.00, opcional)", default=None)
+    precio = crescent.option(float, "Precio en USD (ej: 6.00)", default=0.0)
     dias = crescent.option(int, "Días de duración por defecto (0 = permanente)", default=30)
     cupo = crescent.option(int, "Cupo máximo simultáneo (opcional: dejar vacío o 0 para ilimitado)", default=0)
     rol = crescent.option(hikari.Role, "Rol de Discord a asignar automáticamente (opcional)", default=None)
@@ -706,13 +701,11 @@ class DbMembershipTypeCreate:
         try:
             max_q = self.cupo if self.cupo and self.cupo > 0 else None
             role_id = str(self.rol.id) if self.rol else None
-            base_p = self.precio_base if self.precio_base is not None else self.precio
             res = await plugin.model.api.create_membership_type(
                 code=self.codigo,
                 name=self.nombre,
                 description=self.descripcion,
                 price_usd=self.precio,
-                base_price_usd=base_p,
                 billing_type=str(self.facturacion),
                 default_days=self.dias,
                 max_quota=max_q,
@@ -733,8 +726,7 @@ class DbMembershipTypeCreate:
 class DbMembershipTypeEdit:
     tipo_id = crescent.option(int, "ID numérico del tipo de membresía a editar")
     nombre = crescent.option(str, "Nuevo nombre comercial (opcional)", default=None)
-    precio = crescent.option(float, "Nuevo precio Tebex en USD (opcional)", default=None)
-    precio_base = crescent.option(float, "Nuevo precio neto real en USD (opcional)", default=None)
+    precio = crescent.option(float, "Nuevo precio en USD (opcional)", default=None)
     dias = crescent.option(int, "Nuevos días por defecto (0 = permanente, opcional)", default=None)
     cupo = crescent.option(int, "Nuevo cupo máximo (0 para ilimitado, opcional)", default=None)
     rol = crescent.option(hikari.Role, "Nuevo rol de Discord a vincular (opcional)", default=None)
@@ -759,8 +751,6 @@ class DbMembershipTypeEdit:
                 kwargs["name"] = self.nombre
             if self.precio is not None:
                 kwargs["price_usd"] = self.precio
-            if self.precio_base is not None:
-                kwargs["base_price_usd"] = self.precio_base
             if self.dias is not None:
                 kwargs["default_days"] = self.dias
             if self.cupo is not None:
