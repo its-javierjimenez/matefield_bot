@@ -68,7 +68,7 @@ class MembershipTypesService:
                 "code": t.code,
                 "name": t.name,
                 "description": t.description,
-                "price_usd": t.price_usd,
+                "price_usd": round(t.price_usd / 100.0, 2),
                 "billing_type": t.billing_type,
                 "default_days": t.default_days,
                 "max_quota": t.max_quota,
@@ -135,15 +135,14 @@ class MembershipTypesService:
         if billing_type not in ("ONE_TIME", "RECURRING"):
             raise HTTPException(status_code=400, detail="billing_type debe ser 'ONE_TIME' o 'RECURRING'")
 
-        price_usd = max(0.0, float(req.price_usd))
+        price_usd_cents = max(0, int(float(req.price_usd) * 100))
 
         now = datetime.now(timezone.utc)
         m_type = MembershipType(
             code=normalized_code,
             name=req.name.strip(),
             description=req.description,
-            price_usd=price_usd,
-            base_price_usd=base_price_usd,
+            price_usd=price_usd_cents,
             billing_type=billing_type,
             default_days=req.default_days if req.default_days is not None else 30,
             max_quota=req.max_quota,
@@ -165,7 +164,7 @@ class MembershipTypesService:
                 "code": m_type.code,
                 "name": m_type.name,
                 "description": m_type.description,
-                "price_usd": m_type.price_usd,
+                "price_usd": round(m_type.price_usd / 100.0, 2),
                 "billing_type": m_type.billing_type,
                 "default_days": m_type.default_days,
                 "max_quota": m_type.max_quota,
@@ -225,7 +224,7 @@ class MembershipTypesService:
         if req.description is not None:
             m_type.description = req.description
         if req.price_usd is not None:
-            m_type.price_usd = max(0.0, float(req.price_usd))
+            m_type.price_usd = max(0, int(float(req.price_usd) * 100))
         if req.billing_type is not None:
             b_type = req.billing_type.upper()
             if b_type not in ("ONE_TIME", "RECURRING"):
@@ -253,7 +252,7 @@ class MembershipTypesService:
                 "code": m_type.code,
                 "name": m_type.name,
                 "description": m_type.description,
-                "price_usd": m_type.price_usd,
+                "price_usd": round(m_type.price_usd / 100.0, 2),
                 "billing_type": m_type.billing_type,
                 "default_days": m_type.default_days,
                 "max_quota": m_type.max_quota,
@@ -301,7 +300,7 @@ class MembershipTypesService:
                     code=code,
                     name=name,
                     description=desc,
-                    price_usd=price,
+                    price_usd=int(price * 100),
                     billing_type="ONE_TIME",
                     default_days=days,
                     max_quota=None,
