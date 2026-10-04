@@ -77,28 +77,31 @@ async def _get_or_create_team(session: AsyncSession, faction_name: Optional[str]
     return team.id
 
 
-async def _fetch_avatar_background(steam_id: str):
+async def _fetch_avatars_background(steam_ids: list[str]):
     try:
-        summary = await get_player_summary(steam_id)
-        if summary:
-            avatar = summary.get("avatarfull") or summary.get("avatarmedium")
-            personaname = summary.get("personaname")
-            if avatar or personaname:
-                async with AsyncSession(engine) as s:
-                    p = await s.get(Player, steam_id)
-                    if p:
-                        changed = False
-                        if avatar and not p.avatar_url:
-                            p.avatar_url = avatar
-                            changed = True
-                        if personaname and not p.in_game_name:
-                            p.in_game_name = personaname
-                            changed = True
-                        if changed:
-                            s.add(p)
-                            await s.commit()
+        from src.connections.apis.steam import get_player_summaries
+        summaries = await get_player_summaries(steam_ids)
+        if summaries:
+            async with AsyncSession(engine) as s:
+                changed_any = False
+                for steam_id, summary in summaries.items():
+                    avatar = summary.get("avatarfull") or summary.get("avatarmedium")
+                    personaname = summary.get("personaname")
+                    if avatar or personaname:
+                        p = await s.get(Player, steam_id)
+                        if p:
+                            if avatar and not p.avatar_url:
+                                p.avatar_url = avatar
+                                changed_any = True
+                            if personaname and not p.in_game_name:
+                                p.in_game_name = personaname
+                                changed_any = True
+                            if changed_any:
+                                s.add(p)
+                if changed_any:
+                    await s.commit()
     except Exception as e:
-        logger.debug(f"[Sync Engine] Could not fetch steam profile for {steam_id}: {e}")
+        logger.debug(f"[Sync Engine] Could not fetch steam profiles for chunk: {e}")
 
 
 async def process_sync_tick(
@@ -348,6 +351,7 @@ async def poll_rcon(state: Optional[SyncEngineState] = None):
                         s.end_time = s.start_time + datetime.timedelta(seconds=s.total_seconds)
                         session.add(s)
 
+                new_sids_for_avatar = []
                 for sid in global_current_steam_ids:
                     if sid not in active_session_dict:
                         p_exists = await session.get(Player, sid)
@@ -356,7 +360,10 @@ async def poll_rcon(state: Optional[SyncEngineState] = None):
                             await session.flush()
                         new_sess = PlayerSession(steam_id=sid, start_time=now)
                         session.add(new_sess)
-                        asyncio.create_task(_fetch_avatar_background(sid))
+                        new_sids_for_avatar.append(sid)
+                
+                if new_sids_for_avatar:
+                    asyncio.create_task(_fetch_avatars_background(new_sids_for_avatar))
                 
                 await session.commit()
 

@@ -43,7 +43,7 @@ async def get_membership_type(
         "code": m_type.code,
         "name": m_type.name,
         "description": m_type.description,
-        "price_usd": m_type.price_usd,
+        "price_usd": round(m_type.price_usd / 100.0, 2),
         "billing_type": m_type.billing_type,
         "default_days": m_type.default_days,
         "max_quota": m_type.max_quota,

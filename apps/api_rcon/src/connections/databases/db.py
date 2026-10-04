@@ -238,7 +238,17 @@ class RewardClaim(SQLModel, table=True):
 
 
 # --- Database Setup ---
-engine = create_async_engine(ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.DATABASE_URL, echo=False)
+# Utilizamos una configuración conservadora de pool para bases de datos compartidas (como BisectHosting)
+# que suelen tener un límite bajo de conexiones (max_connections).
+engine = create_async_engine(
+    ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.DATABASE_URL, 
+    echo=False,
+    pool_size=3,          # Mantiene 3 conexiones abiertas como base
+    max_overflow=2,       # Permite hasta 2 conexiones extra bajo carga (Total: 5)
+    pool_timeout=30,      # Espera hasta 30s por una conexión en lugar de fallar
+    pool_recycle=1800,    # Recicla conexiones cada 30 minutos
+    pool_pre_ping=True,   # Verifica si la conexión está viva antes de usarla
+)
 
 
 async def get_session():

@@ -7,6 +7,18 @@ y este proyecto se adhiere a [Semantic Versioning (SemVer 2.0.0)](https://semver
 
 ---
 
+## [1.5.2] - 2026-10-04
+
+### Mejorado
+- **Estabilidad de Base de Datos (Pool)**: Se limitó el pool de conexiones asíncronas de SQLAlchemy (`pool_size=3`, `max_overflow=2`) para prevenir errores críticos de `TooManyConnectionsError` en entornos con bases de datos compartidas (ej. BisectHosting).
+- **Eficiencia en Integración Steam**: Agrupación (batching) de peticiones a la API de Steam durante la sincronización inicial, consolidando hasta 100 consultas individuales en 1 sola llamada para evitar penalizaciones temporales (HTTP 420 Rate Limit).
+
+### Corregido
+- **Migraciones Idempotentes**: Se actualizaron los scripts de Alembic (`2c236beea135`) utilizando bloques `DO $$` para evitar caídas catastróficas por `DuplicateObjectError` o violaciones de constraints preexistentes.
+- **Docker Context**: Se optimizó `.dockerignore` reduciendo radicalmente el tiempo de "build" bloqueando directorios pesados (`data/`, `backups/`).
+
+---
+
 ## [1.5.1] - 2026-10-04
 
 ### Corregido
