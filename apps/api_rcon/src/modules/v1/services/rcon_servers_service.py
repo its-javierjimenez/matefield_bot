@@ -184,7 +184,26 @@ class RconServersService:
         if not server:
             raise HTTPException(status_code=404, detail=f"Servidor RCON ID {server_id} no encontrado")
 
+        # Detach foreign keys in memberships and membership_types
+        from sqlmodel import update
+        from src.connections.databases.db import Membership, MembershipType
+        await session.exec(
+            update(Membership).where(Membership.server_id == server_id).values(server_id=None)
+        )
+        await session.exec(
+            update(MembershipType).where(MembershipType.server_id == server_id).values(server_id=None)
+        )
+
+        was_default = server.is_default
         await session.delete(server)
+        await session.flush()
+
+        if was_default:
+            next_server = (await session.exec(select(RconServer).where(RconServer.is_active == True))).first()
+            if next_server:
+                next_server.is_default = True
+                session.add(next_server)
+
         await session.commit()
         return {"ok": True, "message": f"Servidor RCON '{server.name}' eliminado"}
 

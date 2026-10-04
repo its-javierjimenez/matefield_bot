@@ -12,6 +12,7 @@ logger = logging.getLogger("wardogs.admin")
 
 from src.hooks import admin_only
 from src.model import Model
+from src.trace import get_tracer
 
 plugin = crescent.Plugin[hikari.GatewayBot, Model]()
 from src.groups import reserved_group, server_group, quota_group, hacker_group
@@ -102,11 +103,14 @@ class ReservedSlotsAdd:
     
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
+        tracer = get_tracer()
         try:
-            await plugin.model.api.add_reserved_slot(self.steam_id)
-            await ctx.respond(f"✅ Steam ID `{self.steam_id}` agregado a slots reservados.")
+            with tracer.measure("Agregar slot en servidor RCON", category="RCON", action="CREATE", target=self.steam_id) as t:
+                await plugin.model.api.add_reserved_slot(self.steam_id)
+                t["details"] = "Slot reservado registrado en servidor"
+            await ctx.respond(tracer.append_to_message(f"✅ Steam ID `{self.steam_id}` agregado a slots reservados."))
         except Exception as e:
-            await ctx.respond(f"❌ Error al consultar RCON: {e}")
+            await ctx.respond(tracer.append_to_message(f"❌ Error al consultar RCON: {e}"))
 
 @plugin.include
 @reserved_group.child
@@ -116,11 +120,14 @@ class ReservedSlotsRemove:
     
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer()
+        tracer = get_tracer()
         try:
-            await plugin.model.api.remove_reserved_slot(self.steam_id)
-            await ctx.respond(f"✅ Steam ID `{self.steam_id}` removido de slots reservados.")
+            with tracer.measure("Remover slot en servidor RCON", category="RCON", action="DELETE", target=self.steam_id) as t:
+                await plugin.model.api.remove_reserved_slot(self.steam_id)
+                t["details"] = "Slot reservado eliminado de servidor"
+            await ctx.respond(tracer.append_to_message(f"✅ Steam ID `{self.steam_id}` removido de slots reservados."))
         except Exception as e:
-            await ctx.respond(f"❌ Error al consultar RCON: {e}")
+            await ctx.respond(tracer.append_to_message(f"❌ Error al consultar RCON: {e}"))
 
 @plugin.include
 @reserved_group.child

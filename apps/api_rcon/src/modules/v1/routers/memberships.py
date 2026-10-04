@@ -6,7 +6,7 @@ from wardogs_schemas import v1 as schemas
 
 from src.security.guard import verify_api_key_guard
 from src.connections.databases.db import get_session
-from src.config import ENVIRONMENT_SETTINGS
+from wardogs_config import ENVIRONMENT_SETTINGS
 from src.modules.v1.schemas.dtos import (
     AddMembershipRequest, EditMembershipRequest, CompensateRequest
 )

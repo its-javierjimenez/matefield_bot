@@ -7,6 +7,24 @@ y este proyecto se adhiere a [Semantic Versioning (SemVer 2.0.0)](https://semver
 
 ---
 
+## [1.5.0] - 2026-10-04
+
+### Agregado
+- **Wardogs Config Package**:
+  - Centralización de configuraciones de entorno utilizando `pydantic-settings` mediante un paquete independiente local (`packages/wardogs_config`).
+  - Integración completa del nuevo paquete de configuración transversal en la API y el Discord Bot para unificar el control de secretos.
+- **Auditoría Profunda de Concurrencia y Datos (100-Scenarios)**:
+  - Blindaje nativo en PostgreSQL de integridad de datos mediante Constraints (`reward_points >= 0`, `points_spent >= 0`).
+  - Cambio en la persistencia financiera de `MembershipType.price_usd` de tipo flotante a Entero (`cents`) para evitar corrupción de coma flotante.
+  - Normalización estricta (`UPPER` y `TRIM`) al guardar e ingestar `steam_id` en todos los flujos para rechazar URLs sucias o nicknames.
+  - Resolución de vulnerabilidad de 'Dog-piling' (Cache Stampede) en `memberships.py` introduciendo `asyncio.Lock` en la obtención de cachés.
+- **Observabilidad en Entornos**:
+  - Nuevo módulo de Traza (Patrones Observer y Null Object) atado a `APP_ENV` para inyectar logs visuales de procesos en desarrollo, sin overhead en producción.
+- **Migración Segura (Pre-Prod)**:
+  - Nueva revisión de Alembic (`2c236beea135`) para sanear silenciosamente Steam IDs rotos, fechas invertidas, transicionar cálculos financieros de $6.00 a 600 centavos, y expandir `bot_config` a tipo TEXT sin colapsos de despliegue.
+
+---
+
 ## [1.4.2] - 2026-10-02
 
 ### Corregido

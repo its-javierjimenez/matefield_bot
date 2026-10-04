@@ -1,5 +1,4 @@
 import aiohttp
-import os
 from typing import Dict, Any, Optional, List, Union
 
 from wardogs_schemas import v1 as schemas

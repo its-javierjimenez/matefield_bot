@@ -90,10 +90,10 @@ class ServerService:
         from sqlmodel import select
         from src.connections.databases.db import Membership
 
-        db_stmt = select(Membership.steam_id).where(Membership.is_active == True)
+        db_stmt = select(Membership.steam_id).where(Membership.is_active == True).order_by(Membership.steam_id)
         db_slots = set((await session.exec(db_stmt)).all())
         db_slots.add(steam_id)
-        target_slots = list(db_slots)
+        target_slots = sorted(list(db_slots))
 
         active_servers = await RCONManager.get_all_active_servers(session)
         for s_info, client in active_servers:
@@ -107,10 +107,10 @@ class ServerService:
         from sqlmodel import select
         from src.connections.databases.db import Membership
 
-        db_stmt = select(Membership.steam_id).where(Membership.is_active == True)
+        db_stmt = select(Membership.steam_id).where(Membership.is_active == True).order_by(Membership.steam_id)
         db_slots = set((await session.exec(db_stmt)).all())
         db_slots.discard(steam_id)
-        target_slots = list(db_slots)
+        target_slots = sorted(list(db_slots))
 
         active_servers = await RCONManager.get_all_active_servers(session)
         for s_info, client in active_servers:

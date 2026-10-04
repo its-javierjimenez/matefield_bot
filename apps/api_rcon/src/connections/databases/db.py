@@ -10,13 +10,13 @@ module so that routers and services have a single import point for DB access.
 from typing import Optional, List
 from sqlmodel import Field, SQLModel, Relationship
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlalchemy import Column, DateTime, BigInteger, ForeignKey, Text
+from sqlalchemy import Column, DateTime, BigInteger, ForeignKey, Text, CheckConstraint
 from sqlalchemy.ext.asyncio import create_async_engine
 from datetime import datetime, timezone
 from enum import Enum
 import uuid
 
-from src.config import ENVIRONMENT_SETTINGS
+from wardogs_config import ENVIRONMENT_SETTINGS
 
 class RoleType(str, Enum):
     SYSTEM = "SYSTEM"
@@ -30,7 +30,7 @@ class RoleType(str, Enum):
 class PlayerRole(SQLModel, table=True):
     __tablename__ = "player_roles"
     steam_id: str = Field(foreign_key="players.steam_id", primary_key=True)
-    role_id: int = Field(sa_column=Column(BigInteger(), ForeignKey("roles.id"), primary_key=True))
+    role_id: int = Field(sa_column=Column(ForeignKey("roles.id"), primary_key=True))
 
 # --- Core Entities ---
 
@@ -56,6 +56,10 @@ class Player(SQLModel, table=True):
     avatar_url: Optional[str] = Field(default=None)
     reward_points: int = Field(default=0)
     
+    __table_args__ = (
+        CheckConstraint("reward_points >= 0", name="check_player_points_positive"),
+    )
+    
     # Relationships
     roles: List[Role] = Relationship(back_populates="players", link_model=PlayerRole)
     memberships: List["Membership"] = Relationship(back_populates="player")
@@ -71,8 +75,8 @@ class Membership(SQLModel, table=True):
     end_time: Optional[datetime] = Field(default=None, sa_column=Column("end_date", DateTime(timezone=True))) # Null means permanent
     is_active: bool = Field(default=True)
     is_booster: bool = Field(default=False)
-    role_granted_id: Optional[int] = Field(default=None, sa_column=Column("role_granted_id", BigInteger(), ForeignKey("roles.id")))
-    special_role_id: Optional[int] = Field(default=None, sa_column=Column("special_role_id", BigInteger(), ForeignKey("roles.id"), index=True))
+    role_granted_id: Optional[int] = Field(default=None, sa_column=Column("role_granted_id", ForeignKey("roles.id")))
+    special_role_id: Optional[int] = Field(default=None, sa_column=Column("special_role_id", ForeignKey("roles.id"), index=True))
     rcon_sync_status: str = Field(default="PENDING", sa_column_kwargs={"server_default": "PENDING"}) # PENDING, SUCCESS, FAILED
     server_id: Optional[int] = Field(default=None, foreign_key="rcon_servers.id")
     payment_source: str = Field(default="MANUAL", sa_column_kwargs={"server_default": "MANUAL"}) # MANUAL, REWARDS
@@ -148,7 +152,7 @@ class SteamLinkRedemption(SQLModel, table=True):
 class BotConfig(SQLModel, table=True):
     __tablename__ = "bot_config"
     config_key: str = Field(primary_key=True)
-    config_value: str
+    config_value: str = Field(sa_column=Column(Text))
 
 
 class MembershipType(SQLModel, table=True):
@@ -157,7 +161,7 @@ class MembershipType(SQLModel, table=True):
     code: str = Field(unique=True, index=True)
     name: str
     description: Optional[str] = Field(default=None)
-    price_usd: float = Field(default=0.0)
+    price_usd: int = Field(default=0) # Stored in cents
     billing_type: str = Field(default="ONE_TIME") # "ONE_TIME" or "RECURRING"
     default_days: int = Field(default=30)         # 0 = permanente
     max_quota: Optional[int] = Field(default=None)# None = ilimitado
@@ -219,6 +223,11 @@ class RewardClaim(SQLModel, table=True):
     status: str = Field(default="PENDING", index=True) # PENDING, DELIVERED, REFUNDED
     points_spent: int = Field(default=0)
     claimed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
+    
+    __table_args__ = (
+        CheckConstraint("points_spent >= 0", name="check_claim_points_positive"),
+    )
+    
     delivered_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     delivered_by: Optional[str] = Field(default=None)
     notes: Optional[str] = Field(default=None)

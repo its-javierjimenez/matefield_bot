@@ -265,6 +265,39 @@ async def test_player_link_with_params_restricted(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_player_link_with_params_admin_triggers_sync(monkeypatch):
+    from src.plugins.account import LinkAccount, plugin
+
+    cmd_cls = getattr(LinkAccount, "metadata").owner
+    cmd = cmd_cls()
+    cmd.steam_id = "76561198000000001"
+    target_user = MagicMock()
+    target_user.id = 5555
+    target_user.mention = "<@5555>"
+    cmd.usuario = target_user
+
+    ctx = MagicMock()
+    ctx.guild_id = 999
+    ctx.user.id = 111
+    ctx.defer = AsyncMock()
+    ctx.respond = AsyncMock()
+
+    plugin._client = MagicMock()
+    plugin._client.model.api.link_account = AsyncMock()
+    mock_sync = AsyncMock()
+    monkeypatch.setattr("src.plugins.account.sync_single_user_roles", mock_sync)
+    monkeypatch.setattr("src.plugins.account.check_is_admin", AsyncMock(return_value=True))
+
+    await cmd.callback(ctx)
+
+    plugin._client.model.api.link_account.assert_awaited_once_with("5555", "76561198000000001")
+    mock_sync.assert_awaited_once_with(ctx.app, plugin.model, 5555, 999)
+    ctx.respond.assert_called_once()
+    assert "Has vinculado a <@5555>" in ctx.respond.call_args[0][0]
+
+
+
+@pytest.mark.asyncio
 async def test_player_link_channel_admin(monkeypatch):
     from src.plugins.account import LinkChannel, plugin
 

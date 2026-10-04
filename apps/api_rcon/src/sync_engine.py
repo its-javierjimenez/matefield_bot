@@ -258,7 +258,11 @@ async def poll_rcon(state: Optional[SyncEngineState] = None):
             now = datetime.datetime.now(datetime.timezone.utc)
             delta_seconds = int((now - last_poll_time).total_seconds())
             
-            if delta_seconds > MAX_TIME_GAP_SECONDS:
+            if delta_seconds < 0:
+                logger.warning("[Match Engine] Negative time gap detected (%ds). Clock drift? Resetting.", delta_seconds)
+                delta_seconds = 0
+                last_poll_time = now
+            elif delta_seconds > MAX_TIME_GAP_SECONDS:
                 logger.warning(
                     "[Match Engine] Large time gap detected (%ds). Capping to %ds.",
                     delta_seconds,
@@ -318,7 +322,7 @@ async def poll_rcon(state: Optional[SyncEngineState] = None):
                         logger.error(f"[Match Engine] Error polling server {server.name}: {e}")
                 
                 # Global Session Tracking
-                active_sessions_stmt = select(PlayerSession).where(PlayerSession.end_time == None)
+                active_sessions_stmt = select(PlayerSession).where(PlayerSession.end_time == None).order_by(col(PlayerSession.id))
                 active_sessions = (await session.exec(active_sessions_stmt)).all()
                 active_session_dict = {s.steam_id: s for s in active_sessions}
 
@@ -346,6 +350,10 @@ async def poll_rcon(state: Optional[SyncEngineState] = None):
 
                 for sid in global_current_steam_ids:
                     if sid not in active_session_dict:
+                        p_exists = await session.get(Player, sid)
+                        if not p_exists:
+                            session.add(Player(steam_id=sid))
+                            await session.flush()
                         new_sess = PlayerSession(steam_id=sid, start_time=now)
                         session.add(new_sess)
                         asyncio.create_task(_fetch_avatar_background(sid))

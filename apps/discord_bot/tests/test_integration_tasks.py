@@ -222,3 +222,108 @@ async def test_execute_membership_sync_grants_link_role_to_linked_users():
     app.rest.add_role_to_member.assert_called_once_with(guild_id, discord_id, link_role_id)
 
 
+@pytest.mark.asyncio
+async def test_sync_single_user_roles_linked():
+    from src.plugins.tasks import sync_single_user_roles
+
+    app = MagicMock()
+    app.cache = MagicMock()
+    app.rest = AsyncMock()
+
+    guild_id = 100
+    discord_id = 5555
+    link_role_id = 9001
+    vip_role_id = 9002
+    old_role_id = 9003
+
+    member = MagicMock()
+    member.role_ids = [old_role_id]  # Has old managed role, lacks link and vip roles
+    app.cache.get_member.return_value = member
+
+    model = MagicMock()
+    model.api = AsyncMock()
+    model.api.get_bot_configs.return_value = {
+        "LINK_ROLE_ID": str(link_role_id),
+        "SYNC_WHITELIST": ""
+    }
+    model.api.sync_memberships.return_value = {
+        "sync_data": [
+            {
+                "discord_id": str(discord_id),
+                "active_memberships": ["VIP_PRO"],
+                "special_roles": []
+            }
+        ],
+        "role_maps": {"VIP_PRO": vip_role_id},
+        "managed_special_roles": [old_role_id]
+    }
+
+    res = await sync_single_user_roles(app, model, discord_id, target_guild_id=guild_id)
+
+    assert res["success"] is True
+    assert res["added"] == 2  # Link role + VIP role
+    assert res["removed"] == 1  # Old role removed
+    app.rest.remove_role_from_member.assert_called_once_with(guild_id, discord_id, old_role_id)
+    assert app.rest.add_role_to_member.call_count == 2
+    added_roles = {call[0][2] for call in app.rest.add_role_to_member.call_args_list}
+    assert added_roles == {link_role_id, vip_role_id}
+
+
+@pytest.mark.asyncio
+async def test_sync_single_user_roles_unlinked_revokes_all():
+    from src.plugins.tasks import sync_single_user_roles
+
+    app = MagicMock()
+    app.cache = MagicMock()
+    app.rest = AsyncMock()
+
+    guild_id = 100
+    discord_id = 7777
+    link_role_id = 9001
+    vip_role_id = 9002
+
+    member = MagicMock()
+    member.role_ids = [link_role_id, vip_role_id]  # Currently has both roles
+    app.cache.get_member.return_value = member
+
+    model = MagicMock()
+    model.api = AsyncMock()
+    model.api.get_bot_configs.return_value = {
+        "LINK_ROLE_ID": str(link_role_id),
+        "SYNC_WHITELIST": ""
+    }
+    # User 7777 is not in sync_data (unlinked)
+    model.api.sync_memberships.return_value = {
+        "sync_data": [],
+        "role_maps": {"VIP_PRO": vip_role_id},
+        "managed_special_roles": []
+    }
+
+    res = await sync_single_user_roles(app, model, discord_id, target_guild_id=guild_id)
+
+    assert res["success"] is True
+    assert res["added"] == 0
+    assert res["removed"] == 2
+    removed_roles = {call[0][2] for call in app.rest.remove_role_from_member.call_args_list}
+    assert removed_roles == {link_role_id, vip_role_id}
+
+
+@pytest.mark.asyncio
+async def test_sync_single_user_roles_respects_whitelist():
+    from src.plugins.tasks import sync_single_user_roles
+
+    app = MagicMock()
+    model = MagicMock()
+    model.api = AsyncMock()
+    model.api.get_bot_configs.return_value = {
+        "SYNC_WHITELIST": "9999"
+    }
+
+    res = await sync_single_user_roles(app, model, 9999, target_guild_id=100)
+
+    assert res["success"] is True
+    assert res.get("whitelist_skipped") is True
+    model.api.sync_memberships.assert_not_called()
+
+
+

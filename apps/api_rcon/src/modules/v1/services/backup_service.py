@@ -8,7 +8,7 @@ from sqlalchemy import select as sa_select, text
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.config import ENVIRONMENT_SETTINGS
+from wardogs_config import ENVIRONMENT_SETTINGS
 
 logger = logging.getLogger("wardogs.backup")
 

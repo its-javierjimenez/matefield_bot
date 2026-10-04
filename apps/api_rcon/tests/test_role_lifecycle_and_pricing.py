@@ -330,3 +330,72 @@ async def test_membership_edit_type_updates_granted_role(session: AsyncSession, 
     assert r2.id in pr_ids
     assert r1.id not in pr_ids
 
+
+@pytest.mark.asyncio
+async def test_membership_negative_days_rejected(client: AsyncClient, session: AsyncSession):
+    p = Player(steam_id="STEAM_NEG_DAYS")
+    session.add(p)
+    await session.commit()
+
+    resp = await client.post("/api/v1/db/players/membership", json={
+        "steam_id": "STEAM_NEG_DAYS",
+        "membership_type": "VIP_COMUN",
+        "days": -5
+    })
+    assert resp.status_code == 400
+    assert "positivo" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_membership_extend_reactivates_expired_membership(client: AsyncClient, session: AsyncSession):
+    vip_role = Role(code="VIP_EXT_REACT", name="VIP Reactivate", role_type="VIP")
+    session.add(vip_role)
+    p = Player(steam_id="STEAM_EXT_REACT")
+    session.add(p)
+    await session.commit()
+    await session.refresh(vip_role)
+
+    now = datetime.now(timezone.utc)
+    expired_m = Membership(
+        steam_id="STEAM_EXT_REACT",
+        membership_type="VIP_EXT_REACT",
+        role_granted_id=vip_role.id,
+        is_active=False,
+        start_time=now - timedelta(days=40),
+        end_time=now - timedelta(days=10)
+    )
+    session.add(expired_m)
+    await session.commit()
+    await session.refresh(expired_m)
+
+    # Extend expired membership by 15 days
+    resp = await client.put(f"/api/v1/db/memberships/{expired_m.id}", json={
+        "add_days": 15
+    })
+    assert resp.status_code == 200
+
+    await session.refresh(expired_m)
+    assert expired_m.is_active is True
+    # The end_time should be extended from now (+15 days), not from the expired past date
+    m_end = expired_m.end_time
+    if m_end.tzinfo is None:
+        m_end = m_end.replace(tzinfo=timezone.utc)
+    assert m_end > now + timedelta(days=14)
+
+    # Role in PlayerRole should be restored
+    pr = (await session.exec(select(PlayerRole).where(
+        PlayerRole.steam_id == "STEAM_EXT_REACT",
+        PlayerRole.role_id == vip_role.id
+    ))).first()
+    assert pr is not None
+
+
+@pytest.mark.asyncio
+async def test_compensate_memberships_validation(client: AsyncClient):
+    resp_zero = await client.post("/api/v1/db/memberships/compensate", json={"days": 0})
+    assert resp_zero.status_code == 400
+
+    resp_neg = await client.post("/api/v1/db/memberships/compensate", json={"days": -10})
+    assert resp_neg.status_code == 400
+
+

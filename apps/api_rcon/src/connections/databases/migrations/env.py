@@ -1,28 +1,9 @@
 import asyncio
 import os
 import sys
-from dotenv import load_dotenv
-
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../')))
 
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../../../'))
-
-if not os.environ.get("DATABASE_URL"):
-    env_file = os.environ.get("ENV_FILE")
-    if env_file:
-        if not os.path.isabs(env_file):
-            candidate = os.path.join(root_dir, env_file)
-            if os.path.exists(candidate):
-                env_file = candidate
-        load_dotenv(env_file, override=True)
-    elif os.environ.get("ENV") == "prod":
-        load_dotenv(os.path.join(root_dir, ".env.prod"), override=True)
-    elif os.environ.get("ENV") == "local":
-        load_dotenv(os.path.join(root_dir, ".env.local"), override=True)
-    elif os.path.exists(os.path.join(root_dir, ".env.dev")):
-        load_dotenv(os.path.join(root_dir, ".env.dev"), override=True)
-    elif os.path.exists(os.path.join(root_dir, ".env")):
-        load_dotenv(os.path.join(root_dir, ".env"), override=True)
+from wardogs_config import ENVIRONMENT_SETTINGS
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -97,10 +78,7 @@ async def run_async_migrations() -> None:
     and associate a connection with the context.
 
     """
-    url = os.environ.get('DATABASE_URL') or config.get_main_option("sqlalchemy.url")
-    if not url:
-        from src.config import ENVIRONMENT_SETTINGS
-        url = ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.DATABASE_URL
+    url = os.environ.get('DATABASE_URL') or ENVIRONMENT_SETTINGS.CONNECTIONS_SETTINGS.DATABASE_URL or config.get_main_option("sqlalchemy.url")
 
     connectable = create_async_engine(
         url,

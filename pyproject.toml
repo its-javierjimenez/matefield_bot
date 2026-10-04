@@ -10,8 +10,9 @@ members = [
     "apps/api_rcon",
     "apps/rcon_mock",
     "packages/wardogs_schemas",
+    "packages/wardogs_config",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["apps"]
+testpaths = ["packages", "apps"]
 

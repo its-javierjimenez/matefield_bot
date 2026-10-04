@@ -5,6 +5,7 @@ import hikari
 from src.model import Model
 from src.hooks import admin_only
 from src.groups import config_group, roles_group, whitelist_group, role_group
+from src.trace import get_tracer
 
 logger = logging.getLogger(__name__)
 
@@ -256,20 +257,33 @@ class RolesSync:
 
     async def callback(self, ctx: crescent.Context) -> None:
         await ctx.defer(ephemeral=True)
+        tracer = get_tracer()
         try:
-            player_info = await plugin.model.api.get_player_by_discord(str(self.usuario.id))
-            if not player_info:
-                await ctx.respond(f"❌ El usuario {self.usuario.mention} no tiene cuenta vinculada.")
-                return
+            with tracer.measure("Verificar vinculación en API", category="DB", action="FETCH", target=str(self.usuario.id)) as t:
+                player_info = await plugin.model.api.get_player_by_discord(str(self.usuario.id))
+                if not player_info:
+                    t["status"] = "WARN"
+                    t["details"] = "Usuario sin cuenta vinculada"
+                    await ctx.respond(tracer.append_to_message(f"❌ El usuario {self.usuario.mention} no tiene cuenta vinculada."))
+                    return
+                t["details"] = f"Steam ID: {player_info.get('steam_id')}"
 
-            from src.plugins.tasks import sync_single_user_roles
-            res = await sync_single_user_roles(ctx.app, plugin.model, self.usuario.id, ctx.guild_id)
+            with tracer.measure("Sincronizar roles Discord", category="DISCORD", action="SYNC", target=str(self.usuario.id)) as t:
+                from src.plugins.tasks import sync_single_user_roles
+                res = await sync_single_user_roles(ctx.app, plugin.model, self.usuario.id, ctx.guild_id)
+                t["details"] = f"Modificado: +{res.get('added', 0)} / -{res.get('removed', 0)} roles"
+                if not res.get("success"):
+                    t["status"] = "ERROR"
+                    t["error"] = res.get("error")
+
             if res.get("success"):
-                await ctx.respond(f"✅ Sincronización completada para {self.usuario.mention}: `{res.get('added', 0)}` roles añadidos, `{res.get('removed', 0)}` roles removidos.")
+                base_msg = f"✅ Sincronización completada para {self.usuario.mention}: `{res.get('added', 0)}` roles añadidos, `{res.get('removed', 0)}` roles removidos."
             else:
-                await ctx.respond(f"❌ Error al sincronizar: {res.get('error')}")
+                base_msg = f"❌ Error al sincronizar: {res.get('error')}"
+
+            await ctx.respond(tracer.append_to_message(base_msg))
         except Exception as e:
-            await ctx.respond(f"❌ Error al sincronizar roles: {e}")
+            await ctx.respond(tracer.append_to_message(f"❌ Error al sincronizar roles: {e}"))
 
 @plugin.include
 @crescent.hook(admin_only)

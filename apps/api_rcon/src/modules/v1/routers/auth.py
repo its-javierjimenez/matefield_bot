@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.config import ENVIRONMENT_SETTINGS, is_prod
+from wardogs_config import ENVIRONMENT_SETTINGS, is_prod
 from src.connections.databases.db import get_session, Player, BotConfig, SteamLinkRedemption
 from src.connections.apis.steam import get_player_summary
 from src.modules.v1.schemas.dtos import LinkAccountRequest

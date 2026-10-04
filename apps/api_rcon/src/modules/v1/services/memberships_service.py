@@ -14,7 +14,7 @@ logger = logging.getLogger("wardogs.memberships")
 class MembershipsService:
     @staticmethod
     async def add_membership(req: AddMembershipRequest, session: AsyncSession) -> Dict[str, Any]:
-        player = await session.get(Player, req.steam_id)
+        player = (await session.exec(select(Player).where(Player.steam_id == req.steam_id).with_for_update())).first()
         if not player:
             raise HTTPException(status_code=404, detail="Player not found")
         
@@ -29,6 +29,8 @@ class MembershipsService:
                 config_days = (await session.exec(select(BotConfig).where(BotConfig.config_key == config_key))).first()
                 days_to_add = int(config_days.config_value) if config_days else 30
         else:
+            if req.days < 0:
+                raise HTTPException(status_code=400, detail="Los días de membresía deben ser 0 (permanente) o un número positivo.")
             days_to_add = req.days
 
         # Check quota if it's a new membership or one that's inactive
@@ -294,14 +296,55 @@ class MembershipsService:
                         membership.is_active = end_dt is not None and end_dt > now_utc
             
         if req.days is not None:
+            if req.days < 0:
+                raise HTTPException(status_code=400, detail="Los días de membresía deben ser 0 (permanente) o un número positivo.")
             if req.days == 0:
                 membership.end_time = None
+                if req.is_active is None:
+                    membership.is_active = True
             else:
-                membership.end_time = membership.start_time + timedelta(days=req.days)
+                start_base = membership.start_time or datetime.now(timezone.utc)
+                membership.end_time = start_base + timedelta(days=req.days)
+                if req.is_active is None:
+                    now_utc = datetime.now(timezone.utc)
+                    end_dt = membership.end_time
+                    if end_dt.tzinfo is None:
+                        end_dt = end_dt.replace(tzinfo=timezone.utc)
+                    membership.is_active = end_dt > now_utc
                 
         if req.add_days is not None:
-            if membership.end_time is not None:
-                membership.end_time = membership.end_time + timedelta(days=req.add_days)
+            if req.add_days <= 0:
+                raise HTTPException(status_code=400, detail="La cantidad de días extra a añadir (add_days) debe ser mayor a 0.")
+            now_utc = datetime.now(timezone.utc)
+            base_time = membership.end_time
+            if base_time is not None:
+                if base_time.tzinfo is None:
+                    base_time = base_time.replace(tzinfo=timezone.utc)
+                effective_base = max(base_time, now_utc)
+                membership.end_time = effective_base + timedelta(days=req.add_days)
+            else:
+                pass
+
+            if req.is_active is None:
+                end_dt = membership.end_time
+                if end_dt is not None and end_dt.tzinfo is None:
+                    end_dt = end_dt.replace(tzinfo=timezone.utc)
+                if end_dt is None or end_dt > now_utc:
+                    membership.is_active = True
+                    if membership.role_granted_id:
+                        vip_pr = (await session.exec(select(PlayerRole).where(
+                            PlayerRole.steam_id == membership.steam_id,
+                            PlayerRole.role_id == membership.role_granted_id
+                        ))).first()
+                        if not vip_pr:
+                            session.add(PlayerRole(steam_id=membership.steam_id, role_id=membership.role_granted_id))
+                    if membership.special_role_id:
+                        sp_pr = (await session.exec(select(PlayerRole).where(
+                            PlayerRole.steam_id == membership.steam_id,
+                            PlayerRole.role_id == membership.special_role_id
+                        ))).first()
+                        if not sp_pr:
+                            session.add(PlayerRole(steam_id=membership.steam_id, role_id=membership.special_role_id))
                 
         if req.is_active is not None:
             if not req.is_active:
@@ -336,6 +379,9 @@ class MembershipsService:
 
     @staticmethod
     async def compensate_memberships(days: int, session: AsyncSession) -> Dict[str, Any]:
+        if days <= 0:
+            raise HTTPException(status_code=400, detail="La cantidad de días a compensar debe ser mayor a 0.")
+
         stmt = select(Membership).where(Membership.is_active == True, Membership.end_time != None)
         active_memberships = (await session.exec(stmt)).all()
         
@@ -347,6 +393,11 @@ class MembershipsService:
                 count += 1
             
         await session.commit()
+        if count > 0:
+            try:
+                await MembershipsService.sync_memberships_logic(session)
+            except Exception as e:
+                logger.warning(f"Error en sincronización tras compensación masiva: {e}")
         return {"ok": True, "message": f"Compensated {count} memberships with {days} days."}
 
     @staticmethod
@@ -453,7 +504,7 @@ class MembershipsService:
             Membership.is_active == True,
             Membership.end_time != None,
             col(Membership.end_time) < now
-        )
+        ).order_by(col(Membership.id))
         expired = (await session.exec(expired_stmt)).all()
         for m in expired:
             await MembershipsService._deactivate_membership(m, session)
@@ -482,7 +533,7 @@ class MembershipsService:
                             Membership.server_id == None
                         ).distinct()
                     raw_sids = set((await session.exec(s_vip_stmt)).all())
-                    server_steam_ids = list(raw_sids)
+                    server_steam_ids = sorted(list(raw_sids))
                     await client.sync_reserved_slots(server_steam_ids)
                 except Exception as s_err:
                     sync_failed = True
@@ -493,7 +544,7 @@ class MembershipsService:
                 pending_m_stmt = select(Membership).where(
                     Membership.is_active == True,
                     Membership.rcon_sync_status != "SUCCESS"
-                )
+                ).order_by(col(Membership.id))
                 for m in (await session.exec(pending_m_stmt)).all():
                     m.rcon_sync_status = "SUCCESS"
                     session.add(m)
@@ -503,11 +554,11 @@ class MembershipsService:
             logger.error(f"Failed to sync RCON reserved slots: {e}", exc_info=True)
             
         # 4. Prepare data for Discord Bot Role Sync
-        players_stmt = select(Player).where(Player.discord_id != None)
+        players_stmt = select(Player).where(Player.discord_id != None).order_by(col(Player.steam_id))
         players = (await session.exec(players_stmt)).all()
         
         # Batch query all active memberships by steam_id to avoid N+1 queries
-        active_m_stmt = select(Membership.steam_id, Membership.membership_type).where(Membership.is_active == True)
+        active_m_stmt = select(Membership.steam_id, Membership.membership_type).where(Membership.is_active == True).order_by(col(Membership.id))
         all_active_m = (await session.exec(active_m_stmt)).all()
         m_types_by_steam: Dict[str, List[str]] = {}
         for sid, mtype in all_active_m:
@@ -520,6 +571,7 @@ class MembershipsService:
             .where(
                 Role.discord_role_id != None
             )
+            .order_by(col(PlayerRole.steam_id), col(PlayerRole.role_id))
         )
         all_pr = (await session.exec(pr_stmt)).all()
         roles_by_steam: Dict[str, List[int]] = {}
@@ -535,7 +587,7 @@ class MembershipsService:
                 "special_roles": roles_by_steam.get(p.steam_id, [])
             })
             
-        all_roles = (await session.exec(select(Role))).all()
+        all_roles = (await session.exec(select(Role).order_by(Role.id))).all()
         roles_by_id = {r.id: r for r in all_roles if r.id is not None}
         role_maps: Dict[str, int] = {}
         for r in all_roles:
@@ -546,7 +598,7 @@ class MembershipsService:
                 role_maps[r.name] = dr_val
                 role_maps[r.code.replace("_", " ")] = dr_val
 
-        all_types = (await session.exec(select(MembershipType))).all()
+        all_types = (await session.exec(select(MembershipType).order_by(MembershipType.id))).all()
         for mt in all_types:
             dr_id = None
             if mt.role_id and mt.role_id in roles_by_id:
@@ -584,9 +636,9 @@ class MembershipsService:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to fetch from RCON ({server_info.name}): {e}")
         
-        synced = list(active_steam_ids.intersection(current_slots))
-        pending_add = list(active_steam_ids - current_slots)
-        pending_remove = list(current_slots - active_steam_ids)
+        synced = sorted(list(active_steam_ids.intersection(current_slots)))
+        pending_add = sorted(list(active_steam_ids - current_slots))
+        pending_remove = sorted(list(current_slots - active_steam_ids))
         
         return {
             "server": server_info.name,

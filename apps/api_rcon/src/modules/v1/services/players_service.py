@@ -102,11 +102,11 @@ class PlayersService:
         stmt = select(Membership).where(
             Membership.steam_id == steam_id,
             Membership.is_active == True
-        )
+        ).order_by(col(Membership.id))
         memberships = (await session.exec(stmt)).all()
         
         # Fetch special roles (DDD)
-        stmt_roles = select(Role).join(PlayerRole).where(PlayerRole.steam_id == steam_id)
+        stmt_roles = select(Role).join(PlayerRole).where(PlayerRole.steam_id == steam_id).order_by(col(Role.id))
         special_roles = (await session.exec(stmt_roles)).all()
         
         active_roles = []
@@ -255,7 +255,7 @@ class PlayersService:
                 if summary and "personaname" in summary:
                     p["name"] = summary["personaname"]
                     
-            stmt = select(Membership).where(col(Membership.steam_id).in_(steam_ids), Membership.is_active == True)
+            stmt = select(Membership).where(col(Membership.steam_id).in_(steam_ids), Membership.is_active == True).order_by(col(Membership.id))
             memberships = (await session.exec(stmt)).all()
             mem_map: Dict[str, List[str]] = {}
             for m in memberships:

@@ -27,7 +27,7 @@ El sistema está construido con un enfoque de microservicios usando **Docker Com
 │   ├── api_rcon/       # Backend FastAPI, motor de sincronización y webhooks Tebex.
 │   ├── discord_bot/    # Bot de Discord (Hikari + Crescent).
 │   └── rcon_mock/      # Servidor mock de RCON para desarrollo.
-├── packages/           # Dependencias internas compartidas (wardogs_schemas).
+├── packages/           # Dependencias internas compartidas (wardogs_schemas, wardogs_config).
 ├── docs/               # Documentación técnica, manual de comandos y planes de migración.
 ├── backups/            # Backups de base de datos en SQL y CSV (ignorado por Git).
 ├── .env.local          # Variables de entorno para pruebas locales en Docker.

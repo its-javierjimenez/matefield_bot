@@ -50,6 +50,10 @@ async def test_process_session_seeding_points_accumulation(session: AsyncSession
         is_seeding=True,
         minutes_per_point=30,
     )
+    session.add(player)
+    await session.flush()
+    await session.refresh(player)
+
     assert awarded == 1
     assert sess.seeding_seconds == 1800
     assert sess.rewarded_seeding_seconds == 1800
@@ -63,6 +67,10 @@ async def test_process_session_seeding_points_accumulation(session: AsyncSession
         is_seeding=True,
         minutes_per_point=30,
     )
+    session.add(player)
+    await session.flush()
+    await session.refresh(player)
+
     assert awarded == 2
     assert sess.seeding_seconds == 5400
     assert sess.rewarded_seeding_seconds == 5400

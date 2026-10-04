@@ -13,7 +13,6 @@ from src.modules.v1.routers import (
     membership_types_router,
     auth_router,
     rewards_router,
-    admin_dashboard_router,
 )
 
 router = APIRouter(prefix="/v1", tags=["v1"])
@@ -29,7 +28,6 @@ router.include_router(rcon_servers_router)
 router.include_router(membership_types_router)
 router.include_router(auth_router)
 router.include_router(rewards_router)
-router.include_router(admin_dashboard_router)
 
 
 # Compatibility exports for background maintenance tasks and external callers
