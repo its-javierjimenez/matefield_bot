@@ -27,8 +27,10 @@ def upgrade() -> None:
     op.execute("DELETE FROM reward_claims WHERE steam_id != UPPER(TRIM(steam_id))")
     op.execute("DELETE FROM players WHERE steam_id != UPPER(TRIM(steam_id))")
 
-    # 2. LIMPIEZA DE FECHAS CORRUPTAS
+    # 2. LIMPIEZA DE FECHAS CORRUPTAS Y MEMBRESÍAS HISTÓRICAS
     op.execute("DELETE FROM memberships WHERE end_date IS NOT NULL AND start_date > end_date")
+    # For historical memberships without an end_date, we set their end_date to their start_date to mark them as expired but keep the record
+    op.execute("UPDATE memberships SET end_date = start_date WHERE is_active = false AND end_date IS NULL")
 
     # 3. CONVERSIÓN FINANCIERA (Flotante -> Entero Centavos)
     op.execute("ALTER TABLE membership_types ADD COLUMN price_cents INTEGER DEFAULT 0")
