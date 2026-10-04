@@ -193,7 +193,7 @@ async def match_monitor():
             )
             
     except Exception as e:
-        logger.error(f"[Match Monitor] Error en la automatización: {e}")
+        logger.exception(f"[Match Monitor] Error en la automatización: {repr(e)}")
         if plugin.app and plugin.app.is_alive:
             try:
                 await plugin.app.update_presence(
@@ -289,7 +289,7 @@ async def vip_monitor():
             del plugin.model.player_last_seen[sid]
                 
     except Exception as e:
-        logger.error(f"[VIP Monitor] Error en la automatización: {e}")
+        logger.exception(f"[VIP Monitor] Error en la automatización: {repr(e)}")
 
 async def execute_membership_sync(
     app: hikari.GatewayBot,
@@ -531,7 +531,7 @@ async def membership_monitor():
     try:
         await execute_membership_sync(plugin.app, plugin.model)
     except Exception as e:
-        logger.error(f"[Sync] Error en la automatización: {e}")
+        logger.exception(f"[Sync] Error en la automatización: {repr(e)}")
 
 @plugin.include
 @tasks.loop(seconds=5)
@@ -695,6 +695,6 @@ async def match_announcer_task():
         logger.info(f"[Match Announcer] Anunciada partida {match['id']}")
         
     except Exception as e:
-        logger.error(f"[Match Announcer] Error: {e}")
+        logger.exception(f"[Match Announcer] Error: {repr(e)}")
 
 
